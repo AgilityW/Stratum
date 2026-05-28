@@ -1,0 +1,38 @@
+[project]
+name = "stratum"
+version = "4.0.0"
+description = "Multi-Scale Intelligence System"
+requires-python = ">=3.11"
+
+[project.optional-dependencies]
+test = [
+    "pytest>=8.0",
+    "pytest-cov>=5.0",
+    "jsonschema>=4.20",
+    "pyyaml>=6.0",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["skills/source-graph-engine"]
+markers = [
+    "unit: Python unit tests for source-graph-engine",
+    "schema: JSON Schema validation tests",
+    "data: Data integrity checks for pipeline outputs",
+    "slow: Integration/E2E tests (requires file I/O)",
+]
+
+[tool.coverage.run]
+source = ["skills/source-graph-engine"]
+omit = [
+    "*/test_*",
+    "tests/*",
+]
+
+[tool.coverage.report]
+precision = 1
+show_missing = true
+skip_covered = false
+
+[tool.coverage.html]
+directory = "htmlcov"
