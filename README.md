@@ -1,74 +1,117 @@
-# Daily Briefing — 早报框架
+# Stratum — Multi-Scale Industry Intelligence
 
-## 定位
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![Hermes](https://img.shields.io/badge/Hermes-Agent%20Skill-orange)](https://hermes-agent.nousresearch.com)
 
-可插拔的行业早报系统。每个行业（channel）独立采集、独立输出、独立推送。
+A multi-scale intelligence system for the Hermes agent platform. Five time scales (daily → weekly → monthly → quarterly → yearly), six data layers (Article → StoryCluster → EventThread → TrendTheme → QuarterlyThesis → AnnualNarrative), and a decoupled source intelligence subsystem that discovers, evaluates, and manages information channels.
 
-看完早报 = 今天不用再翻该行业的任何新闻。
+## Quick Start
 
-## 架构
+```bash
+git clone https://github.com/<user>/stratum.git
+cd stratum
 
-```
-Hermes 注册层（运行时）
-~/.hermes/skills/executive-briefing/
-├── daily-briefing/SKILL.md          ← 框架 skill：调度 + HTML 渲染 + 推送
-└── daily-briefing-storage/SKILL.md  ← 存储通道 skill：采集 + 汇总 → .md
-
-项目文件层（设计 + 模板）
-ProjectSpace/daily-briefing/
-├── template.html                    ← HTML 模板（框架按绝对路径读取）
-├── README.md                        ← 本文件
-├── TODO.md                          ← 项目待办
-└── channels/storage/
-    └── sources.md                   ← 给人看的信源文档（机器不读）
-
-输出层
-WorkSpace/DailyBriefing/
-├── storage-YYYY-MM-DD.md            ← 中间产物（内容定型）
-└── storage-YYYY-MM-DD.html          ← 最终交付（微信公众号兼容 HTML）
+cp config.example.yaml config.yaml
+./install.sh --dev
 ```
 
-## 调用链
+Set API keys:
+- `BOCHA_API_KEY` — Chinese/zh-CN/zh-TW search
+- `TAVILY_API_KEY` — English/Japanese/Korean/global search
+
+## Architecture
+
+### Content Pipeline (Steps 0-8)
 
 ```
-Cron (7:30 CST daily)
-  → 加载 skill "daily-briefing"（框架）
-    → skill_view('daily-briefing-storage') 加载通道
-      → 按通道 SKILL.md 执行采集
-      → 输出 storage-YYYY-MM-DD.md
-    → 读 template.html → 渲染 .html
-    → send_message 推微信
+config → locale-router → collection → verify
+  → article-normalizer → story-cluster-engine → event-thread-engine
+  → edit → .md
 ```
 
-## 设计原则
+### Multi-Scale Pipelines (independent crons)
 
-| 原则 | 说明 |
-|:---|:---|
-| **Skill 注册制** | 所有 SKILL.md 必须注册到 `~/.hermes/skills/`，cron 按名调用 |
-| **框架不采集** | 框架只做调度 + 渲染 + 推送，不碰数据 |
-| **通道不渲染** | 通道只做采集 + 汇总，输出纯 .md |
-| **模板解耦** | template.html 是纯骨架，三个占位符 `{{DATE}}` `{{WEEKDAY}}` `{{CONTENT}}` |
-| **中间产物不删** | .md 留作调试/止损/复用 |
+```
+Daily brief → Weekly brief → Monthly brief → Quarterly review → Yearly review
+     ↑              ↑              ↑               ↑                ↑
+ StoryCluster   EventThread    TrendTheme    QuarterlyThesis   AnnualNarrative
+```
 
-## 与 storage-weekly 的区别
+### Source Intelligence (decoupled, Steps 2.6 + 8.5-8.6)
 
-| | storage-weekly | daily-briefing |
+```
+source-graph-engine (discover new domains)
+  → trial-source-manager (manage trial queue)
+    → source-recorder (read finalized content → write source-records)
+      → source-profiler (aggregate → SourceProfile with checkpoints)
+```
+
+Source pipeline consumes content outputs, never modifies them. Content pipeline is unaware of source intelligence.
+
+## Modules (18 skills)
+
+| Module | Role | Layer |
 |:---|:---|:---|
-| 频率 | 每周五 | 每天 |
-| 深度 | 三段分析 + 态势矩阵 + 可证伪预测 | 标题 + 1-2 句总结 |
-| 覆盖面 | 5 大原厂 + B&F + SR + STH | 原厂 + 媒体 + 生态 + 国内 + X |
-| 格式 | Markdown（默认）/ PPT / HTML | HTML（微信公众号兼容） |
-| 输出 | Obsidian 存档 | 不存档，文件留 WorkSpace |
-| 采集 | 主 agent 串行 | 3 worker 并行 subagent |
+| `stratum` | Orchestration framework v4.0 | Content |
+| `stratum-storage` | Channel: editorial rules, queries, domain data | Content |
+| `locale-router` | BCP 47 expansion, engine↔locale matching | Content |
+| `source-manager` | URL preflight + auto-healing | Content |
+| `verify-engine` | Date / magnitude / fiscal-year checks | Content |
+| `article-normalizer` | Raw results → ArticleRecord JSONL | Content |
+| `story-cluster-engine` | Articles → same-day StoryClusters | Content |
+| `event-thread-engine` | Cross-day thread tracking + lifecycle | Content |
+| `source-graph-engine` | Entity/term/channel graph evolution | Content |
+| `health-tracker` | Source hit rate stats | Content |
+| `render-engine` | MD → HTML → PDF | Content |
+| `trial-source-manager` | Trial pool queue management | Source |
+| `source-recorder` | Read content → write source-records.jsonl | Source |
+| `source-profiler` | Aggregate SourceRecords → SourceProfile | Source |
+| `weekly-briefing` | 7-day thread change analysis | Multi-scale |
+| `monthly-briefing` | TrendTheme synthesis | Multi-scale |
+| `quarterly-review` | Thesis evaluation + judgment calibration | Multi-scale |
+| `yearly-review` | Annual narrative + structural change | Multi-scale |
 
-## 现有 Channel
+## Cron Schedule
 
-| Channel | 注册名 | 状态 | 说明 |
-|:---|:---|:---|:---|
-| 📦 storage | `daily-briefing-storage` | 架构设计中 | 存储行业日报 |
+| Time | Job | Deliver |
+|:---|:---|:---|
+| Daily 7:00 CST | Stratum - Collect | Local |
+| Daily 7:20 CST | Stratum - Render | WeChat PDF |
+| Sunday 8:00 | Stratum - Weekly | Local |
+| 1st of month 8:00 | Stratum - Monthly | Local |
+| 1st of quarter 8:00 | Stratum - Quarterly | Local |
+| Jan 2 8:00 | Stratum - Yearly | Local |
 
-## 交付
+## Output
 
-- 时间：每天 7:30 CST
-- 渠道：微信
-- 频率：每周七天
+```
+~/WorkSpace/Stratum/
+├── storage/
+│   ├── storage-{date}.md
+│   └── storage-{date}.pdf
+└── data/
+    ├── articles/{date}/articles.jsonl
+    ├── story-clusters/{date}/story-clusters.json
+    ├── event-threads/event-threads.json
+    ├── sources/{date}/source-records.jsonl
+    ├── sources/profiles/{source}.json
+    ├── sources/trial-pool.json
+    ├── trend-themes/{month}/trend-themes.json
+    ├── quarterly-theses/{quarter}/thesis-outcomes.json
+    └── annual-narratives/{year}/annual-narrative.json
+```
+
+## Languages
+
+4 languages by default: `zh-CN`, `zh-TW`, `en`, `ja`, `ko`. Add a language in one config line. Add queries in one domain.yaml section.
+
+## Documentation
+
+- `docs/multi-scale-intelligence-architecture.md` — content architecture
+- `docs/source-intelligence-architecture.md` — source intelligence architecture
+- `MULTI_SCALE_INTELLIGENCE_ARCHITECTURE.md` — original design spec
+- `CONTRIBUTING.md` — contribution guide
+
+## License
+
+MIT — see [LICENSE](LICENSE).

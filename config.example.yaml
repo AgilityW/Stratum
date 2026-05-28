@@ -1,0 +1,57 @@
+# ============================================================
+# Daily Briefing — Configuration (Example)
+# ============================================================
+# Copy to config.yaml and edit. config.yaml is .gitignore'd.
+#
+# Clone → cp config.example.yaml config.yaml → edit → ./install.sh --dev
+
+# ── Source languages: which languages to monitor ──
+# BCP 47 locale tags. Umbrella tags auto-expand:
+#   zh  → zh-CN + zh-TW
+# Available: zh, zh-CN, zh-TW, en, ja, ko, fr, de, es, ...
+source_languages:
+  - zh
+  - en
+  - ja
+  - ko
+
+# ── Locale expansion rules ──
+locales:
+  zh: [zh-CN, zh-TW]
+
+# ── Output languages ──
+output_languages:
+  - zh-CN
+
+# ── Search engine registry ──
+engines:
+  bocha:
+    label: "Bocha AI (Chinese/Asian)"
+    languages: [zh-CN, zh-TW]
+    endpoint: "https://api.bocha.cn/v1/web-search"
+    auth: "Bearer ${BOCHA_API_KEY}"
+    freshness: {param: "freshness", day: "oneDay", week: "oneWeek"}
+    response_path: "data.webPages.value"
+    has_date: true
+    date_field: "datePublished"
+    title_field: "name"
+    url_field: "url"
+    snippet_field: "snippet"
+
+  tavily:
+    label: "Tavily (English/Global)"
+    languages: [en, ja, ko, fr, de, es, pt, it, nl, sv, no, da, fi]
+    endpoint: "https://api.tavily.com/search"
+    auth: "api_key: ${TAVILY_API_KEY}"
+    extra: {topic: "news", search_depth: "advanced"}
+    freshness: {param: "time_range", day: "day", week: "week"}
+    response_path: "results"
+    has_date: false
+    title_field: "title"
+    url_field: "url"
+    snippet_field: "content"
+
+# ── Paths (edit for your machine) ──
+output_dir: "$HOME/WorkSpace/Stratum"
+health_data_dir: "$HOME/WorkSpace/Stratum/health-data"
+chrome_path: "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
