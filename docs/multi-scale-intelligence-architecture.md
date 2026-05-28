@@ -513,7 +513,7 @@ AnnualNarrative:
 Recommended runtime layout:
 
 ```text
-~/WorkSpace/Stratum/{channel}/
+${OUTPUT_DIR}/{channel}/
   daily/
     2026-05-28/
       raw-search.jsonl.gz

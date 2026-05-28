@@ -199,3 +199,130 @@ python3 -m py_compile skills/source-graph-engine/*.py
 - JSON Schema：`schemas/article-record.schema.json` + `schemas/story-cluster.schema.json`
 - `.gitignore` 例外：`!data/schemas/` → schemas 目录可追踪
 
+---
+
+## Fix Resolution — 2026-05-28 (路径配置化 + 命名统一)
+
+### 路径硬编码
+| 问题 | 修复 |
+|:---|:---|
+| 42 处 `~/WorkSpace/Stratum` 硬编码在 15 个文件中 | 全部改为 `${OUTPUT_DIR}` 变量引用 |
+| Python 代码 `os.path.expanduser(f'~/WorkSpace/Stratum/{channel}/data')` 4 处 | 统一改为读取 `config.yaml` 的 `output_dir` |
+| SKILL.md contract + 文档中的输出路径固定 | 全部变量化，config.yaml 单点配置 |
+| `${OUTPUT_DIR}` 未定义 | `stratum/SKILL.md` 加变量说明段 |
+
+### 命名一致性
+| 问题 | 修复 |
+|:---|:---|
+| 项目目录 `~/ProjectSpace/stratum` 小写 | 重命名为 `~/ProjectSpace/Stratum` |
+| README + 文档中 `stratum`/`Stratum` 混用 | 文档中和代码路径中的项目名统一为 `Stratum` |
+| Skill 名 `stratum`、`stratum-storage` 等保留小写 | 目录名/标识符保持小写 |
+
+### 文档同步
+| 问题 | 修复 |
+|:---|:---|
+| README 仍描述双 cron（Collect + Render） | 重写为单 Publish cron，加 Makefile 用法 |
+| README 输出目录硬编码 | 改为 `${OUTPUT_DIR}`，说明 config.yaml 可配 |
+| `docs/multi-scale-intelligence-architecture.md` 路径硬编码 | 改为变量引用 |
+| `config.yaml` 输出密钥为 `$HOME` 格式 | 保持不变，运行时代码通过 `os.path.expanduser` 解析 |
+
+---
+
+## Fix Resolution — 2026-05-28 (P1 Source Intelligence)
+
+### Coverage Monitor (new skill)
+| 问题 | 修复 |
+|:---|:---|
+| StoryCluster 缺少信源多样性检测 | 新建 `coverage-monitor` skill，跑在 story-clustering 之后 |
+| 单信源类型 + 单 locale 的 cluster 无告警 | 检测 missing_types (official/analyst/media) + missing_locales (zh-CN/en) |
+| 高置信度缺口无跟进机制 | high-severity gap → 生成 followup queries → 注入次日 locale-router |
+
+### Trial Source Manager v2.1
+| 问题 | 修复 |
+|:---|:---|
+| 5-dim 评估只有文字描述，无可执行代码 | Step 4 (track samples) + Step 5 (trigger evaluate) 全部替换为可执行 Python |
+| 无权重定义 | novelty(0.30), verifiability(0.25), exclusivity(0.20), signal_noise(0.15), depth(0.10) |
+| 无阈值 | 0.60 promote / <0.60 archive |
+| 人工审批流程缺失 | recommendation 写入 trial-pool.json，标记后等待人工确认——不自动 promote |
+
+### SourceProfile ↔ Quarterly
+| 决定 | 原因 |
+|:---|:---|
+| 跳过 | quarterly-review 从未触发过，集成无实际价值。等季度 review 真正跑起来再考虑。 |
+
+---
+
+## Fix Resolution — 2026-05-28 (Value Chain Monitor)
+
+### 设计原则
+| 决策 | 理由 |
+|:---|:---|
+| 十一层探测模型定义在 domain.yaml | 跨行业复用：换 channel 只需换配置，引擎逻辑不变 |
+| 通用引擎 zero domain knowledge | 只读 config 执行搜索，不懂 storage/non-storage |
+| 每层独立频率控制 | weekly(5层) / biweekly(1层) / monthly(3层) / daily(1层跳过) / event-driven(1层) |
+| 新域名只入 trial pool | 不自动 promote，经过 trial-source-manager v2.1 五维评估 |
+| 覆盖告警阈值 per-layer | 上游=2周，管制=4周，标准=12周，基础设施=事件驱动(不告警) |
+
+### 实现
+| 项 | 内容 |
+|:---|:---|
+| domain.yaml | 追加 value_chain section，11 层，460 行配置 |
+| value-chain-monitor SKILL.md | 新建，6-step 可执行流程，340 行 |
+| cron | `Stratum - Value Chain` 每周日 9:00 CST |
+| stratum 框架 | contract modules 加入 value-chain-monitor |
+| README | 模块表 + cron 表刷新 (20 skills, 7 crons) |
+
+---
+
+## Fix Resolution — 2026-05-28 (Value Chain Monitor v2.0 — Dynamic Evolution)
+
+### 核心升级
+| 机制 | v1.0 | v2.0 |
+|:---|:---|:---|
+| 信源池 | 静态 domain.yaml | base + runtime-config.json 双文件 |
+| 探测模板 | 永久不变 | 按期产出率自动归档/恢复 |
+| promote 路径 | trial → 人工确认 → 结束 | trial → 人工确认 → probation 30天 → 期中评估 → confirmed/延伸/demote |
+| 膨胀控制 | 无 | 三层刹车: cap(15/5/8), probation, tiered demotion |
+| 关键层保护 | 无 | critical 层永不自动淘汰, high 层 flag+二次确认, medium 层自动降 |
+| debug | 散落在多个文件 | state.json 单一入口 |
+| 审计 | 无 | audit-log.ndjson 记录每一次 evolve 操作 |
+
+### 实现
+| 项 | 内容 |
+|:---|:---|
+| value-chain-monitor v2.0 | 全部重写, 10-step 含 runtime merge/schedule/caps/demotion/probation/state |
+| trial-source-manager v2.2 | promote 反馈闭环, 写入 runtime-config |
+| promote 反馈链路 | trial→approve→runtime-config→value-chain 下次探测自动纳入 |
+
+---
+
+## Review Addendum — 2026-05-28 (入口层回归)
+
+本轮重新检查当前工作区真实状态，结论是：`source-graph-engine` 单元测试当前通过，但项目入口层存在几个会直接影响维护者使用的回归。优先级高于继续扩展新模块。
+
+### 验证结果
+
+| 命令 | 结果 |
+|:---|:---|
+| `pytest -q` | 通过，`156 passed in 0.94s` |
+| `make test` | 失败：当前环境没有 `python` 命令，Makefile 使用 `python -m pytest` |
+| `bash -n skills/health-tracker/scripts/query.sh` | 失败：脚本文件被行号文本污染，shell 语法错误 |
+| `pytest tests/data/ -v -m data` | 选中 0 个测试：测试声明了 marker，但测试文件没有实际标记 |
+
+### 新发现问题
+
+| 优先级 | 问题 | 影响 | 位置 |
+|:---|:---|:---|:---|
+| P0 | `query.sh` 被写入 `1|...` 这类行号前缀 | health-tracker 查询脚本不可执行 | `skills/health-tracker/scripts/query.sh` |
+| P1 | Makefile 测试目标依赖 `python`，但当前 macOS 环境只有 `python3` / `pytest` | README 推荐的 `make test` 不可用 | `Makefile` |
+| P1 | `test-unit` / `test-schema` / `test-data` 使用 `-m` marker，但测试没有 `@pytest.mark.*` | 分组测试目标会静默跑 0 个测试 | `Makefile`, `tests/` |
+| P2 | README、pyproject、模块表版本不一致：README 写 v4.1，`pyproject.toml` 仍为 4.0.0，模块表中 `stratum` 仍写 v4.0 | 发布状态和实际包元数据不一致 | `README.md`, `pyproject.toml` |
+| P3 | 本地忽略文件较多：`.DS_Store`、`.pytest_cache/`、多处 `__pycache__/` | 不影响 git 跟踪，但增加 review 噪音 | 工作区 |
+
+### 建议修复顺序
+
+1. 先恢复 `skills/health-tracker/scripts/query.sh` 为合法 shell，并加 `bash -n` 到最小验证步骤。
+2. Makefile 增加 `PYTHON ?= python3`，所有 pytest 目标改为 `$(PYTHON) -m pytest`，或直接使用 `pytest`。
+3. 给现有测试补 `pytestmark = pytest.mark.unit/schema/data`，或者删除 `-m` 筛选，避免分组目标空跑。
+4. 同步 README / `pyproject.toml` / skill frontmatter 的版本号和状态描述；在入口脚本修复前，不建议继续写 “operational / E2E complete”。
+5. 清理本地缓存文件，保持后续 review 输出聚焦。

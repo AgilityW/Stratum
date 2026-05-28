@@ -27,35 +27,40 @@ yearly:
 
 # Default: run all tests
 test:
-	python -m pytest tests/ -v
+	python3 -m pytest tests/ -v
 
 # Only unit tests (source-graph-engine)
 test-unit:
-	python -m pytest tests/unit/ -v -m unit
+	python3 -m pytest tests/unit/ -v
 
 # Only schema validation tests
 test-schema:
-	python -m pytest tests/schema/ -v -m schema
+	python3 -m pytest tests/schema/ -v
 
-# Only data integrity tests
+# Data integrity + infra + module tests
 test-data:
-	python -m pytest tests/data/ -v -m data
+	python3 -m pytest tests/infra/ tests/modules/ -v
+
+# Only module-level tests (contract + dependency + logic)
+test-modules:
+	python3 -m pytest tests/modules/ -v
 
 # Coverage report (terminal)
 test-cov:
-	python -m pytest tests/ --cov --cov-report=term-missing
+	python3 -m pytest tests/ --cov --cov-report=term-missing
 
 # Coverage report (HTML)
 test-cov-html:
-	python -m pytest tests/ --cov --cov-report=html
+	python3 -m pytest tests/ --cov --cov-report=html
 	@echo "Open htmlcov/index.html"
 
 # Run specific test file
 # Usage: make test-file FILE=tests/unit/test_graph.py
 test-file:
-	python -m pytest $(FILE) -v
+	python3 -m pytest $(FILE) -v
 
 # Clean up artifacts
 clean:
 	rm -rf htmlcov/ .coverage .pytest_cache/ tests/__pycache__ tests/**/__pycache__
 	find . -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null || true
+	find . -name '.DS_Store' -delete 2>/dev/null || true

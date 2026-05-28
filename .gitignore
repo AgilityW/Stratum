@@ -21,11 +21,20 @@ config.yaml
 *.pdf
 *.html
 !skills/render-engine/templates/*.html
-*.ndjson
-*.json
-!**/data/*.json
-!schemas/*.json
 
-# Python cache
-__pycache__/
+# Runtime data files (outputs from daily pipeline)
+data/
+health-data/
+storage/
+*.ndjson
+*.jsonl
+
+# Cache / temp
 *.pyc
+__pycache__/
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Runtime config (generated at runtime)
+data/value-chain/runtime-config.json

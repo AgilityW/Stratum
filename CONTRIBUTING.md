@@ -4,10 +4,36 @@
 
 1. Create `skills/stratum-{channel}/` directory with:
    - `SKILL.md` — editorial rules, output format, channel metadata (no queries!)
-   - `data/domain.yaml` — companies, terms, seed_queries, gap_searches, channels
+   - `data/domain.yaml` — companies, terms, seed_queries, gap_searches, channels, **value_chain**
    - `references/editorial-standards.md` — market-specific editorial rules
 2. Run `./install.sh --dev`
 3. Test: ask Hermes "Run the daily briefing for {channel}"
+
+### Value Chain Configuration
+
+Each channel defines its industry-specific value chain in `data/domain.yaml → value_chain`. The 11-layer model from storage is a template:
+
+```yaml
+value_chain:
+  layers:
+    - id: upstream_equipment
+      label: 上游设备/材料
+      question: 能不能造？
+      criticality: critical          # critical | high | medium
+      frequency: weekly               # daily | weekly | biweekly | monthly
+      coverage_alert_weeks: 2         # 连续N周无覆盖 → 告警
+      seed_sources: [...]             # 该层已知信源
+      watch_patterns: [...]           # 该层关心的信号类型
+      probe_templates: [...]          # 主动探测查询模板 {company} {year} {quarter}
+      gap_indicators: [...]           # 覆盖缺失判定规则
+```
+
+**Rules:**
+- Adapt the layers to YOUR industry — storage's 11 layers won't fit a different sector.
+- Define `probe_templates` with `{company}`, `{year}`, `{quarter}`, `{month}`, `{date}` placeholders.
+- `criticality` determines: auto-archive behavior (critical=never), demotion policy, alert priority.
+- `value-chain-monitor` (v2.0) manages source discovery and dynamic evolution across layers.
+- Promoted sources feed back into `runtime-config.json` (not domain.yaml — domain is the baseline).
 
 Example `data/domain.yaml`:
 ```yaml
