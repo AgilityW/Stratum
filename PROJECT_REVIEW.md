@@ -166,3 +166,36 @@ python3 -m py_compile skills/source-graph-engine/*.py
 3. 然后把 README/TODO 改成准确反映当前状态，避免“文档说已完成，代码还未落地”的认知偏差。
 4. 最后再做 source intelligence 的高级扩展。
 
+---
+
+## Fix Resolution（2026-05-28）
+
+以下问题已在本轮修复：
+
+### 代码
+| Bug | 修复 |
+|:---|:---|
+| `source-graph-engine` WATCH→ACTIVE 路径断裂 | 修正 `_promote_watch_to_active()` 中 status 更新逻辑 |
+| `TermCandidate` AttributeError | 补全 `TermCandidate` dataclass 字段 |
+| `source_entities` 路径缺失 | 新增 `_load_source_entities()` 从 profiles 加载 |
+| `seed_query` 不匹配 | 修正 query planner 中的 seed 生成逻辑 |
+| `archive_query` 过滤问题 | 修正 time decay 过滤条件 |
+
+测试：`tests/test_bug_fixes.py`，5 项全部通过。
+
+### 文档
+| 问题 | 修复 |
+|:---|:---|
+| README 18 vs 19 skills | 标注 18 pipeline modules，stratum-deployment 是部署文档 |
+| README Steps 与 SKILL.md 不同步 | 加注 "Steps 0-8.6 in Collect, 9-10 in Render, see SKILL.md" |
+| SKILL.md 双 version 字段 | 去重，保留 v4.0 |
+| 双份架构文档 | 根目录改为指针，canonical 在 docs/ |
+| config.yaml 标题 "Daily Briefing" | 改为 "Stratum" |
+| 语言数量 "5 source languages" | 改为 "4 source → 5 locales" |
+| Cron 6 vs 7 | 补全 7 个 cron job 含 Storage Weekly |
+| README 缺少实现状态 | 顶部加 Implementation Status 表格 |
+
+### 新增
+- JSON Schema：`schemas/article-record.schema.json` + `schemas/story-cluster.schema.json`
+- `.gitignore` 例外：`!data/schemas/` → schemas 目录可追踪
+
