@@ -37,7 +37,19 @@
 - [x] README.md — architecture overview
 - [x] docs/multi-scale-intelligence-architecture.md
 - [x] docs/source-intelligence-architecture.md
-- [x] MULTI_SCALE_INTELLIGENCE_ARCHITECTURE.md (original spec)
+- [x] MULTI_SCALE_INTELLIGENCE_ARCHITECTURE.md (original spec, merged into docs/)
+
+### PROJECT_REVIEW.md Fixes (2026-05-28)
+- [x] source-graph-engine 5 P0 bugs (WATCH→ACTIVE, TermCandidate AttrErr, etc.)
+- [x] SKILL.md dual version field dedup
+- [x] README skill count clarified (17 skills + 1 deployment doc → 18 modules)
+- [x] README Steps sync note (Steps 0-8.6 Collect, 9-10 Render)
+- [x] config.yaml title "Daily Briefing" → "Stratum"
+- [x] Language count "4 source → 5 locales"
+- [x] Cron count 7 verified
+- [x] health-tracker vs source-profiler boundary clarified in source-profiler SKILL.md
+- [x] README + Implementation Status table
+- [x] JSON Schemas: ArticleRecord + StoryCluster (schemas/)
 
 ---
 
