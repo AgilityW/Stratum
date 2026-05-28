@@ -96,14 +96,14 @@ The daily pipeline runs Steps 0-8.6 in Collect, Steps 9-10 in Render. See `skill
 ## Output
 
 ```
-~/WorkSpace/Stratum/
-├── storage/
-│   ├── storage-{date}.md
-│   └── storage-{date}.pdf
+~/WorkSpace/Stratum/{channel}/
+├── {channel}-{date}.md
+├── {channel}-{date}.pdf
 └── data/
     ├── articles/{date}/articles.jsonl
     ├── story-clusters/{date}/story-clusters.json
     ├── event-threads/event-threads.json
+    ├── graphs/storage-graph.json
     ├── sources/{date}/source-records.jsonl
     ├── sources/profiles/{source}.json
     ├── sources/trial-pool.json
