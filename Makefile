@@ -1,4 +1,29 @@
 .PHONY: test test-unit test-schema test-data test-cov test-cov-html clean
+.PHONY: daily weekly monthly quarterly yearly
+
+# ── Pipeline ──────────────────────────────────────────────
+
+# Full daily: collect → render → PDF to WeChat
+daily:
+	hermes cron run 102deb18b91e
+
+# Weekly brief (Sunday)
+weekly:
+	hermes cron run 46f1a9a31ab2
+
+# Monthly brief (1st)
+monthly:
+	hermes cron run 505ab3342070
+
+# Quarterly review
+quarterly:
+	hermes cron run bce084d381c8
+
+# Yearly review
+yearly:
+	hermes cron run 97fb7165be35
+
+# ── Testing ───────────────────────────────────────────────
 
 # Default: run all tests
 test:
