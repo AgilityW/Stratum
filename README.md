@@ -3,7 +3,9 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Hermes](https://img.shields.io/badge/Hermes-Agent%20Skill-orange)](https://hermes-agent.nousresearch.com)
 
-A multi-scale intelligence system for the Hermes agent platform. Five time scales (daily → weekly → monthly → quarterly → yearly), six data layers (Article → StoryCluster → EventThread → TrendTheme → QuarterlyThesis → AnnualNarrative), and a decoupled source intelligence subsystem that discovers, evaluates, and manages information channels.
+> **Implementation Status**: 18 skill modules defined (SKILL.md + supporting code). Content pipeline, source intelligence, and multi-scale briefings are spec-complete. `source-graph-engine` is the only module with standalone Python code; most modules execute as LLM agent instructions on the Hermes platform. P0 Python bugs in source-graph-engine are being fixed. End-to-end pipeline testing is the next milestone (see TODO.md).
+
+A multi-scale industry intelligence system for the Hermes agent platform. Five time scales (daily → weekly → monthly → quarterly → yearly), six data layers (Article → StoryCluster → EventThread → TrendTheme → QuarterlyThesis → AnnualNarrative), and a decoupled source intelligence subsystem that discovers, evaluates, and manages information channels.
 
 ## Quick Start
 
@@ -71,7 +73,13 @@ Source pipeline consumes content outputs, never modifies them. Content pipeline 
 | `quarterly-review` | Thesis evaluation + judgment calibration | Multi-scale |
 | `yearly-review` | Annual narrative + structural change | Multi-scale |
 
-## Cron Schedule
+*Note: `stratum-deployment` is a deployment reference document, not a pipeline module. 18 pipeline skills total.*
+
+## Languages
+
+4 source languages expand to 5 locales: `zh` → `zh-CN` + `zh-TW`, plus `en`, `ja`, `ko`. Add a language in one config line. Add queries in one domain.yaml section.
+
+## Cron Schedule (7 jobs)
 
 | Time | Job | Deliver |
 |:---|:---|:---|
@@ -81,6 +89,9 @@ Source pipeline consumes content outputs, never modifies them. Content pipeline 
 | 1st of month 8:00 | Stratum - Monthly | Local |
 | 1st of quarter 8:00 | Stratum - Quarterly | Local |
 | Jan 2 8:00 | Stratum - Yearly | Local |
+| Thu 23:50 | Storage Weekly Report | WeChat |
+
+The daily pipeline runs Steps 0-8.6 in Collect, Steps 9-10 in Render. See `skills/stratum/SKILL.md` for full step definitions.
 
 ## Output
 
@@ -100,10 +111,6 @@ Source pipeline consumes content outputs, never modifies them. Content pipeline 
     ├── quarterly-theses/{quarter}/thesis-outcomes.json
     └── annual-narratives/{year}/annual-narrative.json
 ```
-
-## Languages
-
-4 languages by default: `zh-CN`, `zh-TW`, `en`, `ja`, `ko`. Add a language in one config line. Add queries in one domain.yaml section.
 
 ## Documentation
 
