@@ -116,7 +116,6 @@ The daily pipeline runs Steps 0-8.6 in Collect, Steps 9-10 in Render. See `skill
 
 - `docs/multi-scale-intelligence-architecture.md` — content architecture
 - `docs/source-intelligence-architecture.md` — source intelligence architecture
-- `MULTI_SCALE_INTELLIGENCE_ARCHITECTURE.md` — original design spec
 - `CONTRIBUTING.md` — contribution guide
 
 ## License
