@@ -24,6 +24,7 @@ config.yaml
 *.ndjson
 *.json
 !**/data/*.json
+!schemas/*.json
 
 # Python cache
 __pycache__/

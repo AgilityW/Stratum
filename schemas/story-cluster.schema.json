@@ -1,0 +1,45 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://stratum.dev/schemas/story-cluster.json",
+  "title": "StoryCluster",
+  "type": "object",
+  "required": ["id", "date", "title", "article_ids", "novelty", "confidence"],
+  "properties": {
+    "id": {"type": "string", "pattern": "^sc-\\d{4}-\\d{2}-\\d{2}-\\d{3}$"},
+    "date": {"type": "string", "format": "date", "pattern": "^\\d{4}-\\d{2}-\\d{2}$"},
+    "title": {"type": "string", "minLength": 1},
+    "article_ids": {"type": "array", "items": {"type": "string"}, "minItems": 1},
+    "source_urls": {"type": "array", "items": {"type": "string", "format": "uri"}},
+    "canonical_summary": {"type": "string"},
+    "confirmed_claims": {"type": "array", "items": {"type": "string"}},
+    "disputed_claims": {"type": "array", "items": {"type": "string"}},
+    "repeated_claims": {"type": "array", "items": {"type": "string"}},
+    "new_claims": {"type": "array", "items": {"type": "string"}},
+    "novelty": {
+      "type": "string",
+      "enum": ["first_disclosure", "update", "rehash", "rumor", "confirmation", "contradiction"]
+    },
+    "confidence": {
+      "type": "string",
+      "enum": ["A", "B", "C", "D"]
+    },
+    "impact_tags": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "enum": ["price", "customer", "supply", "technology", "competitor", "capital", "policy"]
+      }
+    },
+    "linked_entities": {"type": "array", "items": {"type": "string"}},
+    "linked_terms": {"type": "array", "items": {"type": "string"}},
+    "source_diversity": {
+      "type": "string",
+      "enum": ["low", "medium", "high"]
+    },
+    "update_type": {
+      "type": "string",
+      "enum": ["new_claim", "confirmation", "contradiction", "quantification", "second_order_signal", "rehash", "background"]
+    },
+    "linked_event_thread_id": {"type": ["string", "null"]}
+  }
+}

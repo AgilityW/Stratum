@@ -1,0 +1,49 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://stratum.dev/schemas/article-record.json",
+  "title": "ArticleRecord",
+  "type": "object",
+  "required": ["id", "url", "title", "source", "source_type", "source_locale", "published_at", "date", "artifact_type"],
+  "properties": {
+    "id": {"type": "string", "description": "SHA-256 of url+title"},
+    "url": {"type": "string", "format": "uri"},
+    "canonical_url": {"type": "string", "format": "uri"},
+    "title": {"type": "string", "minLength": 1},
+    "source": {"type": "string", "minLength": 1},
+    "source_type": {
+      "type": "string",
+      "enum": ["official", "media", "analyst", "blog", "social", "financial", "patent_db", "academic", "hiring_platform"]
+    },
+    "source_locale": {
+      "type": "string",
+      "pattern": "^[a-z]{2}(-[A-Z]{2})?$"
+    },
+    "date": {"type": "string", "format": "date", "pattern": "^\\d{4}-\\d{2}-\\d{2}$"},
+    "published_at": {"type": "string"},
+    "fetched_at": {"type": "string"},
+    "snippet": {"type": "string"},
+    "extracted_summary": {"type": "string"},
+    "content_hash": {"type": "string"},
+    "entities": {"type": "array", "items": {"type": "string"}},
+    "terms": {"type": "array", "items": {"type": "string"}},
+    "numeric_claims": {"type": "array", "items": {"type": "string"}},
+    "verification_status": {
+      "type": "string",
+      "enum": ["verified", "rejected", "uncertain"]
+    },
+    "rejection_reason": {
+      "type": ["string", "null"],
+      "enum": [null, "duplicate", "stale", "no_date", "low_relevance", "rehash"]
+    },
+    "discovery_mode": {
+      "type": "string",
+      "enum": ["baseline_seed", "event_followup", "gap_search", "source_watch", "exploratory", "trial"]
+    },
+    "artifact_type": {
+      "type": "string",
+      "enum": ["news_article", "patent", "paper", "hiring", "financial_transcript", "product_announcement", "satellite_image", "conference_abstract"]
+    },
+    "cluster_id": {"type": ["string", "null"]},
+    "event_thread_id": {"type": ["string", "null"]}
+  }
+}
