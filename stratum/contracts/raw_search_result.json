@@ -1,0 +1,17 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "RawSearchResult",
+  "description": "Canonical search result format. All engines normalize to this.",
+  "type": "object",
+  "required": ["url", "title"],
+  "properties": {
+    "url": {"type": "string", "format": "uri"},
+    "title": {"type": "string"},
+    "snippet": {"type": "string"},
+    "description": {"type": "string"},
+    "datePublished": {"type": "string"},
+    "engine": {"type": "string", "enum": ["bocha", "tavily", "unknown"]},
+    "query_used": {"type": "string"},
+    "date_source": {"type": "string", "enum": ["web_extract", "snippet_regex", "none"]}
+  }
+}

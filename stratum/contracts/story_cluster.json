@@ -1,0 +1,21 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "StoryCluster",
+  "description": "Cluster of related articles. Output of cluster stage.",
+  "type": "object",
+  "required": ["id", "canonical_title", "confidence", "article_ids"],
+  "properties": {
+    "id": {"type": "string", "pattern": "^sc-[a-z_]+-\\d{4}$"},
+    "canonical_title": {"type": "string"},
+    "canonical_summary": {"type": "string"},
+    "confidence": {"type": "string", "enum": ["high", "medium", "low"]},
+    "confidence_score": {"type": "number", "minimum": 0, "maximum": 1},
+    "article_ids": {"type": "array", "items": {"type": "string"}, "minItems": 2},
+    "article_count": {"type": "integer", "minimum": 2},
+    "source_types": {"type": "array", "items": {"type": "string"}},
+    "locales": {"type": "array", "items": {"type": "string"}},
+    "entities": {"type": "array", "items": {"type": "string"}},
+    "terms": {"type": "array", "items": {"type": "string"}},
+    "created": {"type": "string", "format": "date"}
+  }
+}
