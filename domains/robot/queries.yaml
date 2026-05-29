@@ -1,0 +1,16 @@
+# Robot Domain — Search Queries (Placeholder)
+# Replace with real queries when activating the domain.
+
+seed_queries:
+  en:
+    - "humanoid robot launch 2026"
+    - "embodied AI robot investment"
+    - "Boston Dynamics Tesla Optimus Figure AI"
+    - "robot dexterous manipulation breakthrough"
+  zh-CN:
+    - "人形机器人 发布 2026"
+    - "具身智能 融资 投资"
+    - "宇树 波士顿动力 Tesla Optimus"
+    - "机器人 灵巧手 突破"
+
+gap_searches: []

@@ -1,0 +1,117 @@
+# Robot Domain — Placeholder
+# Minimal domain config for framework validation.
+# Replace with real entities/terms/sources when activating.
+
+domain:
+  id: robot
+  title: "Robot Industry Briefing"
+  emoji: 🤖
+
+pipeline:
+  blocklist:
+    social:
+      - youtube.com
+      - reddit.com
+      - twitter.com
+      - x.com
+      - facebook.com
+      - instagram.com
+      - tiktok.com
+    encyclopedia:
+      - wikipedia.org
+      - baike.baidu.com
+    ecommerce:
+      - amazon.com
+      - jd.com
+    qa_forums:
+      - quora.com
+      - zhihu.com
+    job_boards:
+      - linkedin.com
+
+  low_priority_domains:
+    - bing.com
+    - google.com
+
+  magnitude_rules:
+    revenue_max_usd: 1000000000000
+    share_max_pct: 100
+    growth_max_pct: 1000
+    chip_price_max_usd: 10000
+
+  date_window:
+    stale_days: 2
+    max_future_days: 1
+
+  source_classification:
+    official: []
+    analyst: []
+    media:
+      - reuters.com
+      - bloomberg.com
+      - nikkei.com
+    blog: []
+    social: []
+
+  artifact_types:
+    financial_transcript:
+      pattern: "(earnings|quarterly\\s+result|fiscal\\s+year)"
+    product_announcement:
+      pattern: "(announce|launch|release|unveil|推出|发布)"
+    patent:
+      pattern: "(patent|专利)"
+    paper:
+      pattern: "(arXiv|Nature|Science|IEEE)"
+
+  flat_entities:
+    - "Boston Dynamics"
+    - "Tesla"
+    - "Figure AI"
+    - "Agility Robotics"
+    - "Unitree"
+    - "宇树"
+
+  flat_terms:
+    - "humanoid"
+    - "humanoid robot"
+    - "embodied AI"
+    - "actuator"
+    - "dexterous"
+    - "manipulation"
+    - "locomotion"
+    - "ROS"
+    - "SLAM"
+    - "reinforcement learning"
+    - "sim-to-real"
+
+  numeric_patterns:
+    - '(\\+?\\d+(?:\\.\\d+)?%\\s*(?:QoQ|YoY))'
+    - '(\\$\\d+(?:\\.\\d+)?\\s*(?:billion|million|B|M)\\b)'
+
+  source_aliases:
+    reuters: "reuters.com"
+    bloomberg: "bloomberg.com"
+
+  locale_rules:
+    domain_patterns:
+      - {pattern: ".jp", locale: ja}
+      - {pattern: ".cn", locale: "zh-CN"}
+      - {pattern: ".tw", locale: "zh-TW"}
+      - {pattern: ".kr", locale: ko}
+    default_locale: en
+
+editorial:
+  platform_admission:
+    companies: []
+    test: "Does this change judgment about the robotics industry?"
+  impact_tags:
+    - technology
+    - product
+    - capital
+    - policy
+    - supply_chain
+  content_routing:
+    threads: []
+    other_max_items: 5
+    supplement_window: "24-48h"
+    background_window: ">48h"
