@@ -27,6 +27,7 @@ Usage:
         --domain domains/storage/domain.yaml \
         --footer "由 AI Agent 自动生成 · 每日 7:30 CST"
 """
+from __future__ import annotations
 import argparse, re, os, subprocess, sys, yaml
 from pathlib import Path
 from datetime import datetime, timezone, timedelta

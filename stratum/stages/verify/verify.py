@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """verify.py — Deterministic article verification engine.
 
+from __future__ import annotations
+
 Domain-agnostic. All rules (blocklist, date window, magnitude checks) loaded from domain.yaml.
 
 Input:  JSON array of enriched search results (with datePublished from enrich stage)
