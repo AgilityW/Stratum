@@ -121,6 +121,7 @@ class EventRecord:
     parent_event: Optional[str] = None    # If this is a sub-event of another
     child_events: list[str] = field(default_factory=list)  # Sub-events merged here
     source_ids: list[str] = field(default_factory=list)    # Originating source article IDs
+    thread_id: Optional[str] = None                         # Agent EventThread ID for idempotent bridge
 
     # Date precision — multiple date facets
     occurred_at: Optional[str] = None        # When the event actually happened

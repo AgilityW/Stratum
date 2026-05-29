@@ -244,6 +244,95 @@ class TestIngest:
         assert event is None
         assert repo.count() == 0
 
+    # ── Idempotency tests ──
+
+    def test_ingest_same_thread_id_is_idempotent(self, sample_thread, repo_and_state, taxonomy):
+        """Re-ingesting the same thread_id should UPDATE, not create duplicate."""
+        from story_bridge import ingest_event_thread
+        repo, state = repo_and_state
+
+        # First ingestion
+        e1 = ingest_event_thread(
+            sample_thread, "storage", "2026-05-28", repo, state, taxonomy,
+            briefing_id="daily-2026-05-28",
+        )
+        assert e1 is not None
+        assert repo.count() == 1
+        assert e1.thread_id == "et-2026-001"
+
+        # Second ingestion — same thread_id
+        e2 = ingest_event_thread(
+            sample_thread, "storage", "2026-05-28", repo, state, taxonomy,
+            briefing_id="daily-2026-05-28",
+        )
+        assert e2 is not None
+        assert repo.count() == 1  # Still only one record!
+        assert e2.id == e1.id    # Same event_id
+
+    def test_ingest_new_briefing_id_appends_scale_ref(self, sample_thread, repo_and_state, taxonomy):
+        """Re-ingesting with a different briefing_id appends a new ScaleRef."""
+        from story_bridge import ingest_event_thread
+        repo, state = repo_and_state
+
+        # First briefing
+        e1 = ingest_event_thread(
+            sample_thread, "storage", "2026-05-28", repo, state, taxonomy,
+            briefing_id="daily-2026-05-28",
+        )
+        assert len(e1.scale_refs) == 1
+
+        # Next day's briefing — same thread, different briefing_id
+        sample_thread["last_updated"] = "2026-05-29"
+        e2 = ingest_event_thread(
+            sample_thread, "storage", "2026-05-29", repo, state, taxonomy,
+            briefing_id="daily-2026-05-29",
+        )
+        assert len(e2.scale_refs) == 2
+        assert e2.scale_refs[0].briefing_id == "daily-2026-05-28"
+        assert e2.scale_refs[1].briefing_id == "daily-2026-05-29"
+        assert repo.count() == 1  # Still one record
+
+    def test_ingest_same_briefing_no_duplicate_scale_ref(self, sample_thread, repo_and_state, taxonomy):
+        """Re-ingesting with the same briefing_id does NOT add duplicate ScaleRef."""
+        from story_bridge import ingest_event_thread
+        repo, state = repo_and_state
+
+        e1 = ingest_event_thread(
+            sample_thread, "storage", "2026-05-28", repo, state, taxonomy,
+            briefing_id="daily-2026-05-28",
+        )
+        assert len(e1.scale_refs) == 1
+
+        e2 = ingest_event_thread(
+            sample_thread, "storage", "2026-05-28", repo, state, taxonomy,
+            briefing_id="daily-2026-05-28",
+        )
+        assert len(e2.scale_refs) == 1  # Not duplicated
+
+    def test_ingest_updates_metadata_on_reeingest(self, sample_thread, repo_and_state, taxonomy):
+        """Re-ingesting refreshes current_assessment, open_questions, etc."""
+        from story_bridge import ingest_event_thread
+        repo, state = repo_and_state
+
+        e1 = ingest_event_thread(
+            sample_thread, "storage", "2026-05-28", repo, state, taxonomy,
+            briefing_id="daily-2026-05-28",
+        )
+
+        # Simulate Agent updating the assessment
+        sample_thread["current_assessment"] = "UPDATED: CXMT IPO finalized at ¥45/share"
+        sample_thread["open_questions"] = ["New Q: Post-IPO volume ramp?"]
+        sample_thread["status"] = "cooling"
+
+        e2 = ingest_event_thread(
+            sample_thread, "storage", "2026-05-29", repo, state, taxonomy,
+            briefing_id="daily-2026-05-29",
+        )
+        assert e2.current_assessment == "UPDATED: CXMT IPO finalized at ¥45/share"
+        assert "New Q: Post-IPO volume ramp?" in e2.open_questions
+        assert e2.status == "cooling"
+        assert e2.last_updated == "2026-05-29"
+
 
 class TestBatch:
     """Test ingest_batch() — bulk ingestion."""

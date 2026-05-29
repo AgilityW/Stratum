@@ -5,6 +5,9 @@ Does not modify any existing files. Called by pipeline.py after Agent Edit stage
 
 Flow:
   Agent EventThread (dict) → convert → EventRecord → gate → EventStore
+
+Idempotent: re-ingesting the same thread_id updates the existing record
+instead of creating a duplicate.
 """
 
 import os
@@ -37,6 +40,9 @@ def ingest_event_thread(
 ) -> Optional[EventRecord]:
     """Convert an Agent-produced EventThread dict to an EventRecord and persist it.
 
+    IDEMPOTENT: If a record with the same thread_id already exists, updates it
+    (appends scale_ref + refreshes metadata) instead of creating a duplicate.
+
     Args:
         thread: Agent EventThread dict (from event-threads.json)
         domain_id: e.g. "storage"
@@ -46,14 +52,21 @@ def ingest_event_thread(
         taxonomy: Taxonomy for tag normalization
         briefing_id: e.g. "daily-2026-05-28" for scale_ref injection
 
-    Returns the created EventRecord, or None if gate rejected it.
+    Returns the created/updated EventRecord, or None if gate rejected it.
     """
-    # ── 1. Convert ──
+    thread_id = thread.get("id", "")
+
+    # ── 0. Idempotency check ──
+    existing = repo.find_by_thread_id(thread_id) if thread_id else None
+    if existing:
+        return _update_existing(existing, thread, run_date, repo, briefing_id)
+
+    # ── 1. Convert (only for new events — consumes seq) ──
     event = _convert(thread, domain_id, state, taxonomy, run_date)
 
     # ── 2. Gate ──
-    existing = repo.all()
-    result = gate_event(event, existing)
+    all_events = repo.all()
+    result = gate_event(event, all_events)
     if not result.passed:
         print(f"[story-bridge] Gate rejected '{event.title}': {'; '.join(result.errors)}",
               file=sys.stderr)
@@ -89,7 +102,12 @@ def ingest_batch(
     *,
     briefing_id: str = "",
 ) -> dict:
-    """Ingest a batch of EventThreads. Returns stats dict."""
+    """Ingest a batch of EventThreads. Returns stats dict.
+
+    Idempotent: re-ingesting the same threads updates existing records
+    without creating duplicates. The stats count reflects events that were
+    either newly created OR updated (not rejected).
+    """
     stats = {"ingested": 0, "rejected": 0, "errors": []}
     for thread in threads:
         try:
@@ -105,6 +123,47 @@ def ingest_batch(
             stats["rejected"] += 1
             stats["errors"].append({"thread_id": thread.get("id", "?"), "error": str(e)})
     return stats
+
+
+# ── Private: Update existing ──
+
+def _update_existing(
+    existing: EventRecord,
+    thread: dict,
+    run_date: str,
+    repo: JsonlEventRepository,
+    briefing_id: str = "",
+) -> EventRecord:
+    """Update an existing EventRecord with new scale_ref and metadata from re-ingestion.
+
+    - Refreshes current_assessment, open_questions, watch_signals from Agent output
+    - Respects status changes from Agent
+    - Appends ScaleRef only if this briefing_id hasn't been recorded yet
+    """
+    existing.last_updated = run_date
+
+    # Refresh Agent-produced fields
+    existing.current_assessment = thread.get("current_assessment", existing.current_assessment)
+    existing.open_questions = thread.get("open_questions", existing.open_questions)
+    existing.watch_signals = thread.get("watch_signals", existing.watch_signals)
+    if "status" in thread:
+        existing.status = thread["status"]
+
+    if briefing_id:
+        already_has = any(sr.briefing_id == briefing_id for sr in existing.scale_refs)
+        if not already_has:
+            existing.scale_refs.append(ScaleRef(
+                scale="daily",
+                briefing_id=briefing_id,
+                date=run_date,
+                prominence=Prominence.LEAD if thread.get("priority", 3) <= 2 else Prominence.SUPPORTING,
+                synthesis=existing.current_assessment[:300] if existing.current_assessment else existing.title,
+            ))
+
+    repo.update(existing)
+    print(f"[story-bridge] Updated existing event '{existing.title}' (thread_id={existing.thread_id})",
+          file=sys.stderr)
+    return existing
 
 
 # ── Private: Conversion ──
@@ -152,6 +211,7 @@ def _convert(
         timeline=timeline,
         scale_refs=[],  # Will be added after gate passes
         source_ids=thread.get("parent_cluster_ids", []),
+        thread_id=thread.get("id"),          # Agent EventThread ID for idempotent bridge
         occurred_at=occurred_at,
         first_reported_at=thread.get("created", run_date),
         status=thread.get("status", "emerging"),

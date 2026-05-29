@@ -196,6 +196,25 @@ class TestEventRepository:
         repo2 = JsonlEventRepository(repo_dir, "storage")
         assert repo2.count() == 2
 
+    def test_find_by_thread_id_found(self, event_repo):
+        event = make_event(1, thread_id="et-001")
+        event_repo.add(event)
+        found = event_repo.find_by_thread_id("et-001")
+        assert found is not None
+        assert found.id == "event-storage-0001"
+
+    def test_find_by_thread_id_not_found(self, event_repo):
+        event_repo.add(make_event(1, thread_id="et-001"))
+        assert event_repo.find_by_thread_id("et-999") is None
+
+    def test_find_by_thread_id_none(self, event_repo):
+        event_repo.add(make_event(1))  # thread_id=None
+        assert event_repo.find_by_thread_id(None) is None
+        assert event_repo.find_by_thread_id("") is None
+
+    def test_find_by_thread_id_empty_repo(self, event_repo):
+        assert event_repo.find_by_thread_id("et-001") is None
+
 
 # ── CausalRepository ──
 

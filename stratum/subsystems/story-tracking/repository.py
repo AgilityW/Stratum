@@ -18,7 +18,7 @@ from abc import ABC, abstractmethod
 from datetime import datetime
 from typing import Optional
 
-from story_contracts import EventRecord, CausalEdge, Judgment, to_jsonl_line
+from story_contracts import EventRecord, CausalEdge, Judgment, to_jsonl_line, TimelineEntry, ScaleRef, Prominence, UpdateType
 
 
 # ═══════════════════════════════════════════════════
@@ -89,6 +89,9 @@ class EventRepository(ABC):
     @abstractmethod
     def all(self) -> list[EventRecord]: ...
 
+    @abstractmethod
+    def find_by_thread_id(self, thread_id: str) -> Optional[EventRecord]: ...
+
 
 class JsonlEventRepository(EventRepository):
     """JSONL-backed event storage. One EventRecord per line."""
@@ -147,11 +150,52 @@ class JsonlEventRepository(EventRepository):
                 records.append(self._deserialize(data))
         return records
 
+    def find_by_thread_id(self, thread_id: str) -> Optional[EventRecord]:
+        """Find an EventRecord by its Agent EventThread ID. Returns None if not found."""
+        if not thread_id:
+            return None
+        if not os.path.exists(self._file_path):
+            return None
+        with open(self._file_path, "r") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                data = json.loads(line)
+                if data.get("thread_id") == thread_id:
+                    return self._deserialize(data)
+        return None
+
     def count(self) -> int:
         return len(self.all())
 
     @staticmethod
     def _deserialize(data: dict) -> EventRecord:
+        """Deserialize a dict from JSONL into an EventRecord with proper nested types."""
+        # Reconstruct TimelineEntry objects from raw dicts
+        if "timeline" in data and data["timeline"]:
+            timeline = []
+            for t in data["timeline"]:
+                if isinstance(t, dict):
+                    t = dict(t)  # copy
+                    if "update_type" in t and isinstance(t["update_type"], str):
+                        t["update_type"] = UpdateType(t["update_type"])
+                    timeline.append(TimelineEntry(**t))
+                else:
+                    timeline.append(t)
+            data = {**data, "timeline": timeline}
+        # Reconstruct ScaleRef objects from raw dicts
+        if "scale_refs" in data and data["scale_refs"]:
+            scale_refs = []
+            for s in data["scale_refs"]:
+                if isinstance(s, dict):
+                    s = dict(s)  # copy
+                    if "prominence" in s and isinstance(s["prominence"], str):
+                        s["prominence"] = Prominence(s["prominence"])
+                    scale_refs.append(ScaleRef(**s))
+                else:
+                    scale_refs.append(s)
+            data = {**data, "scale_refs": scale_refs}
         return EventRecord(**data)
 
 
