@@ -1,6 +1,5 @@
 # Event Thread — Cross-day story tracking.
 #
-# STATUS: PLACEHOLDER (v5.0)
-# Implemented as agent instruction in skills/event-thread-engine/SKILL.md.
-# Core logic not yet migrated to Python.
-# Target: match StoryClusters across days, build EventThread objects.
+# STATUS: ACTIVE (v5.0)
+# Python: event_thread.py — deterministic core (lifecycle, matching, watch queries)
+# Agent:  skills/event-thread-engine/SKILL.md — LLM-driven semantic matching
