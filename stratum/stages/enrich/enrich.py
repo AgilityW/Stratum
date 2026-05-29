@@ -2,10 +2,13 @@
 """enrich.py — Extract publication dates from raw search results.
 
 Domain-agnostic. Uses regex patterns to extract dates from snippet/description text.
-No domain-specific data.
+No domain-specific data. No network access.
 
-Input: raw search results JSON array (url, title, snippet, datePublished, ...)
-Output: same array with datePublished filled where possible
+Input:  JSON array of raw search results ({url, title, snippet, datePublished, ...})
+Output: JSON array — same records as input, datePublished filled where possible
+Side effects: None. Pure function — reads input file, writes output file.
+Invariants:  input record count == output record count (no additions or deletions)
+Error behavior: Records with no extractable date retain empty datePublished + date_source="none"
 
 Usage:
     python3 enrich.py --input raw.json --output enriched.json --date 2026-05-28

@@ -115,3 +115,22 @@ editorial:
     other_max_items: 5
     supplement_window: "24-48h"
     background_window: ">48h"
+
+  # ── Render Stage: Content Tag Detection ──
+  render_tags:
+    tech:
+      label: tech
+      class: tag-tech
+      keywords: [robot, actuator, sensor, motor, servo, gripper, manipulator, locomotion, autonomy, 机器, 传感器, 电机]
+    product:
+      label: product
+      class: tag-new
+      keywords: [announce, launch, release, unveil, debut, 推出, 发布]
+    capital:
+      label: capital
+      class: tag-price
+      keywords: [funding, series, raise, 融资, IPO, 上市, acquisition, 收购]
+    supply_chain:
+      label: supply
+      class: tag-supply
+      keywords: [supply, capacity, factory, 供应, 产能, 工厂, 扩产]

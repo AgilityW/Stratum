@@ -1,8 +1,15 @@
 #!/usr/bin/env python3
 """cluster.py — Deterministic story clustering.
 
-Domain-agnostic. Groups articles by entity/term overlap using Jaccard similarity.
-Minimum 2 articles per cluster. Assigns confidence scores.
+Domain-agnostic. Groups articles by entity/term overlap using Jaccard similarity (Union-Find).
+Minimum 2 articles per cluster. Assigns confidence scores based on source diversity + article count.
+
+Input:  JSONL — normalized ArticleRecords with {entities, terms, source_type, source_locale, ...}
+Output: JSON — {date, domain, total_articles, clustered_articles, clusters: [StoryCluster], unclustered}
+Side effects: None. Pure function — reads input, writes output.
+Invariants:  Articles with < 2 total → empty clusters array, unclustered = total_articles.
+             < 2 articles per group → silently excluded (not a cluster).
+Error behavior: Empty input → empty result with total_articles=0.
 
 Usage:
     python3 cluster.py --input articles.jsonl --output clusters.json \

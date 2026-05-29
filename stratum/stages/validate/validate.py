@@ -1,7 +1,15 @@
 #!/usr/bin/env python3
-"""validate.py — Verify that briefing .md content comes from verified articles.
+"""validate.py — Content gate: verify briefing .md claims trace back to verified articles.
 
 Domain-agnostic. Source aliases loaded from domain.yaml.
+
+Input:  briefing.md (LLM-written markdown) + articles.jsonl (verified/normalized articles)
+Output: JSON to stdout — {status: "ok"|"violations", items, violations, details}
+Side effects: None. Reads files, writes nothing except stderr logs.
+Invariants:  Every cited source in .md must match a domain in articles.jsonl.
+             Every cited date must be within 48h of run_date.
+Error behavior: Source mismatch → SOURCE violation. Stale date → DATE violation.
+                Missing source/date → flagged. Exit code 0 if clean, 1 if violations.
 
 Usage:
     python3 validate.py --md briefing.md --articles articles.jsonl \

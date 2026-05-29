@@ -1,7 +1,13 @@
 #!/usr/bin/env python3
 """verify.py — Deterministic article verification engine.
 
-Domain-agnostic. All rules loaded from domain.yaml via --domain parameter.
+Domain-agnostic. All rules (blocklist, date window, magnitude checks) loaded from domain.yaml.
+
+Input:  JSON array of enriched search results (with datePublished from enrich stage)
+Output: JSONL — one record per input, each with {verification_status, rejection_reason, published_at, ...}
+Side effects: None. Pure function — reads input file + domain.yaml, writes output file.
+Invariants:  input count == output count; every record has verification_status ∈ {verified, rejected}
+Error behavior: Records failing blocklist → rejected. No date → NO_DATE. Future date → FUTURE. Stale date → STALE.
 
 Usage:
     python3 verify.py --input enriched.json --output verified.jsonl \

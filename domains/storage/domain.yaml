@@ -1015,3 +1015,23 @@ editorial:
       - zh-CN
       - zh-TW
     guidance: "Shift from narrative to business judgment. Probe AVL status, yield rates, volume, customer qualification."
+
+  # ── Render Stage: Content Tag Detection ──
+  # Keywords → (label, css_class) for visual tags in HTML/PDF output.
+  render_tags:
+    new:
+      label: new
+      class: tag-new
+      keywords: [announce, launch, release, unveil, debut, 推出, 发布, 発表]
+    tech:
+      label: tech
+      class: tag-tech
+      keywords: [nm, layer, process, architecture, 制程, 工艺, 堆叠]
+    supply:
+      label: supply
+      class: tag-supply
+      keywords: [capacity, expansion, fab, plant, 扩产, 产能, 晶圆厂]
+    price:
+      label: price
+      class: tag-price
+      keywords: [price, hike, shortage, 涨价, 价格]

@@ -1,14 +1,22 @@
 #!/usr/bin/env python3
 """render.py — MD→HTML→PDF for Stratum daily briefing.
 
-Domain-agnostic. Uses Chrome headless for PDF.
+Domain-agnostic. Tag detection keywords and Chrome path loaded from domain.yaml / config.
 Template expects: {{TITLE}}, {{DATE}}, {{WEEKDAY}}, {{CONTENT}}, {{FOOTER}}.
+
+Input:  briefing.md (LLM-written markdown) + domain.yaml (for render_tags)
+Output: briefing.html + briefing.pdf in --output-dir
+Side effects: Writes files. Invokes Chrome headless subprocess (system call).
+Invariants:  HTML output is self-contained (all CSS inline). PDF via Chrome --headless.
+Error behavior: Chrome not found → PDF step skipped, HTML still generated.
+                Missing --domain → tags disabled (empty dict).
 
 Usage:
     python3 render.py --input briefing.md --output-dir /path/to/output \
-        --title "存储早报" --date "2026年5月30日" --weekday "周五"
+        --title "存储早报" --date "2026年5月30日" --weekday "周五" \
+        --domain domains/storage/domain.yaml
 """
-import argparse, re, os, subprocess, sys
+import argparse, re, os, subprocess, sys, yaml
 from datetime import datetime, timezone, timedelta
 
 CST = timezone(timedelta(hours=8))
@@ -23,17 +31,29 @@ def esc(t):
     return t
 
 
-def detect_tags(title, body):
+def load_render_tags(domain_path: str | None) -> dict:
+    """Load render_tags from domain.yaml editorial section. Returns empty dict if not found."""
+    if not domain_path:
+        return {}
+    try:
+        with open(domain_path) as f:
+            config = yaml.safe_load(f)
+        editorial = config.get("editorial", {})
+        return editorial.get("render_tags", {})
+    except Exception:
+        return {}
+
+
+def detect_tags(title, body, tag_config):
+    """Match title+body against domain-configured keyword sets. Returns [(label, css_class), ...]."""
     tags = []
+    if not tag_config:
+        return tags
     t = (title + " " + body).lower()
-    if any(w in t for w in ["announce", "launch", "release", "unveil", "debut", "推出", "发布", "発表"]):
-        tags.append(("new", "tag-new"))
-    if any(w in t for w in ["nm", "layer", "process", "architecture", "制程", "工艺", "堆叠"]):
-        tags.append(("tech", "tag-tech"))
-    if any(w in t for w in ["capacity", "expansion", "fab", "plant", "扩产", "产能", "晶圆厂"]):
-        tags.append(("supply", "tag-supply"))
-    if any(w in t for w in ["price", "hike", "shortage", "涨价", "价格"]):
-        tags.append(("price", "tag-price"))
+    for tag_id, cfg in tag_config.items():
+        keywords = cfg.get("keywords", [])
+        if any(w.lower() in t for w in keywords):
+            tags.append((cfg.get("label", tag_id), cfg.get("class", f"tag-{tag_id}")))
     return tags
 
 
@@ -206,6 +226,7 @@ def main():
     parser.add_argument("--title", default="Briefing", help="Page title")
     parser.add_argument("--date", help="Date string (e.g. '2026年5月30日')")
     parser.add_argument("--weekday", help="Weekday (e.g. '周五')")
+    parser.add_argument("--domain", help="Path to domain.yaml (for render_tags)")
     args = parser.parse_args()
 
     # Auto-derive date/weekday if not provided

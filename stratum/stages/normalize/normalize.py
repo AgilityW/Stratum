@@ -1,7 +1,14 @@
 #!/usr/bin/env python3
 """normalize.py — Deterministic article normalization.
 
-Domain-agnostic. All classification rules, entities, and terms loaded from domain.yaml.
+Domain-agnostic. All classification rules, entities, terms loaded from domain.yaml.
+
+Input:  JSONL — verified articles with {verification_status, url, title, snippet, published_at, ...}
+Output: JSONL — normalized ArticleRecords with {source_type, source_locale, entities, terms, content_hash, ...}
+Side effects: None. Pure function — reads input + domain.yaml, writes output.
+Invariants:  Filters verification_status != "verified" (rejected articles silently dropped).
+             SHA-256 dedup: same url+title → first occurrence kept, subsequent ones dropped.
+Error behavior: Non-verified records → skipped (not written to output). Missing fields → empty defaults.
 
 Usage:
     python3 normalize.py --input verified.jsonl --output articles.jsonl \
