@@ -36,6 +36,9 @@ class EventThread:
     open_questions: list[str] = field(default_factory=list)
     watch_signals: list[str] = field(default_factory=list)
     close_conditions: list[str] = field(default_factory=list)
+    briefing_refs: list[dict] = field(default_factory=list)
+    # briefing_refs format: {"briefing_id": str, "scale": str, "date": str,
+    #                        "section": str, "prominence": str}
 
 
 # ── Lifecycle State Machine ──

@@ -38,7 +38,7 @@ from trial import load_trial_pool, save_trial_pool, add_candidate, track_samples
 from health import rebuild_stats, get_dry_sources, get_top_contributors, write_daily_record
 from coverage import detect_gaps, generate_followup_queries
 from enricher import compute_enriched_eval
-from contracts import (
+from stratum.contracts import (
     RecordInput, RecordOutput, ProfileOutput,
     DiscoverCandidate, DiscoverOutput,
     TrialOutput, EvalResult, EvalDimensions, EvalOutput,

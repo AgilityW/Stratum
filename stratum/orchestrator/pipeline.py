@@ -191,6 +191,10 @@ def main():
         sys.exit(1)
 
     # ── Stage 6: Agent Edit (LLM) ──
+    # Generate story context before the agent runs
+    story_ctx_path = os.path.join(paths["data_dir"], "story_context.json")
+    _try_generate_story_context(args.domain, args.date, paths, story_ctx_path)
+
     if args.skip_agent:
         if not os.path.exists(paths["briefing_md"]):
             print(f"⚠️  --skip-agent but no briefing.md at {paths['briefing_md']}", file=sys.stderr)
@@ -228,6 +232,9 @@ def main():
         print("\n⚠️  Skipping render: briefing.md not found", file=sys.stderr)
     print(f"{'='*60}", file=sys.stderr)
 
+    # ── Story Bridge: ingest event-threads into Story-Tracking EventStore ──
+    _try_ingest_event_threads(args.domain, args.date, paths)
+
     # ── Summary ──
     article_count = 0
     if os.path.exists(paths["articles"]):
@@ -257,6 +264,99 @@ def main():
         "clusters": cluster_count,
         "paths": {k: v for k, v in paths.items()},
     }))
+
+
+# ── Story-Tracking Integration Helpers ──
+
+def _try_generate_story_context(domain_id: str, run_date: str, paths: dict, output_path: str):
+    """Generate BriefingContext for the agent, if story-tracking storage exists."""
+    try:
+        import sys as _sys
+        _sys.path.insert(0, os.path.join(PROJECT_ROOT, "stratum", "subsystems", "story-tracking"))
+        from briefing_context import generate_context
+        from repository import JsonlEventRepository, JsonlCausalRepository, JsonlJudgmentRepository
+        from taxonomy import Taxonomy
+
+        output_dir = os.path.expanduser("~/WorkSpace/Stratum")
+        data_dir = os.path.join(output_dir, domain_id, "data", "story-tracking")
+        if not os.path.isdir(data_dir):
+            return  # No story-tracking data yet, skip
+
+        events = JsonlEventRepository(data_dir, domain_id).all()
+        if not events:
+            return  # Empty store, nothing to carry forward
+
+        edges = JsonlCausalRepository(data_dir).all()
+        judgments = JsonlJudgmentRepository(data_dir).all()
+        taxonomy_path = os.path.join(DOMAINS_DIR, domain_id, "taxonomy.yaml")
+        taxonomy = Taxonomy(taxonomy_path)
+
+        ctx = generate_context(domain_id, "daily", run_date, events, edges, judgments)
+        import json as _json
+        with open(output_path, "w") as f:
+            _json.dump({
+                "scale": ctx.scale,
+                "date": ctx.date,
+                "domain_id": ctx.domain_id,
+                "carried_forward": ctx.carried_forward,
+                "due_judgments": ctx.due_judgments,
+                "coverage_gaps": ctx.coverage_gaps,
+                "active_causal_chains": ctx.active_causal_chains,
+                "unassigned_events": ctx.unassigned_events,
+            }, f, ensure_ascii=False, indent=2, default=str)
+
+        print(f"\n📋 Story context written: {output_path} "
+              f"({len(ctx.carried_forward)} carried, {len(ctx.due_judgments)} due, "
+              f"{len(ctx.coverage_gaps)} gaps)", file=sys.stderr)
+    except Exception as e:
+        print(f"⚠️  Story context generation skipped: {e}", file=sys.stderr)
+
+
+def _try_ingest_event_threads(domain_id: str, run_date: str, paths: dict):
+    """Ingest Agent-produced event-threads.json into the Story-Tracking EventStore."""
+    event_threads_path = os.path.join(paths["data_dir"], "..", "event-threads", "event-threads.json")
+    # Also check the alternate path
+    alt_path = os.path.join(paths["data_dir"], "event-threads.json")
+    if os.path.exists(alt_path):
+        event_threads_path = alt_path
+
+    if not os.path.exists(event_threads_path):
+        return  # No event-threads produced yet
+
+    try:
+        import json as _json
+        with open(event_threads_path) as f:
+            data = _json.load(f)
+        threads = data.get("threads", [])
+
+        if not threads:
+            return
+
+        import sys as _sys
+        _sys.path.insert(0, os.path.join(PROJECT_ROOT, "stratum", "subsystems", "story-tracking"))
+        _sys.path.insert(0, os.path.join(PROJECT_ROOT, "stratum", "orchestrator"))
+        from story_bridge import ingest_batch
+        from repository import JsonlEventRepository, StateManager
+        from taxonomy import Taxonomy
+
+        output_dir = os.path.expanduser("~/WorkSpace/Stratum")
+        data_dir = os.path.join(output_dir, domain_id, "data", "story-tracking")
+        repo = JsonlEventRepository(data_dir, domain_id)
+        state = StateManager(data_dir)
+        taxonomy_path = os.path.join(DOMAINS_DIR, domain_id, "taxonomy.yaml")
+        taxonomy = Taxonomy(taxonomy_path)
+
+        briefing_id = f"daily-{run_date}"
+        stats = ingest_batch(threads, domain_id, run_date, repo, state, taxonomy,
+                            briefing_id=briefing_id)
+
+        print(f"\n📊 Story Bridge: {stats['ingested']} ingested, {stats['rejected']} rejected "
+              f"→ {data_dir}/events.jsonl ({repo.count()} total)", file=sys.stderr)
+        if stats["errors"]:
+            for err in stats["errors"]:
+                print(f"  ⚠️  {err}", file=sys.stderr)
+    except Exception as e:
+        print(f"⚠️  Story Bridge ingestion skipped: {e}", file=sys.stderr)
 
 
 if __name__ == "__main__":

@@ -1,0 +1,215 @@
+# Storage domain taxonomy — controlled vocabulary for topic_tags and entity_tags.
+#
+# Used by the agent to normalize tags before event creation.
+# Query engine does case-insensitive matching on the ID and aliases.
+#
+# Format:
+#   topics:
+#     - id: unique-kebab-case
+#       label: Human-readable name
+#       aliases: [alternative names, abbreviations]
+#       parent: parent_topic_id (optional, for hierarchy)
+#       description: Brief explanation
+#   entities:
+#     - id: unique-kebab-case
+#       label: Human-readable name
+#       type: company | person | technology | product
+#       aliases: [alternative names, abbreviations, local-language names]
+#       parent: parent_entity_id (optional)
+
+topics:
+  # ── Memory Technologies ──
+  - id: hbm
+    label: "HBM (High Bandwidth Memory)"
+    aliases: ["HBM3", "HBM3E", "HBM4", "High Bandwidth Memory"]
+    parent: memory-interface
+    description: "Stacked DRAM for AI/HPC — Samsung, SK Hynix, Micron competing"
+
+  - id: ddr5
+    label: "DDR5"
+    aliases: ["DDR5 SDRAM", "server DDR5", "client DDR5"]
+    parent: memory-interface
+    description: "Mainstream DRAM standard — server/PC migration from DDR4"
+
+  - id: lpddr
+    label: "LPDDR"
+    aliases: ["LPDDR5", "LPDDR5X", "LPDDR6", "mobile DRAM"]
+    parent: memory-interface
+    description: "Low-power DRAM for mobile/edge — Apple, Qualcomm, MediaTek"
+
+  - id: gddr
+    label: "GDDR"
+    aliases: ["GDDR6", "GDDR6X", "GDDR7", "graphics memory"]
+    parent: memory-interface
+    description: "Graphics DRAM — NVIDIA, AMD GPUs"
+
+  - id: memory-interface
+    label: "Memory Interface Technologies"
+    aliases: ["DRAM interface", "memory standards"]
+    description: "Parent: DRAM interface standards (HBM, DDR5, LPDDR, GDDR)"
+
+  - id: nand
+    label: "NAND Flash"
+    aliases: ["3D NAND", "NAND flash", "QLC NAND", "TLC NAND", "NAND pricing"]
+    parent: storage-media
+    description: "NAND flash memory — Samsung, SK Hynix, Micron, Kioxia, WDC, YMTC"
+
+  - id: storage-media
+    label: "Storage Media"
+    aliases: ["flash memory", "storage class"]
+    description: "Parent: NAND + emerging storage media"
+
+  # ── Industry Dynamics ──
+  - id: capex
+    label: "CapEx & Fab Investment"
+    aliases: ["capital expenditure", "fab construction", "wafer capacity"]
+    description: "Capital expenditure and fab expansion plans"
+
+  - id: supply-chain
+    label: "Supply Chain"
+    aliases: ["equipment", "materials", "substrate", "ABF", "wafer supply"]
+    description: "Semiconductor equipment, materials, substrate supply"
+
+  - id: geopolitics
+    label: "Geopolitics & Trade"
+    aliases: ["export controls", "sanctions", "CHIPS Act", "trade war", "entity list"]
+    description: "Trade restrictions, export controls, subsidies"
+
+  - id: pricing
+    label: "Pricing Trends"
+    aliases: ["spot price", "contract price", "ASP", "DRAM price", "NAND price"]
+    description: "Memory pricing dynamics (spot and contract)"
+
+  # ── Applications ──
+  - id: ai-hpc
+    label: "AI & HPC"
+    aliases: ["artificial intelligence", "GPU", "NVIDIA", "accelerator", "training"]
+    description: "AI/HPC demand drivers for memory"
+
+  - id: data-center
+    label: "Data Center"
+    aliases: ["server", "cloud", "hyperscaler", "AWS", "Azure", "GCP"]
+    description: "Data center/server demand for memory"
+
+  - id: mobile
+    label: "Mobile & Edge"
+    aliases: ["smartphone", "Apple", "Qualcomm", "on-device AI"]
+    description: "Mobile device memory demand"
+
+  - id: automotive
+    label: "Automotive"
+    aliases: ["autonomous driving", "ADAS", "EV", "Tesla"]
+    description: "Automotive memory demand"
+
+  # ── Emerging ──
+  - id: cxl
+    label: "CXL (Compute Express Link)"
+    aliases: ["CXL 2.0", "CXL 3.0", "CMM", "memory pooling"]
+    description: "CXL memory expansion and pooling"
+
+  - id: advanced-packaging
+    label: "Advanced Packaging"
+    aliases: ["2.5D", "3D stacking", "TSV", "CoWoS", "TCB", "hybrid bonding"]
+    description: "Advanced packaging for HBM and logic-memory integration"
+
+entities:
+  # ── Major Memory Makers ──
+  - id: samsung
+    label: "Samsung Electronics"
+    type: company
+    aliases: ["Samsung", "SEC", "三星", "三星电子", "Samsung Semiconductor"]
+    description: "Largest DRAM and NAND manufacturer — Pyeongtaek, Hwaseong fabs"
+
+  - id: sk-hynix
+    label: "SK Hynix"
+    type: company
+    aliases: ["SK Hynix", "SK하이닉스", "Hynix", "海力士"]
+    description: "#2 DRAM maker, HBM leader — Icheon, Cheongju fabs"
+
+  - id: micron
+    label: "Micron Technology"
+    type: company
+    aliases: ["Micron", "美光", "MU"]
+    description: "#3 DRAM/NAND maker — Boise, Hiroshima, Taiwan, Singapore fabs"
+
+  - id: kioxia
+    label: "Kioxia"
+    type: company
+    aliases: ["Kioxia", "铠侠", "Toshiba Memory"]
+    description: "NAND flash maker — Yokkaichi, Kitakami fabs; joint venture with WDC"
+
+  - id: wdc
+    label: "Western Digital"
+    type: company
+    aliases: ["Western Digital", "WDC", "SanDisk", "西部数据"]
+    description: "NAND flash maker — joint venture with Kioxia"
+
+  # ── Chinese Memory Makers ──
+  - id: cxmt
+    label: "CXMT (ChangXin Memory Technologies)"
+    type: company
+    aliases: ["CXMT", "长鑫", "长鑫存储", "ChangXin"]
+    description: "Chinese DRAM maker — Hefei fab; DDR4/DDR5/LPDDR"
+
+  - id: ymtc
+    label: "YMTC (Yangtze Memory Technologies)"
+    type: company
+    aliases: ["YMTC", "长江存储", "长江"]
+    description: "Chinese 3D NAND maker — Wuhan fab; Xtacking architecture"
+
+  # ── HBM Customers ──
+  - id: nvidia
+    label: "NVIDIA"
+    type: company
+    aliases: ["NVIDIA", "Nvidia", "英伟达", "NVDA"]
+    description: "Largest HBM consumer (H100/H200/B100/B200)"
+
+  - id: amd
+    label: "AMD"
+    type: company
+    aliases: ["AMD", "超威", "Advanced Micro Devices"]
+    description: "HBM consumer (MI300X, MI350)"
+
+  # ── Equipment ──
+  - id: asml
+    label: "ASML"
+    type: company
+    aliases: ["ASML", "阿斯麦"]
+    description: "EUV lithography equipment — critical for advanced DRAM"
+
+  - id: applied-materials
+    label: "Applied Materials"
+    type: company
+    aliases: ["Applied Materials", "AMAT", "应用材料"]
+    description: "Semiconductor equipment — deposition, etch, CMP"
+
+  - id: lam-research
+    label: "Lam Research"
+    type: company
+    aliases: ["Lam Research", "LRCX", "泛林"]
+    description: "Etch and deposition equipment for memory"
+
+  # ── Key Technologies ──
+  - id: hbm4-tech
+    label: "HBM4"
+    type: technology
+    aliases: ["HBM4", "HBM4e"]
+    description: "Next-gen HBM standard — 2048-bit interface, >1.5TB/s bandwidth"
+
+  - id: ddr5-tech
+    label: "DDR5"
+    type: technology
+    aliases: ["DDR5", "DDR5-6400", "DDR5-8000"]
+    description: "5th-gen DDR SDRAM"
+
+  - id: 3d-nand-tech
+    label: "3D NAND"
+    type: technology
+    aliases: ["3D NAND", "V-NAND", "BiCS", "Xtacking", ">300 layers"]
+    description: "3D-stacked NAND flash — current 300+ layers"
+
+  - id: euv-tech
+    label: "EUV Lithography"
+    type: technology
+    aliases: ["EUV", "extreme ultraviolet", "High-NA EUV"]
+    description: "EUV lithography for advanced DRAM patterning"

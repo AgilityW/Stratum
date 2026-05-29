@@ -6,7 +6,7 @@ from pathlib import Path
 # Add source-intelligence to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from contracts import (
+from stratum.contracts import (
     RecordInput, DiscoverCandidate, PipelineResult,
     HealthAlert, CoverageGap, EvalDimensions, EvalResult,
 )
