@@ -51,6 +51,42 @@ engines:
     url_field: "url"
     snippet_field: "content"
 
+# ── Output Format ──
+# Template for the Agent Edit stage (briefing generation).
+# Placeholders: {{TITLE}}, {{DATE_LINE}}, {{SUMMARY}}, {{ARTICLES}}, {{WATCH}}, {{CONTRARIAN}}, {{FOOTER_DATE}}
+# {{ARTICLES}} format: each item = "### title\n\nbody\n\n*Source · Date*\n\n---\n" (MUST have --- between items)
+output_format:
+  zh-CN: |
+    # {{TITLE}}
+    ## {{DATE_LINE}}
+
+    {{SUMMARY}}
+
+    ---
+
+    {{ARTICLES}}
+
+    ---
+
+    ### 关注
+    {{WATCH}}
+
+    ### 反向信号
+    {{CONTRARIAN}}
+
+    ---
+
+    *本简报由 AI Agent 自动生成 | {{FOOTER_DATE}}*
+
+# ── LLM ──
+# Model for Agent Edit stage. Uses DeepSeek API (OpenAI-compatible).
+# Set DEEPSEEK_API_KEY in .env or environment.
+llm:
+  provider: "deepseek"
+  api_key: "${DEEPSEEK_API_KEY}"
+  endpoint: "https://api.deepseek.com/v1/chat/completions"
+  model: "deepseek-v4-pro"
+
 # ── Paths (edit for your machine) ──
 output_dir: "$HOME/WorkSpace/Stratum"
 health_data_dir: "$HOME/WorkSpace/Stratum/health-data"

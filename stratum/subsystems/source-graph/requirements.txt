@@ -1,0 +1,4 @@
+# Source Graph Engine — dependencies
+# Install: pip install -r requirements.txt
+
+pyyaml>=6.0

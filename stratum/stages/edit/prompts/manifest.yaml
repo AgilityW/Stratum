@@ -1,0 +1,95 @@
+# Manifest: Timescale → fragment assembly + output schema declaration
+# edit/assembler.py reads this to build system prompts.
+# edit.py reads this to determine structured output requirements.
+# validate.py reads this to locate schemas for validation.
+
+daily:
+  label: "日报"
+  description: "24h 雷达，6-10 条，信号前置，因果链产出"
+  system:
+    fragments:
+      - path: _prompts/admission.md
+        inject:
+          - editorial.platform_admission
+          - editorial.impact_tags
+      - path: _prompts/writing.md
+        inject: []
+      - path: _prompts/contrarian.md
+        inject: []
+    template: daily.md
+  output:
+    causal_edges:
+      enabled: true
+      schema: _schemas/causal_edge.schema.json
+    judgments:
+      enabled: true
+      schema: _schemas/judgment.schema.json
+  budget:
+    max_items: 12
+    min_items: 9
+
+weekly:
+  label: "周报"
+  description: "周度趋势聚合，区分 signal vs noise，判断复查"
+  system:
+    fragments:
+      - path: _prompts/writing.md
+        inject: []
+      - path: _prompts/contrarian.md
+        inject: []
+    template: weekly.md
+  output:
+    causal_edges:
+      enabled: false
+      schema: null
+    judgments:
+      enabled: false
+      schema: null
+  budget:
+    max_items: 15
+
+monthly:
+  label: "月报"
+  description: "月度复盘：假设验证、判断修正"
+  system:
+    fragments:
+      - path: _prompts/writing.md
+        inject: []
+    template: monthly.md
+  output:
+    causal_edges:
+      enabled: false
+      schema: null
+    judgments:
+      enabled: false
+      schema: null
+
+quarterly:
+  label: "季报"
+  description: "季度审视：结构性变化识别 + 长期判断生成"
+  system:
+    fragments:
+      - path: _prompts/contrarian.md
+        inject: []
+    template: quarterly.md
+  output:
+    causal_edges:
+      enabled: true
+      schema: _schemas/causal_edge.schema.json
+    judgments:
+      enabled: true
+      schema: _schemas/judgment.schema.json
+
+yearly:
+  label: "年报"
+  description: "年度叙事线 + 元判断"
+  system:
+    fragments: []
+    template: yearly.md
+  output:
+    causal_edges:
+      enabled: false
+      schema: null
+    judgments:
+      enabled: true
+      schema: _schemas/judgment.schema.json

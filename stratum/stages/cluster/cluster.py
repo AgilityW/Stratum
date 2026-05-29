@@ -34,8 +34,12 @@ def jaccard_similarity(set_a: set, set_b: set) -> float:
     return len(intersection) / len(union) if union else 0.0
 
 
-def cluster_articles(articles: list[dict], threshold: float = 0.25) -> list[list[int]]:
-    """Group articles by entity/term overlap using Jaccard similarity."""
+def _cluster_by_jaccard(articles: list[dict], threshold: float) -> list[list[int]]:
+    """Pure Union-Find Jaccard clustering. No thread anchoring, no max_size split.
+
+    Internal helper — called by cluster_articles for Phase 1 (orphans)
+    and Phase 2 (oversized split). Always returns only groups with ≥2 articles.
+    """
     n = len(articles)
     if n < 2:
         return []
@@ -76,15 +80,90 @@ def cluster_articles(articles: list[dict], threshold: float = 0.25) -> list[list
         root = find(i)
         clusters_map[root].append(i)
 
-    clusters = [sorted(indices) for indices in clusters_map.values()
-                if len(indices) >= 2]
+    return [sorted(indices) for indices in clusters_map.values()
+            if len(indices) >= 2]
+
+
+def cluster_articles(articles: list[dict], threshold: float = 0.35,
+                     max_size: int = 10) -> list[list[int]]:
+    """Group articles by entity/term overlap using Jaccard similarity (Union-Find).
+
+    Three-phase clustering:
+      Phase 0: Same event_thread_id → forced merge (thread anchoring).
+      Phase 1: Remaining orphans → Union-Find Jaccard ≥ threshold.
+      Phase 2: Oversized clusters (>max_size) → re-split at threshold+0.1.
+
+    Args:
+        threshold: Minimum Jaccard similarity to connect articles (default 0.35).
+                   Higher = tighter clusters. Storage domain tuned at 0.35.
+        max_size: Maximum articles per cluster. Oversized clusters are re-split
+                  at threshold + 0.1 recursively. 0 = no limit.
+    """
+    n = len(articles)
+    if n < 2:
+        return []
+
+    # Phase 0: thread_id anchoring — same event_thread_id → forced merge
+    thread_groups = defaultdict(list)
+    orphan_indices = []
+    for i, a in enumerate(articles):
+        tid = a.get("event_thread_id")
+        if tid:
+            thread_groups[tid].append(i)
+        else:
+            orphan_indices.append(i)
+
+    # Phase 1: Union-Find on remaining (orphan) articles
+    orphan_clusters = []
+    remaining_singletons = []
+    if len(orphan_indices) >= 2:
+        orphans = [articles[i] for i in orphan_indices]
+        orphan_result = _cluster_by_jaccard(orphans, threshold)
+        accounted = set()
+        for oc in orphan_result:
+            orphan_clusters.append([orphan_indices[idx] for idx in oc])
+            accounted.update(oc)
+        remaining_singletons = [orphan_indices[i] for i in range(len(orphan_indices))
+                                if i not in accounted]
+    else:
+        remaining_singletons = list(orphan_indices)
+
+    # Combine: thread_groups + orphan_clusters
+    clusters = []
+    for tid, indices in thread_groups.items():
+        if len(indices) >= 2:
+            clusters.append(sorted(indices))
+        else:
+            remaining_singletons.extend(indices)
+    clusters.extend(orphan_clusters)
+    # Singletons (1-article) are NOT clusters — silently excluded
+
+    # Phase 2: Split oversized clusters recursively
+    if max_size > 0:
+        final_clusters = []
+        for cluster_indices in clusters:
+            if len(cluster_indices) > max_size:
+                sub_articles = [articles[i] for i in cluster_indices]
+                sub_clusters = _cluster_by_jaccard(sub_articles, threshold + 0.1)
+                if sub_clusters:
+                    for sub in sub_clusters:
+                        final_clusters.append([cluster_indices[i] for i in sub])
+                else:
+                    final_clusters.append(cluster_indices)
+            else:
+                final_clusters.append(cluster_indices)
+        clusters = final_clusters
 
     return clusters
 
 
 def build_cluster_object(cluster_indices: list[int], articles: list[dict],
                          domain_id: str, seq: int) -> dict:
-    """Build a StoryCluster object from article indices."""
+    """Build a StoryCluster object from article indices.
+
+    Derives thread_id (most common event_thread_id in cluster) and
+    is_continuation (True if any article carries an event_thread_id).
+    """
     cluster_articles = [articles[i] for i in cluster_indices]
 
     titles = [a["title"] for a in cluster_articles]
@@ -93,6 +172,7 @@ def build_cluster_object(cluster_indices: list[int], articles: list[dict],
     source_types = set()
     locales = set()
     article_ids = []
+    thread_ids = []
 
     for a in cluster_articles:
         entities.update(a.get("entities", []))
@@ -100,6 +180,18 @@ def build_cluster_object(cluster_indices: list[int], articles: list[dict],
         source_types.add(a.get("source_type", "unknown"))
         locales.add(a.get("source_locale", "unknown"))
         article_ids.append(a["id"])
+        tid = a.get("event_thread_id")
+        if tid:
+            thread_ids.append(tid)
+
+    # Derive thread_id: most common across articles in this cluster
+    thread_id = None
+    is_continuation = False
+    if thread_ids:
+        is_continuation = True
+        # Pick most frequent thread_id
+        from collections import Counter
+        thread_id = Counter(thread_ids).most_common(1)[0][0]
 
     num_articles = len(cluster_articles)
     num_source_types = len(source_types)
@@ -127,7 +219,7 @@ def build_cluster_object(cluster_indices: list[int], articles: list[dict],
     snippets = [a.get("snippet", "")[:200] for a in cluster_articles[:3] if a.get("snippet")]
     canonical_summary = " ".join(snippets)[:500]
 
-    return {
+    result = {
         "id": f"sc-{domain_id}-{seq:04d}",
         "canonical_title": best_title,
         "canonical_summary": canonical_summary,
@@ -141,6 +233,12 @@ def build_cluster_object(cluster_indices: list[int], articles: list[dict],
         "terms": sorted(terms),
         "created": datetime.now(CST).strftime("%Y-%m-%d"),
     }
+    if thread_id:
+        result["thread_id"] = thread_id
+    if is_continuation:
+        result["is_continuation"] = True
+
+    return result
 
 
 def main():
@@ -149,8 +247,10 @@ def main():
     parser.add_argument("--output", "-o", required=True, help="Output clusters.json")
     parser.add_argument("--domain", required=True, help="Path to domain.yaml (for domain_id)")
     parser.add_argument("--date", "-d", required=True, help="Run date (YYYY-MM-DD)")
-    parser.add_argument("--threshold", "-t", type=float, default=0.25,
-                        help="Jaccard similarity threshold (default: 0.25)")
+    parser.add_argument("--threshold", "-t", type=float, default=0.35,
+                        help="Jaccard similarity threshold (default: 0.35)")
+    parser.add_argument("--max-size", type=int, default=10,
+                        help="Max articles per cluster, oversized re-split (default: 10, 0=unlimited)")
     args = parser.parse_args()
 
     # Extract domain_id from domain path: domains/storage/domain.yaml → storage
@@ -171,7 +271,7 @@ def main():
             "unclustered": len(articles),
         }
     else:
-        clusters_indices = cluster_articles(articles, args.threshold)
+        clusters_indices = cluster_articles(articles, args.threshold, args.max_size)
 
         clusters = []
         clustered_ids = set()

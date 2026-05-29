@@ -1,0 +1,6 @@
+# Quarterly Briefing — Manifest
+timescale: quarterly
+query_intents:
+  - context
+  - structural
+  - verification

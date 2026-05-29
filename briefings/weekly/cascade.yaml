@@ -1,0 +1,29 @@
+# Weekly Cascade — Consume daily structured data + independent search
+
+fresh_search:
+  window: 7 days
+  queries_from: manifest.yaml
+
+consume:
+  - scale: daily
+    window: 7 days
+    data:
+      - event-threads.json       # causal_edges + judgments
+      - entity_activity.json     # entity activeness → attention guide
+      - thread_status_snapshot.json
+
+produce:
+  output:
+    - briefing.md
+    - weekly_judgments.json
+    - coverage_report.json
+  feed_to:
+    - monthly
+    - source-profiler
+    - entity-store
+
+feedback:
+  - to: source-profiler
+    signal: latency_in_days
+  - to: query-manager
+    signal: coverage_gaps

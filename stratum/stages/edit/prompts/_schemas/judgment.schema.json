@@ -1,0 +1,44 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "judgment",
+  "type": "object",
+  "required": ["target_type", "hypothesis", "confidence", "expected_verification"],
+  "additionalProperties": false,
+  "properties": {
+    "target_type": {
+      "type": "string",
+      "enum": ["entity", "event_pair"],
+      "description": "判断目标类型: entity(实体级) 或 event_pair(事件对)"
+    },
+    "target_entity_ids": {
+      "type": "array",
+      "items": {"type": "string"},
+      "description": "当 target_type=entity 时，taxonomy 实体 ID 列表"
+    },
+    "target_thread_ids": {
+      "type": "array",
+      "items": {"type": "string", "pattern": "^et-\\d{4}-\\d{3}$"},
+      "description": "当 target_type=event_pair 时，涉及的 thread ID 列表"
+    },
+    "hypothesis": {
+      "type": "string",
+      "maxLength": 500,
+      "minLength": 20,
+      "description": "可被验证的陈述，必须具体、有量化指标、可证伪"
+    },
+    "confidence": {
+      "type": "string",
+      "enum": ["A", "B", "C"],
+      "description": "A=强证据支撑，B=合理推断，C=猜测/探索性判断"
+    },
+    "expected_verification": {
+      "type": "string",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+      "description": "预期可验证的日期 YYYY-MM-DD"
+    }
+  },
+  "oneOf": [
+    {"required": ["target_entity_ids"]},
+    {"required": ["target_thread_ids"]}
+  ]
+}

@@ -23,6 +23,7 @@ import sys
 import yaml
 from datetime import datetime, timezone, timedelta
 from difflib import SequenceMatcher
+from jsonschema import validate as json_validate, ValidationError
 
 CST = timezone(timedelta(hours=8))
 TITLE_SIMILARITY_THRESHOLD = 0.22
@@ -149,12 +150,66 @@ def validate_item(item, articles, run_date, source_aliases):
     return violations
 
 
+def validate_schema_items(data: list, schema_path: str, item_type: str) -> list[str]:
+    """Validate a list of items against a JSON Schema file."""
+    if not data:
+        return []
+    with open(schema_path) as f:
+        schema = json.load(f)
+    violations = []
+    for i, item in enumerate(data):
+        try:
+            json_validate(instance=item, schema=schema)
+        except ValidationError as e:
+            violations.append(
+                f"SCHEMA_{item_type.upper()}: Item {i}: {e.message}"
+            )
+    return violations
+
+
+def validate_structured_output(
+    event_threads_path: str, schemas_dir: str
+) -> list[str]:
+    """Validate causal_edges and judgments against their JSON Schemas."""
+    if not os.path.exists(event_threads_path):
+        return []
+
+    with open(event_threads_path) as f:
+        data = json.load(f)
+
+    violations = []
+
+    causal_edges = data.get("causal_edges", [])
+    if causal_edges:
+        schema_path = os.path.join(schemas_dir, "causal_edge.schema.json")
+        if os.path.exists(schema_path):
+            violations.extend(
+                validate_schema_items(causal_edges, schema_path, "causal_edge")
+            )
+        else:
+            violations.append(f"SCHEMA: causal_edge schema not found at {schema_path}")
+
+    judgments = data.get("judgments", [])
+    if judgments:
+        schema_path = os.path.join(schemas_dir, "judgment.schema.json")
+        if os.path.exists(schema_path):
+            violations.extend(
+                validate_schema_items(judgments, schema_path, "judgment")
+            )
+        else:
+            violations.append(f"SCHEMA: judgment schema not found at {schema_path}")
+
+    return violations
+
+
 def main():
     parser = argparse.ArgumentParser(description="Validate briefing against verified articles")
     parser.add_argument("--md", "-m", required=True, help="Briefing markdown file")
     parser.add_argument("--articles", "-a", required=True, help="Articles JSONL file")
     parser.add_argument("--date", "-d", required=True, help="Run date YYYY-MM-DD")
     parser.add_argument("--domain", required=True, help="Path to domain.yaml")
+    parser.add_argument("--event-threads", help="Path to event-threads.json (structured output)")
+    parser.add_argument("--schemas-dir", help="Path to _schemas/ directory for JSON Schema validation")
     args = parser.parse_args()
 
     pipeline_config = load_domain_config(args.domain)
@@ -176,6 +231,17 @@ def main():
                 print(f"     {v}", file=sys.stderr)
         else:
             print(f"  ✅ Item {i}: {item['title'][:60]}", file=sys.stderr)
+
+    # ── Schema validation (structured output) ──
+    if args.event_threads and args.schemas_dir:
+        schema_violations = validate_structured_output(
+            args.event_threads, args.schemas_dir
+        )
+        if schema_violations:
+            all_violations.append((0, "structured_output", schema_violations))
+            print(f"\n  🔍 Schema validation:", file=sys.stderr)
+            for v in schema_violations:
+                print(f"     {v}", file=sys.stderr)
 
     total_violations = sum(len(v) for _, _, v in all_violations)
 

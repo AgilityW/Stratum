@@ -1,0 +1,32 @@
+# Yearly Cascade — Meta-cognition: narrative construction + system calibration
+
+fresh_search:
+  window: 365 days
+  queries_from: manifest.yaml
+
+consume:
+  - scale: quarterly
+    window: 4 quarters
+    data:
+      - structural_judgments    # long-term judgments → verify
+  - scale: daily
+    window: 365 days
+    data:
+      - causal_edges            # full year causal graph
+      - judgments               # all judgments → accuracy stats
+
+produce:
+  output:
+    - briefing.md
+    - entity_annual_report.md
+    - source_annual_ranking.json
+  feed_to:
+    - next-year seed
+
+feedback:
+  - to: domain.yaml
+    signal: rule_revision
+  - to: source-graph
+    signal: budget_rebalance
+  - to: entity-store
+    signal: cleanup_stale

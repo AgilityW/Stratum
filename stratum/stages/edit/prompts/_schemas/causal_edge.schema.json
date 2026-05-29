@@ -1,0 +1,30 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "causal_edge",
+  "type": "object",
+  "required": ["cause_thread_id", "effect_thread_id", "mechanism", "confidence"],
+  "additionalProperties": false,
+  "properties": {
+    "cause_thread_id": {
+      "type": "string",
+      "pattern": "^et-\\d{4}-\\d{3}$",
+      "description": "原因事件线的 ID，格式: et-YYYY-NNN"
+    },
+    "effect_thread_id": {
+      "type": "string",
+      "pattern": "^et-\\d{4}-\\d{3}$",
+      "description": "结果事件线的 ID"
+    },
+    "mechanism": {
+      "type": "string",
+      "maxLength": 500,
+      "minLength": 20,
+      "description": "因果传导机制，必须可验证，有明确的传导路径，不能用 '相关即因果'"
+    },
+    "confidence": {
+      "type": "string",
+      "enum": ["A", "B", "C"],
+      "description": "A=强证据(官方声明中的因果陈述)，B=合理推断，C=猜测"
+    }
+  }
+}

@@ -17,13 +17,17 @@ import pytest
 # ── Locate data ─────────────────────────────────────────────
 
 def _output_root():
-    cfg_path = Path.home() / "ProjectSpace" / "Stratum" / "config.yaml"
-    if cfg_path.exists():
-        import yaml
-        with open(cfg_path) as f:
-            cfg = yaml.safe_load(f)
-        return Path(os.path.expanduser(cfg.get("output_dir", "~/WorkSpace/Stratum")))
-    return Path.home() / "WorkSpace" / "Stratum"
+    # Walk up from this file to find config.yaml
+    current = os.path.dirname(os.path.abspath(__file__))
+    for _ in range(5):
+        cfg_path = os.path.join(current, "config.yaml")
+        if os.path.exists(cfg_path):
+            import yaml
+            with open(cfg_path) as f:
+                cfg = yaml.safe_load(f)
+            return Path(os.path.expanduser(cfg.get("output_dir", os.path.expanduser("~/WorkSpace/Stratum"))))
+        current = os.path.dirname(current)
+    return Path(os.path.expanduser("~/WorkSpace/Stratum"))
 
 
 def _find_latest_date_subdir(channel, subdir):

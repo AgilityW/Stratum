@@ -1,0 +1,10 @@
+# Daily Briefing — Manifest
+timescale: daily
+query_intents:
+  - detection
+budget:
+  max_items: 10
+  min_items: 6
+domain_inject:
+  - editorial.platform_admission
+  - editorial.impact_tags

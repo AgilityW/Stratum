@@ -105,6 +105,7 @@ def convert(md_text):
     item_lines = []
     in_item = False
     in_section = False
+    section_kind = ""
     item_num = 0
     first_hr_seen = False
     summary_collected = False
@@ -143,6 +144,7 @@ def convert(md_text):
 
             if any(kw in title for kw in ["关注", "反向信号", "今日要点"]):
                 in_section = True
+                section_kind = title if title == "今日要点" else ""
                 body_parts.append(f'<div class="section-title">{title_esc}</div>\n')
                 continue
 
@@ -173,6 +175,11 @@ def convert(md_text):
                 item_lines.append(f"<p>{text}</p>")
             else:
                 body_parts.append(f'<div class="bullet">· {text}</div>\n')
+            continue
+
+        if section_kind and not in_item and not s.startswith("#"):
+            body_parts.append(f'<div class="summary"><p>{esc(s)}</p></div>\n')
+            section_kind = ""
             continue
 
         if first_hr_seen and not summary_collected and not in_item and not s.startswith("#"):

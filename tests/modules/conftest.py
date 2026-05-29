@@ -5,40 +5,57 @@ import yaml
 import pytest
 from pathlib import Path
 
-PROJECT_ROOT = os.path.expanduser("~/ProjectSpace/Stratum")
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 SKILLS_DIR = os.path.join(PROJECT_ROOT, "skills")
+SUBSYSTEMS_DIR = os.path.join(PROJECT_ROOT, "stratum", "subsystems")
 
 
 def discover_modules():
-    """Discover all Stratum modules: SKILL.md + Python + shell scripts."""
+    """Discover all Stratum modules: SKILL.md + Python + shell scripts.
+    Scans skills/ and stratum/subsystems/."""
     modules = []
 
-    # SKILL modules
-    for d in sorted(os.listdir(SKILLS_DIR)):
-        md_path = os.path.join(SKILLS_DIR, d, "SKILL.md")
-        if os.path.exists(md_path):
-            modules.append({"type": "skill", "name": d, "path": md_path})
+    # SKILL modules — scan skills/ + subsystems/
+    for base_dir in (SKILLS_DIR, SUBSYSTEMS_DIR):
+        if not os.path.isdir(base_dir):
+            continue
+        for root, dirs, files in os.walk(base_dir):
+            # Skip __pycache__
+            dirs[:] = [d for d in dirs if d != "__pycache__"]
+            for f in files:
+                if f == "SKILL.md":
+                    # Leaf directory name as module name
+                    name = os.path.basename(root)
+                    modules.append({
+                        "type": "skill",
+                        "name": name,
+                        "path": os.path.join(root, f),
+                    })
 
-    # Python modules
-    py_dir = os.path.join(SKILLS_DIR, "source-graph-engine")
+    # Python modules — scan source-graph
+    py_dir = os.path.join(SUBSYSTEMS_DIR, "source-graph")
     if os.path.isdir(py_dir):
         for f in sorted(os.listdir(py_dir)):
             if f.endswith(".py") and not f.startswith("__"):
                 modules.append({
                     "type": "python",
-                    "name": f"source-graph-engine/{f}",
+                    "name": f"source-graph/{f}",
                     "path": os.path.join(py_dir, f),
                 })
 
     # Shell scripts
-    for root, dirs, files in os.walk(SKILLS_DIR):
-        for f in files:
-            if f.endswith(".sh"):
-                modules.append({
-                    "type": "shell",
-                    "name": f"{os.path.relpath(root, SKILLS_DIR)}/{f}",
-                    "path": os.path.join(root, f),
-                })
+    for base_dir in (SKILLS_DIR, SUBSYSTEMS_DIR):
+        if not os.path.isdir(base_dir):
+            continue
+        for root, dirs, files in os.walk(base_dir):
+            dirs[:] = [d for d in dirs if d != "__pycache__"]
+            for f in files:
+                if f.endswith(".sh"):
+                    modules.append({
+                        "type": "shell",
+                        "name": f"{os.path.relpath(root, base_dir)}/{f}",
+                        "path": os.path.join(root, f),
+                    })
 
     return modules
 

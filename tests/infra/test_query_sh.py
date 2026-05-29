@@ -15,7 +15,7 @@ import pytest
 
 @pytest.fixture
 def query_script():
-    p = Path(__file__).resolve().parents[2] / "skills" / "health-tracker" / "scripts" / "query.sh"
+    p = Path(__file__).resolve().parents[2] / "stratum" / "subsystems" / "monitoring" / "health-tracker" / "scripts" / "query.sh"
     if not p.exists():
         pytest.skip("query.sh not found")
     return str(p)

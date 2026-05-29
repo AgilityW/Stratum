@@ -190,7 +190,7 @@ def enrich_article(article: dict, run_date: str, *, use_web_extract: bool = Fals
     """Add datePublished if missing/empty. Respect agent-provided dates."""
     existing = article.get("datePublished", "")
     if existing and existing.strip():
-        article["date_source"] = "web_extract"
+        article["date_source"] = "search_api"
         return article
 
     # ── Step 1: Regex from text ──

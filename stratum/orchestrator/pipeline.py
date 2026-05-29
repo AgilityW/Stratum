@@ -38,10 +38,8 @@ DOMAINS_DIR = os.path.join(PROJECT_ROOT, "domains")
 CONFIG_PATH = os.path.join(PROJECT_ROOT, "config.yaml")
 
 
-def resolve_paths(domain_id: str, run_date: str, output_dir: str = None) -> dict:
+def resolve_paths(domain_id: str, run_date: str, output_dir: str) -> dict:
     """Resolve all file paths for a pipeline run."""
-    if output_dir is None:
-        output_dir = os.path.expanduser("~/WorkSpace/Stratum")
 
     domain_config = os.path.join(DOMAINS_DIR, domain_id, "domain.yaml")
     prompts_dir = os.path.join(DOMAINS_DIR, domain_id, "prompts")
@@ -59,6 +57,10 @@ def resolve_paths(domain_id: str, run_date: str, output_dir: str = None) -> dict
         "briefing_md": os.path.join(data_dir, "briefing.md"),
         "briefing_html": os.path.join(data_dir, "briefing.html"),
         "briefing_pdf": os.path.join(data_dir, "briefing.pdf"),
+        # Story-tracking closed loop
+        "story_tracking_dir": os.path.join(output_dir, domain_id, "data", "story-tracking"),
+        "thread_keywords": os.path.join(output_dir, domain_id, "data", "story-tracking",
+                                        "thread_keywords.json"),
     }
 
 
@@ -67,12 +69,19 @@ def run_stage(stage_name: str, stage_args: list[str], step_label: str) -> bool:
     script = os.path.join(STAGES_DIR, stage_name, f"{stage_name}.py")
     cmd = [sys.executable, script] + stage_args
 
+    # Ensure stratum modules are importable from subprocess
+    env = os.environ.copy()
+    if "PYTHONPATH" in env:
+        env["PYTHONPATH"] = PROJECT_ROOT + ":" + env["PYTHONPATH"]
+    else:
+        env["PYTHONPATH"] = PROJECT_ROOT
+
     print(f"\n{'='*60}", file=sys.stderr)
     print(f"  STEP: {step_label}", file=sys.stderr)
     print(f"  CMD:  {' '.join(cmd)}", file=sys.stderr)
     print(f"{'='*60}", file=sys.stderr)
 
-    result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+    result = subprocess.run(cmd, capture_output=True, text=True, timeout=120, env=env)
     sys.stderr.write(result.stderr)
     if result.stdout.strip():
         sys.stderr.write(result.stdout[:500])
@@ -86,26 +95,6 @@ def run_stage(stage_name: str, stage_args: list[str], step_label: str) -> bool:
     return True
 
 
-def print_agent_placeholder(stage_name: str, step_label: str,
-                             input_hint: str, output_path: str) -> dict:
-    """Print instructions for agent-driven stages (search, edit).
-    Returns status dict for pipeline output.
-    """
-    print(f"\n{'='*60}", file=sys.stderr)
-    print(f"  STEP: {step_label} (AGENT-DRIVEN)", file=sys.stderr)
-    print(f"{'='*60}", file=sys.stderr)
-    print(f"  Input hint: {input_hint}", file=sys.stderr)
-    print(f"  Output:     {output_path}", file=sys.stderr)
-    print(f"  ⚠️  This stage requires LLM agent execution.", file=sys.stderr)
-
-    if stage_name == "search":
-        print(f"  Action: Call web_search with domain queries, save to {output_path}", file=sys.stderr)
-    elif stage_name == "edit":
-        print(f"  Action: Generate briefing MD from articles + clusters, save to {output_path}", file=sys.stderr)
-
-    return {"stage": stage_name, "status": "pending_agent", "output": output_path}
-
-
 def main():
     parser = argparse.ArgumentParser(description="Stratum deterministic briefing pipeline")
     parser.add_argument("--domain", "-d", required=True,
@@ -115,7 +104,7 @@ def main():
     parser.add_argument("--skip-agent", action="store_true",
                         help="Skip agent-driven stages (search & edit)")
     parser.add_argument("--output-dir", help="Override output directory")
-    parser.add_argument("--from-stage", choices=["enrich", "verify", "normalize", "cluster", "validate", "render"],
+    parser.add_argument("--from-stage", choices=["enrich", "verify", "normalize", "cluster", "edit", "validate", "render"],
                         help="Start from a specific stage (requires previous output files)")
     parser.add_argument("--web-extract", action="store_true",
                         help="Enable web page fetching to extract dates from HTML meta tags (slow)")
@@ -128,7 +117,33 @@ def main():
         print(f"   Available domains: {os.listdir(DOMAINS_DIR)}", file=sys.stderr)
         sys.exit(1)
 
-    paths = resolve_paths(args.domain, args.date, args.output_dir)
+    # Load config for output_dir and optional overrides
+    if os.path.exists(CONFIG_PATH):
+        with open(CONFIG_PATH) as f:
+            config = yaml.safe_load(f) or {}
+    else:
+        config = {}
+
+    output_dir = args.output_dir or config.get("output_dir", "")
+    if output_dir:
+        output_dir = os.path.expandvars(os.path.expanduser(output_dir))
+    else:
+        print("❌ No output_dir set. Use --output-dir or configure config.yaml", file=sys.stderr)
+        sys.exit(1)
+
+    db_dir = config.get("db_dir", "")
+    if db_dir:
+        db_dir = os.path.expandvars(os.path.expanduser(db_dir))
+    else:
+        db_dir = os.path.join(output_dir, "DataBase")
+
+    reports_dir = config.get("reports_dir", "")
+    if reports_dir:
+        reports_dir = os.path.expandvars(os.path.expanduser(reports_dir))
+    else:
+        reports_dir = output_dir
+
+    paths = resolve_paths(args.domain, args.date, reports_dir)
     os.makedirs(paths["data_dir"], exist_ok=True)
     os.makedirs(os.path.dirname(paths["verified"]), exist_ok=True)
     os.makedirs(os.path.dirname(paths["clusters"]), exist_ok=True)
@@ -149,15 +164,26 @@ def main():
             sys.exit(1)
         pipeline_status.append({"stage": "search", "status": "skipped", "output": paths["raw"]})
     else:
-        queries_path = os.path.join(DOMAINS_DIR, args.domain, "queries.yaml")
-        if not run_stage("search", [
-            "--domain", args.domain,
-            "--date", args.date,
-            "--config", CONFIG_PATH,
-            "--queries", queries_path,
-            "--output", paths["raw"],
-        ], "1/8 Search"):
-            sys.exit(1)
+        db_path = os.path.join(db_dir, args.domain, f"{args.domain}.db")
+        if os.path.exists(db_path):
+            if not run_stage("search", [
+                "--domain", args.domain,
+                "--date", args.date,
+                "--config", CONFIG_PATH,
+                "--db", db_path,
+                "--output", paths["raw"],
+            ], "1/8 Search"):
+                sys.exit(1)
+        else:
+            queries_path = os.path.join(DOMAINS_DIR, args.domain, "queries.yaml")
+            if not run_stage("search", [
+                "--domain", args.domain,
+                "--date", args.date,
+                "--config", CONFIG_PATH,
+                "--queries", queries_path,
+                "--output", paths["raw"],
+            ], "1/8 Search"):
+                sys.exit(1)
 
     # ── Stage 2: Enrich ──
     enrich_cmd = [
@@ -180,11 +206,15 @@ def main():
         sys.exit(1)
 
     # ── Stage 4: Normalize ──
-    if not run_stage("normalize", [
+    normalize_args = [
         "--input", paths["verified"],
         "--output", paths["articles"],
         "--domain", paths["domain_config"],
-    ], "4/8 Normalize articles"):
+    ]
+    # Closed-loop: feed previous day's thread_keywords to normalize
+    if os.path.exists(paths["thread_keywords"]):
+        normalize_args += ["--thread-keywords", paths["thread_keywords"]]
+    if not run_stage("normalize", normalize_args, "4/8 Normalize articles"):
         sys.exit(1)
 
     # ── Stage 5: Cluster ──
@@ -196,6 +226,9 @@ def main():
     ], "5/8 Story clustering"):
         sys.exit(1)
 
+    # ── Closed-loop: export thread_keywords for next day's normalize ──
+    _export_thread_keywords(args.domain, paths)
+
     # ── Stage 6: Agent Edit (LLM) ──
     # Generate story context before the agent runs
     story_ctx_path = os.path.join(paths["data_dir"], "story_context.json")
@@ -206,30 +239,53 @@ def main():
             print(f"⚠️  --skip-agent but no briefing.md at {paths['briefing_md']}", file=sys.stderr)
         pipeline_status.append({"stage": "edit", "status": "skipped", "output": paths["briefing_md"]})
     else:
-        status = print_agent_placeholder(
-            "edit", "6/8 Agent Edit",
-            f"articles={paths['articles']}, clusters={paths['clusters']}",
-            paths["briefing_md"]
-        )
-        pipeline_status.append(status)
+        # Deterministic LLM call via edit.py
+        if not run_stage("edit", [
+            "--domain", args.domain,
+            "--date", args.date,
+            "--articles", paths["articles"],
+            "--clusters", paths["clusters"],
+            "--context", story_ctx_path,
+            "--config", CONFIG_PATH,
+            "--output", paths["briefing_md"],
+            "--timescale", "daily",
+        ], "6/8 Agent Edit (LLM)"):
+            print("⚠️  Agent Edit failed — continuing with validate/render anyway", file=sys.stderr)
 
     # ── Stage 7: Validate ──
     if os.path.exists(paths["briefing_md"]) and os.path.exists(paths["articles"]):
-        if not run_stage("validate", [
+        validate_args = [
             "--md", paths["briefing_md"],
             "--articles", paths["articles"],
             "--date", args.date,
             "--domain", paths["domain_config"],
-        ], "7/8 Validate briefing"):
+        ]
+        event_threads_path = os.path.join(paths["data_dir"], "event-threads.json")
+        schemas_dir = os.path.join(STAGES_DIR, "edit", "prompts", "_schemas")
+        if os.path.exists(event_threads_path) and os.path.exists(schemas_dir):
+            validate_args += [
+                "--event-threads", event_threads_path,
+                "--schemas-dir", schemas_dir,
+            ]
+        if not run_stage("validate", validate_args, "7/8 Validate briefing"):
             print("⚠️  Validation failed — check violations above", file=sys.stderr)
     else:
         print("\n⚠️  Skipping validate: briefing.md or articles.jsonl not found", file=sys.stderr)
 
     # ── Stage 8: Render ──
     if os.path.exists(paths["briefing_md"]):
+        # Resolve channel title from domain config
+        channel_title = "Briefing"
+        try:
+            with open(paths["domain_config"]) as f:
+                domain_cfg = yaml.safe_load(f)
+            channel_title = domain_cfg.get("domain", {}).get("title", "Briefing")
+        except Exception:
+            pass
         run_stage("render", [
             "--input", paths["briefing_md"],
             "--output-dir", paths["data_dir"],
+            "--title", channel_title,
             "--domain", paths["domain_config"],
             "--footer", "由 AI Agent 自动生成 · 每日 7:30 CST",
             "--template", os.path.join(DOMAINS_DIR, args.domain, "templates", "daily.html"),
@@ -238,11 +294,11 @@ def main():
         print("\n⚠️  Skipping render: briefing.md not found", file=sys.stderr)
     print(f"{'='*60}", file=sys.stderr)
 
-    # ── Story Bridge: ingest event-threads into Story-Tracking EventStore ──
-    _try_ingest_event_threads(args.domain, args.date, paths)
-
-    # ── Causal & Judgment: ingest causal edges and judgments ──
-    _try_ingest_causal_and_judgments(args.domain, args.date, paths)
+    # ── DB Ingestion: write structured data to SQLite ──
+    # NOTE: Story Bridge JSONL writes (_try_ingest_event_threads, _try_ingest_causal_and_judgments)
+    # are deprecated. DB ingest writes directly to SQLite from event-threads.json.
+    # Story-tracking reads (_try_generate_story_context, _export_thread_keywords) now query SQLite.
+    _try_db_ingest(args.domain, args.date, paths, db_dir)
 
     # ── Summary ──
     article_count = 0
@@ -278,32 +334,90 @@ def main():
 # ── Story-Tracking Integration Helpers ──
 
 def _try_generate_story_context(domain_id: str, run_date: str, paths: dict, output_path: str):
-    """Generate BriefingContext for the agent, if story-tracking storage exists."""
+    """Generate BriefingContext for the agent, from SQLite story-tracking data."""
     try:
         import sys as _sys
+        _sys.path.insert(0, PROJECT_ROOT)
         _sys.path.insert(0, os.path.join(PROJECT_ROOT, "stratum", "subsystems", "story-tracking"))
         from briefing_context import generate_context
-        from repository import JsonlEventRepository, JsonlCausalRepository, JsonlJudgmentRepository
-        from taxonomy import Taxonomy
+        from types import SimpleNamespace
+        from stratum.db.connection import get_db
 
-        output_dir = os.path.expanduser("~/WorkSpace/Stratum")
-        data_dir = os.path.join(output_dir, domain_id, "data", "story-tracking")
-        if not os.path.isdir(data_dir):
-            return  # No story-tracking data yet, skip
+        conn = get_db(domain_id)
 
-        events = JsonlEventRepository(data_dir, domain_id).all()
-        if not events:
-            return  # Empty store, nothing to carry forward
+        # Check if events exist
+        count = conn.execute("SELECT COUNT(*) FROM events").fetchone()[0]
+        if count == 0:
+            conn.close()
+            return
 
-        edges = JsonlCausalRepository(data_dir).all()
-        judgments = JsonlJudgmentRepository(data_dir).all()
-        taxonomy_path = os.path.join(DOMAINS_DIR, domain_id, "taxonomy.yaml")
-        taxonomy = Taxonomy(taxonomy_path)
+        # ── Load events ──
+        rows = conn.execute(
+            "SELECT id, thread_id, title, date, entity_ids, scale, briefing_id, status, priority FROM events"
+        ).fetchall()
+        events = []
+        for r in rows:
+            entity_ids = json.loads(r["entity_ids"]) if r["entity_ids"] else []
+            events.append(SimpleNamespace(
+                id=r["id"],
+                thread_id=r["thread_id"] or "",
+                title=r["title"] or "",
+                status=r["status"] or "emerging",
+                priority=r["priority"] or 3,
+                entity_tags=entity_ids,
+                last_updated=r["date"] or run_date,
+                scale_refs=[{"scale": r["scale"], "date": r["date"], "briefing_id": r["briefing_id"]}] if r["scale"] else [],
+                open_questions=[],
+            ))
+
+        # ── Load causal edges (thread-level → event-level via events table) ──
+        edge_rows = conn.execute(
+            "SELECT ce.id, ce.cause_thread_id, ce.effect_thread_id, ce.mechanism, ce.confidence,"
+            " ce.verified, ce.created_at FROM causal_edges ce"
+        ).fetchall()
+        # Build thread_id → event_id map (latest event per thread)
+        thread_event = {}
+        for e in events:
+            tid = e.thread_id or e.id
+            if tid not in thread_event or e.last_updated > thread_event[tid][1]:
+                thread_event[tid] = (e.id, e.last_updated)
+        edges = []
+        for r in edge_rows:
+            cause_id = thread_event.get(r["cause_thread_id"], (r["cause_thread_id"],))[0]
+            effect_id = thread_event.get(r["effect_thread_id"], (r["effect_thread_id"],))[0]
+            edges.append(SimpleNamespace(
+                id=r["id"], cause_id=cause_id, effect_id=effect_id,
+                mechanism=r["mechanism"] or "",
+                confidence=r["confidence"] or "B",
+                created=r["created_at"] or run_date,
+                verified=bool(r["verified"]),
+            ))
+
+        # ── Load judgments ──
+        j_rows = conn.execute(
+            "SELECT id, target_type, target_entity_ids, hypothesis, confidence,"
+            " expected_verification, result, created_at FROM judgments"
+        ).fetchall()
+        judgments = []
+        for r in j_rows:
+            target_ids = json.loads(r["target_entity_ids"]) if r["target_entity_ids"] else []
+            verdict_map = {None: "pending", "pending": "pending", "correct": "correct",
+                          "incorrect": "incorrect", "partially_correct": "deferred"}
+            judgments.append(SimpleNamespace(
+                id=r["id"], target_type=r["target_type"] or "entity",
+                target_ids=target_ids,
+                hypothesis=r["hypothesis"] or "",
+                confidence=r["confidence"] or "B",
+                expected_verification=r["expected_verification"] or run_date,
+                verdict=verdict_map.get(r["result"], "pending"),
+                made_at=r["created_at"] or run_date,
+            ))
+
+        conn.close()
 
         ctx = generate_context(domain_id, "daily", run_date, events, edges, judgments)
-        import json as _json
         with open(output_path, "w") as f:
-            _json.dump({
+            json.dump({
                 "scale": ctx.scale,
                 "date": ctx.date,
                 "domain_id": ctx.domain_id,
@@ -321,186 +435,120 @@ def _try_generate_story_context(domain_id: str, run_date: str, paths: dict, outp
         print(f"⚠️  Story context generation skipped: {e}", file=sys.stderr)
 
 
-def _try_ingest_event_threads(domain_id: str, run_date: str, paths: dict):
-    """Ingest Agent-produced event-threads.json into the Story-Tracking EventStore."""
-    event_threads_path = os.path.join(paths["data_dir"], "..", "event-threads", "event-threads.json")
-    # Also check the alternate path
-    alt_path = os.path.join(paths["data_dir"], "event-threads.json")
-    if os.path.exists(alt_path):
-        event_threads_path = alt_path
+def _export_thread_keywords(domain_id: str, paths: dict):
+    """Export thread_keywords.json from SQLite events table.
 
-    if not os.path.exists(event_threads_path):
-        return  # No event-threads produced yet
-
+    Reads all active/pending events and extracts title keywords + entities
+    for the next day's normalize stage to match articles to event threads.
+    """
     try:
-        import json as _json
-        with open(event_threads_path) as f:
-            data = _json.load(f)
-        threads = data.get("threads", [])
+        import sys as _sys
+        _sys.path.insert(0, PROJECT_ROOT)
+        from stratum.db.connection import get_db
+
+        conn = get_db(domain_id)
+        rows = conn.execute(
+            "SELECT id, thread_id, title, entity_ids, status FROM events"
+            " WHERE status IN ('active', 'pending', 'cooling', 'emerging')"
+        ).fetchall()
+        conn.close()
+
+        if not rows:
+            return
+
+        threads = []
+        for r in rows:
+            keywords = set()
+            title = r["title"] or ""
+            if title:
+                tokens = re.findall(r'[A-Za-z0-9]+|[\u4e00-\u9fff]+', title)
+                for t in tokens:
+                    t = t.lower().strip()
+                    if len(t) >= 2:
+                        keywords.add(t)
+                    if re.search(r'[\u4e00-\u9fff]', t) and len(t) >= 8:
+                        cjk = re.findall(r'[\u4e00-\u9fff]', t)
+                        for i in range(len(cjk) - 1):
+                            keywords.add(''.join(cjk[i:i+2]))
+
+            entity_ids = json.loads(r["entity_ids"]) if r["entity_ids"] else []
+            keywords.update(e.lower() for e in entity_ids if e)
+
+            threads.append({
+                "thread_id": r["thread_id"] or r["id"],
+                "label": title or r["id"],
+                "status": r["status"] or "active",
+                "keywords": sorted(keywords)[:20],
+                "description": "",
+            })
 
         if not threads:
             return
 
-        import sys as _sys
-        _sys.path.insert(0, os.path.join(PROJECT_ROOT, "stratum", "subsystems", "story-tracking"))
-        _sys.path.insert(0, os.path.join(PROJECT_ROOT, "stratum", "orchestrator"))
-        from story_bridge import ingest_batch
-        from repository import JsonlEventRepository, StateManager
-        from taxonomy import Taxonomy
+        output_path = paths["thread_keywords"]
+        os.makedirs(os.path.dirname(output_path), exist_ok=True)
+        with open(output_path, "w") as f:
+            json.dump({"threads": threads, "exported_at": datetime.now(CST).isoformat()},
+                       f, ensure_ascii=False, indent=2)
 
-        output_dir = os.path.expanduser("~/WorkSpace/Stratum")
-        data_dir = os.path.join(output_dir, domain_id, "data", "story-tracking")
-        repo = JsonlEventRepository(data_dir, domain_id)
-        state = StateManager(data_dir)
-        taxonomy_path = os.path.join(DOMAINS_DIR, domain_id, "taxonomy.yaml")
-        taxonomy = Taxonomy(taxonomy_path)
-
-        briefing_id = f"daily-{run_date}"
-        stats = ingest_batch(threads, domain_id, run_date, repo, state, taxonomy,
-                            briefing_id=briefing_id)
-
-        print(f"\n📊 Story Bridge: {stats['ingested']} ingested, {stats['rejected']} rejected "
-              f"→ {data_dir}/events.jsonl ({repo.count()} total)", file=sys.stderr)
-        if stats["errors"]:
-            for err in stats["errors"]:
-                print(f"  ⚠️  {err}", file=sys.stderr)
+        print(f"\n🔗 Thread keywords exported: {len(threads)} threads → {output_path}",
+              file=sys.stderr)
+        for t in threads:
+            print(f"   [{t['status']}] {t['label'][:60]} ({len(t['keywords'])} keywords)",
+                  file=sys.stderr)
     except Exception as e:
-        print(f"⚠️  Story Bridge ingestion skipped: {e}", file=sys.stderr)
+        print(f"⚠️  Thread keywords export skipped: {e}", file=sys.stderr)
 
 
-def _try_ingest_causal_and_judgments(domain_id: str, run_date: str, paths: dict):
-    """Ingest Agent-produced causal_edges and judgments from event-threads.json.
-
-    Resolves thread_id → event_id via the event repository, then writes
-    to causal.jsonl and judgments.jsonl.
-    """
-    event_threads_path = os.path.join(paths["data_dir"], "..", "event-threads", "event-threads.json")
-    alt_path = os.path.join(paths["data_dir"], "event-threads.json")
-    if os.path.exists(alt_path):
-        event_threads_path = alt_path
-
-    if not os.path.exists(event_threads_path):
+def _try_db_ingest(domain_id: str, run_date: str, paths: dict, db_dir: str):
+    """Ingest pipeline outputs into SQLite database."""
+    db_path = os.path.join(db_dir, domain_id, f"{domain_id}.db")
+    if not os.path.exists(db_path):
         return
 
     try:
-        import json as _json
-        with open(event_threads_path) as f:
-            data = _json.load(f)
-
-        causal_data = data.get("causal_edges", [])
-        judgment_data = data.get("judgments", [])
-        if not causal_data and not judgment_data:
-            return
-
         import sys as _sys
-        _sys.path.insert(0, os.path.join(PROJECT_ROOT, "stratum", "subsystems", "story-tracking"))
-        from repository import (
-            JsonlEventRepository, JsonlCausalRepository, JsonlJudgmentRepository,
-            StateManager,
-        )
-        from story_contracts import CausalEdge, Judgment
-        from gate import gate_causal_edge, gate_judgment
+        _sys.path.insert(0, os.path.join(PROJECT_ROOT))
+        from stratum.db.ingest import ingest_daily_events, update_entities_after_run, update_query_stats, ingest_entity_snapshots, ingest_keyword_article, ingest_keyword_event
 
-        output_dir = os.path.expanduser("~/WorkSpace/Stratum")
-        data_dir = os.path.join(output_dir, domain_id, "data", "story-tracking")
-        event_repo = JsonlEventRepository(data_dir, domain_id)
-        causal_repo = JsonlCausalRepository(data_dir)
-        judgment_repo = JsonlJudgmentRepository(data_dir)
-        state = StateManager(data_dir)
+        # 1. Ingest events/threads/causal/judgments from event-threads.json
+        event_threads_path = os.path.join(paths["data_dir"], "event-threads.json")
+        if not os.path.exists(event_threads_path):
+            alt_path = os.path.join(paths["data_dir"], "..", "event-threads", "event-threads.json")
+            if os.path.exists(alt_path):
+                event_threads_path = alt_path
 
-        ingested_causal = 0
-        ingested_judgments = 0
+        if os.path.exists(event_threads_path):
+            stats = ingest_daily_events(event_threads_path, domain_id, run_date)
+            if stats["errors"]:
+                print(f"\n⚠️  DB ingestion errors: {stats['errors']}", file=sys.stderr)
+            if any(stats[k] for k in ['events', 'causal_edges', 'judgments', 'new_threads']):
+                print(f"\n💾 DB: {stats['events']} events, {stats['causal_edges']} edges, " +
+                      f"{stats['judgments']} judgments, {stats['new_threads']} new threads", file=sys.stderr)
 
-        # Collect valid event IDs for gate
-        all_events = event_repo.all()
-        event_ids = {e.id for e in all_events}
+        # 2. Update entity article counts
+        articles_path = paths.get("articles", "")
+        if os.path.exists(articles_path):
+            entity_counts = {}
+            with open(articles_path) as f:
+                for line in f:
+                    if not line.strip():
+                        continue
+                    import json as _json
+                    a = _json.loads(line)
+                    for eid in a.get("entity_ids", a.get("entities", [])):
+                        entity_counts[eid] = entity_counts.get(eid, 0) + 1
+            if entity_counts:
+                stats_list = [{"id": eid, "article_count_today": c} for eid, c in entity_counts.items()]
+                n = update_entities_after_run(domain_id, stats_list)
+                print(f"💾 DB: {n} entities updated", file=sys.stderr)
 
-        # ── Ingest causal edges ──
-        for ce in causal_data:
-            cause_tid = ce.get("cause_thread_id", "")
-            effect_tid = ce.get("effect_thread_id", "")
-            if not cause_tid or not effect_tid:
-                continue
-
-            cause_event = event_repo.find_by_thread_id(cause_tid)
-            effect_event = event_repo.find_by_thread_id(effect_tid)
-            if not cause_event or not effect_event:
-                continue  # Threads not yet ingested
-
-            seq = state.next_causal_seq()
-            edge = CausalEdge(
-                id=f"causal-{domain_id}-{seq:04d}",
-                cause_id=cause_event.id,
-                effect_id=effect_event.id,
-                mechanism=ce.get("mechanism", "")[:500],
-                confidence=ce.get("confidence", "C"),
-                created=run_date,
-            )
-            gate_result = gate_causal_edge(edge, causal_repo.all(), event_ids)
-            if gate_result.passed:
-                causal_repo.add(edge)
-                ingested_causal += 1
-
-        # ── Ingest judgments ──
-        for jd in judgment_data:
-            target_type = jd.get("target_type", "")
-            hypothesis = jd.get("hypothesis", "")
-            if not hypothesis or not target_type:
-                continue
-
-            if target_type == "event_pair":
-                thread_ids = jd.get("target_thread_ids", [])
-                event_ids = []
-                for tid in thread_ids:
-                    ev = event_repo.find_by_thread_id(tid)
-                    if ev:
-                        event_ids.append(ev.id)
-
-                # Resolve causal edge for linking
-                linked_causal_id = None
-                if len(thread_ids) >= 2:
-                    for edge in causal_repo.find_by_cause(event_ids[0] if event_ids else ""):
-                        if edge.effect_id in event_ids:
-                            linked_causal_id = edge.id
-                            break
-
-                seq = state.next_judgment_seq()
-                judgment = Judgment(
-                    id=f"judgment-{domain_id}-{seq:04d}",
-                    target_type="event_pair",
-                    target_ids=event_ids,
-                    hypothesis=hypothesis[:500],
-                    confidence=jd.get("confidence", "C"),
-                    made_at=run_date,
-                    expected_verification=jd.get("expected_verification", ""),
-                    triggered_by_events=event_ids,
-                )
-            elif target_type == "entity":
-                seq = state.next_judgment_seq()
-                judgment = Judgment(
-                    id=f"judgment-{domain_id}-{seq:04d}",
-                    target_type="entity",
-                    target_ids=jd.get("target_entity_ids", []),
-                    hypothesis=hypothesis[:500],
-                    confidence=jd.get("confidence", "C"),
-                    made_at=run_date,
-                    expected_verification=jd.get("expected_verification", ""),
-                    triggered_by_events=[],
-                )
-            else:
-                continue
-
-            gate_result = gate_judgment(judgment, judgment_repo.all())
-            if gate_result.passed:
-                judgment_repo.add(judgment)
-                ingested_judgments += 1
-
-        if ingested_causal or ingested_judgments:
-            print(f"\n🔗 Causal & Judgment: {ingested_causal} edges, {ingested_judgments} judgments "
-                  f"→ {data_dir}/", file=sys.stderr)
+        # 3. Entity snapshots
+        n = ingest_entity_snapshots(domain_id, "daily", run_date)
+        print(f"💾 DB: {n} entity snapshots", file=sys.stderr)
 
     except Exception as e:
-        print(f"⚠️  Causal & Judgment ingestion skipped: {e}", file=sys.stderr)
+        print(f"⚠️  DB ingestion skipped: {e}", file=sys.stderr)
 
 
 if __name__ == "__main__":

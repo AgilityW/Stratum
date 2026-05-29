@@ -147,13 +147,55 @@ def check_magnitude(article: dict, magnitude_rules: dict) -> list[str]:
     return flags
 
 
+def check_duplicate(url: str, title: str, seen_urls: set, seen_titles: dict) -> tuple[bool, str]:
+    """Deduplication: URL exact match or title similarity > 0.85."""
+    # URL exact match
+    if url and url in seen_urls:
+        return True, "DUPLICATE_URL"
+    # Title similarity
+    if title:
+        title_lower = title.lower().strip()
+        for seen_title, seen_url in seen_titles.items():
+            if _title_similarity(title_lower, seen_title) > 0.85:
+                return True, f"DUPLICATE_TITLE: similar to '{seen_title[:60]}'"
+    return False, ""
+
+def _title_similarity(a: str, b: str) -> float:
+    """Jaccard-like similarity on character bigrams for CJK-friendly comparison."""
+    def _bigrams(s: str) -> set:
+        return {s[i:i+2] for i in range(len(s)-1)}
+    ba, bb = _bigrams(a), _bigrams(b)
+    if not ba or not bb:
+        return 0.0
+    return len(ba & bb) / len(ba | bb)
+
+def check_platform_admission(domain: str, platform_companies: list[str]) -> tuple[bool, str]:
+    """Check if non-domain source is in platform admission list.
+    Returns (is_platform, reason). is_platform=True means it's admitted
+    (a platform company that affects our industry)."""
+    if not platform_companies or not domain:
+        return False, ""
+    domain_lower = domain.lower()
+    for name in platform_companies:
+        if name.lower() in domain_lower:
+            return True, f"PLATFORM_ADMIT: {name}"
+    # Not a platform company — no special treatment
+    return False, ""
+
+
 def verify_article(article: dict, run_date: str, index: int,
-                   pipeline_config: dict) -> dict:
+                   pipeline_config: dict,
+                   seen_urls: set = None,
+                   seen_titles: dict = None,
+                   platform_companies: list[str] = None) -> dict:
     """Verify a single article. Returns article with verification fields set."""
     blocklist = pipeline_config.get("blocklist", {})
     low_priority = set(pipeline_config.get("low_priority_domains", []))
     magnitude_rules = pipeline_config.get("magnitude_rules", {})
     date_window = pipeline_config.get("date_window", {})
+    seen_urls = set() if seen_urls is None else seen_urls
+    seen_titles = {} if seen_titles is None else seen_titles
+    platform_companies = platform_companies or []
 
     url = article.get("url", "")
     title = article.get("title", "")
@@ -203,6 +245,25 @@ def verify_article(article: dict, run_date: str, index: int,
         verified["magnitude_flags"] = magnitude_flags
         return verified
 
+    # Check 5: Deduplication
+    is_dup, dup_reason = check_duplicate(url, title, seen_urls, seen_titles)
+    if is_dup:
+        verified["verification_status"] = "rejected"
+        verified["rejection_reason"] = dup_reason
+        return verified
+
+    # Check 6: Platform admission (not a rejection — marks special source)
+    is_platform, platform_reason = check_platform_admission(domain, platform_companies)
+    if is_platform:
+        verified["platform_admitted"] = True
+        verified["platform_reason"] = platform_reason
+
+    # Track for dedup
+    if url:
+        seen_urls.add(url)
+    if title:
+        seen_titles[title.lower().strip()] = url
+
     verified["verification_status"] = "verified"
     verified["rejection_reason"] = None
     if magnitude_flags:
@@ -221,6 +282,16 @@ def main():
 
     pipeline_config = load_domain_config(args.domain)
 
+    # Load platform admission from domain.yaml editorial section
+    domain_cfg_full = {}
+    with open(args.domain) as f:
+        domain_cfg_full = yaml.safe_load(f)
+    platform_companies = (
+        domain_cfg_full.get("editorial", {})
+        .get("platform_admission", {})
+        .get("companies", [])
+    )
+
     # Load input
     if args.input:
         with open(args.input) as f:
@@ -234,21 +305,31 @@ def main():
 
     verified = []
     stats = {"total": len(raw_articles), "verified": 0, "rejected": 0,
-             "reasons": {}, "blocklisted": 0}
+             "reasons": {}, "blocklisted": 0, "duplicates": 0, "platform_admitted": 0}
+    seen_urls = set()
+    seen_titles = {}
 
     for i, article in enumerate(raw_articles):
-        result = verify_article(article, args.date, i, pipeline_config)
+        result = verify_article(
+            article, args.date, i, pipeline_config,
+            seen_urls=seen_urls, seen_titles=seen_titles,
+            platform_companies=platform_companies,
+        )
         verified.append(result)
 
         status = result["verification_status"]
         if status == "verified":
             stats["verified"] += 1
+            if result.get("platform_admitted"):
+                stats["platform_admitted"] += 1
         else:
             stats["rejected"] += 1
             reason = result.get("rejection_reason", "unknown")
             stats["reasons"][reason] = stats["reasons"].get(reason, 0) + 1
             if "BLOCKED" in str(reason):
                 stats["blocklisted"] += 1
+            if "DUPLICATE" in str(reason):
+                stats["duplicates"] += 1
 
     output_lines = [json.dumps(v, ensure_ascii=False) for v in verified]
     output_text = "\n".join(output_lines) + "\n"
@@ -265,6 +346,10 @@ def main():
     print(f"   Verified: {stats['verified']}", file=sys.stderr)
     print(f"   Rejected: {stats['rejected']}", file=sys.stderr)
     print(f"   Blocked:  {stats['blocklisted']}", file=sys.stderr)
+    if stats["duplicates"]:
+        print(f"   Duplicates: {stats['duplicates']}", file=sys.stderr)
+    if stats["platform_admitted"]:
+        print(f"   Platform admitted: {stats['platform_admitted']}", file=sys.stderr)
     for reason, count in sorted(stats["reasons"].items(), key=lambda x: -x[1]):
         print(f"     {reason}: {count}", file=sys.stderr)
 

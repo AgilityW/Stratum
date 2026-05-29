@@ -6,7 +6,7 @@ import pytest
 import subprocess
 import sys
 
-PROJECT_ROOT = os.path.expanduser("~/ProjectSpace/Stratum")
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 STAGES_DIR = os.path.join(PROJECT_ROOT, "stratum", "stages")
 DOMAINS_DIR = os.path.join(PROJECT_ROOT, "domains")
 

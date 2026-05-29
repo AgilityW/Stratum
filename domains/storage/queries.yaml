@@ -28,22 +28,42 @@ seed_queries:
     - "site:technews.tw 記憶體 半導體"
     - "site:moneydj.com 記憶體 儲存"
 
+  # ── English locale: site-first strategy ──
+  # Principle (2026-05-30): manufacturer newsrooms + professional media first.
+  # Broad queries are discovery-only — they surface new sources, not primary intake.
+  # This design counters Tavily's index bias toward general financial/media outlets.
   en:
-    - "memory chip DRAM NAND price hike shortage May 2026"
-    - "CXMT IPO listing Shanghai STAR market"
-    - "Micron SK Hynix Samsung HBM4 production certification"
-    - "NAND flash contract price spot price Q2 2026"
-    - "Samsung strike labor memory production"
-    - "YMTC fab expansion capacity NAND"
-    - "site:reuters.com memory chip DRAM NAND storage"
-    - "site:bloomberg.com Micron SK Hynix memory semiconductor"
-    - "site:digitimes.com memory HBM NAND DRAM"
-    - "site:trendforce.com DRAM NAND HBM memory price"
-    - "site:tomshardware.com SSD NAND DRAM HBM memory"
-    - "site:blocksandfiles.com storage SSD NAND"
-    - "site:semianalysis.com HBM NAND DRAM"
+    # ── Broad discovery (keep 3 — find new sources) ──
+    - "memory chip DRAM NAND storage latest news ${CURRENT_MONTH_EN} ${CURRENT_YEAR}"
+    - "CXMT YMTC China memory semiconductor latest ${CURRENT_MONTH_EN} ${CURRENT_YEAR}"
+    - "Samsung SK Hynix Micron HBM DRAM NAND latest ${CURRENT_MONTH_EN} ${CURRENT_YEAR}"
+
+    # ── Manufacturer newsrooms (原厂) ──
+    # NOTE: "press release" added as English signal to combat Tavily returning
+    # non-English pages (e.g., jp.micron.com for micron queries).
+    - "site:news.samsung.com memory DRAM NAND SSD semiconductor"
+    - "site:investors.micron.com/news-releases memory DRAM NAND"
+    - "site:skhynix.com HBM DRAM NAND \"press release\" memory"
+    - "site:kioxia.com \"press release\" OR site:kioxia-holdings.com NAND flash SSD"
+    - "site:westerndigital.com NAND flash SSD storage 2026"
+
+    # ── Professional semiconductor media ──
+    - "site:tomshardware.com SSD NAND DRAM HBM memory storage"
+    - "site:blocksandfiles.com storage SSD NAND enterprise"
+    - "site:semianalysis.com HBM NAND DRAM memory semiconductor"
+    - "site:servethehome.com storage SSD NVMe enterprise NAND"
+    - "site:theregister.com memory chip semiconductor storage SSD"
+    - "site:eetimes.com memory DRAM NAND semiconductor storage"
+
+    # ── Industry analysts ──
+    - "site:trendforce.com DRAM NAND HBM memory price forecast"
+    - "site:counterpointresearch.com DRAM NAND memory semiconductor"
+
+    # ── Asian English-language sources ──
+    - "site:digitimes.com memory HBM NAND DRAM semiconductor"
     - "site:nikkei.com semiconductor memory chip storage"
-    - "site:koreaherald.com Samsung SK hynix semiconductor"
+    - "site:koreaherald.com Samsung SK hynix semiconductor memory"
+    - "site:thelec.net Samsung SK hynix memory semiconductor"
 
   ja:
     - "半導体 メモリ DRAM NAND 価格 高騰"

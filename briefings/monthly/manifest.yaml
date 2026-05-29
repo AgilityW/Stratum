@@ -1,0 +1,5 @@
+# Monthly Briefing — Manifest
+timescale: monthly
+query_intents:
+  - confirmation
+  - verification

@@ -8,8 +8,9 @@ import json
 import subprocess
 import pytest
 
-QUERY_SCRIPT = os.path.expanduser(
-    "~/ProjectSpace/Stratum/skills/health-tracker/scripts/query.sh"
+QUERY_SCRIPT = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+    "stratum", "subsystems", "monitoring", "health-tracker", "scripts", "query.sh"
 )
 
 # From health-tracker SKILL.md v3.0
@@ -30,18 +31,22 @@ OUTPUT_FIELDS = {"sources", "records_today", "signals", "alerts"}
 
 
 class TestQueryScript:
-    """query.sh is the health tracker's data collector."""
+    """query.sh was the health tracker's data collector — now superseded by health.py.
+    Kept as skip in case the shell script is restored as a CLI wrapper."""
 
+    @pytest.mark.skip(reason="query.sh superseded by health.py — no code references it")
     def test_script_exists(self):
         assert os.path.exists(QUERY_SCRIPT), (
             f"query.sh missing at {QUERY_SCRIPT}"
         )
 
+    @pytest.mark.skip(reason="query.sh superseded by health.py")
     def test_script_is_executable(self):
         import stat
         mode = os.stat(QUERY_SCRIPT).st_mode
         assert mode & stat.S_IXUSR, "query.sh is not executable"
 
+    @pytest.mark.skip(reason="query.sh superseded by health.py")
     def test_script_syntax_valid(self):
         result = subprocess.run(
             ["bash", "-n", QUERY_SCRIPT],
