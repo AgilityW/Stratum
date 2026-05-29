@@ -10,7 +10,7 @@ from pathlib import Path
 import pytest
 
 # Ensure source-graph-engine is importable
-_engine_path = Path(__file__).resolve().parents[2] / "skills" / "source-graph-engine"
+_engine_path = Path(__file__).resolve().parents[1] / "stratum" / "subsystems" / "source-graph"
 sys.path.insert(0, str(_engine_path))
 
 from graph import (
@@ -29,7 +29,8 @@ def fixtures_dir():
 
 @pytest.fixture
 def schemas_dir():
-    return Path(__file__).resolve().parents[1] / "schemas"
+    """Legacy name — redirects to stratum/contracts/."""
+    return Path(__file__).resolve().parents[1] / "stratum" / "contracts"
 
 
 # ── Temporary directories ──────────────────────────────────

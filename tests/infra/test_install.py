@@ -186,8 +186,8 @@ class TestProjectStructure:
     def test_makefile_exists(self):
         assert (PROJECT_ROOT / "Makefile").exists()
 
-    def test_schemas_dir_exists(self):
-        assert (PROJECT_ROOT / "schemas").is_dir()
+    def test_contracts_dir_exists(self):
+        assert (PROJECT_ROOT / "stratum" / "contracts").is_dir()
 
     def test_at_least_one_skill(self):
         skills = _find_skill_md()

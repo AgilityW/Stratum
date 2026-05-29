@@ -216,12 +216,13 @@ def main():
         print("\n⚠️  Skipping validate: briefing.md or articles.jsonl not found", file=sys.stderr)
 
     # ── Stage 8: Render ──
-    # Note: render stage uses the render-engine skill (not a standalone script yet)
-    print(f"\n{'='*60}", file=sys.stderr)
-    print(f"  STEP: 8/8 Render (external)", file=sys.stderr)
-    print(f"  Input:  {paths['briefing_md']}", file=sys.stderr)
-    print(f"  Output: {paths['briefing_html']} / {paths['briefing_pdf']}", file=sys.stderr)
-    print(f"  ⚠️  Use render-engine skill for MD→HTML→PDF conversion", file=sys.stderr)
+    if os.path.exists(paths["briefing_md"]):
+        run_stage("render", [
+            "--input", paths["briefing_md"],
+            "--output-dir", paths["data_dir"],
+        ], "8/8 Render HTML + PDF")
+    else:
+        print("\n⚠️  Skipping render: briefing.md not found", file=sys.stderr)
     print(f"{'='*60}", file=sys.stderr)
 
     # ── Summary ──
