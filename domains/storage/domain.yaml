@@ -1030,6 +1030,48 @@ source_registry:
       status: active
       note: "Likely JS-rendered; test with direct_fetch first"
 
+    # ── Manufacturer Technical Blogs ──
+    - id: micron-blog
+      name: "Micron Technical Blog"
+      urls:
+        - "https://www.micron.com/about/blog"
+      access: direct_fetch
+      locale: en
+      category: blog
+      fetch_interval_hours: 24
+      status: active
+
+    - id: samsung-tech-blog
+      name: "Samsung Semiconductor Tech Blog"
+      urls:
+        - "https://semiconductor.samsung.com/news-events/tech-blog/"
+      access: browser
+      locale: en
+      category: blog
+      fetch_interval_hours: 24
+      status: active
+      note: "JS-rendered; requires browser_navigate"
+
+    - id: kioxia-blog
+      name: "Kioxia Technical Blog"
+      urls:
+        - "https://blog-us.kioxia.com"
+      access: direct_fetch
+      locale: en
+      category: blog
+      fetch_interval_hours: 24
+      status: active
+
+    - id: wd-blog
+      name: "Western Digital Corporate Blog"
+      urls:
+        - "https://blog.westerndigital.com"
+      access: direct_fetch
+      locale: en
+      category: blog
+      fetch_interval_hours: 24
+      status: active
+
   # ── Per-access-type settings ──
   defaults:
     direct_fetch:

@@ -164,6 +164,67 @@ class _ArticleExtractor(HTMLParser):
             self._in_heading = None
 
 
+def _extract_read_more_links(html: str, base_url: str, domain: str, locale: str,
+                              category: str, source_id: str, max_results: int,
+                              seen_urls: set) -> list[SearchResult]:
+    """Extract articles from 'Read article' style links by looking backward for headings.
+    
+    Used as fallback when heading-first extraction doesn't capture all articles
+    (common on AEM and corporate CMS sites where article titles are in separate
+    elements from the read-more button).
+    """
+    results = []
+    
+    # Match: <a href="...">Read article</a> or <a href="...">Learn More</a>
+    pattern = re.compile(
+        r'<a[^>]*href="([^"]*)"[^>]*>\s*(Read article|Learn [Mm]ore|READ)\s*</a>',
+        re.IGNORECASE,
+    )
+    
+    for m in pattern.finditer(html):
+        if len(results) >= max_results:
+            break
+        
+        href = m.group(1)
+        full_url = urljoin(base_url, href)
+        
+        if full_url in seen_urls or not _is_article_url(full_url):
+            continue
+        
+        # Look backward up to 2000 chars for nearest heading
+        pos = m.start()
+        chunk = html[max(0, pos - 2000):pos]
+        headings = re.findall(r'<h[2-4][^>]*>(?:<a[^>]*>)?\s*(.+?)\s*(?:</a>)?</h[2-4]>', chunk, re.DOTALL)
+        
+        if not headings:
+            continue
+        
+        # Clean heading text (remove HTML tags)
+        title = re.sub(r'<[^>]+>', '', headings[-1]).strip()
+        
+        if len(title) < 10:
+            continue
+        
+        # Extract date
+        published_at = _extract_date(full_url, html)
+        
+        result = SearchResult(
+            url=full_url,
+            title=title,
+            snippet=title,
+            locale=locale,
+            published_at=published_at,
+            source_domain=domain,
+            source_type_hint=category,
+            engine=f"direct_fetch:{source_id}",
+            query_id=f"df-{source_id}-fallback",
+        )
+        results.append(result)
+        seen_urls.add(full_url)
+    
+    return results
+
+
 def fetch_source(source: dict, run_date: str, timeout: int = 15) -> list[SearchResult]:
     """Fetch articles from a single source definition.
     
@@ -201,32 +262,50 @@ def fetch_source(source: dict, run_date: str, timeout: int = 15) -> list[SearchR
             
             domain = urlparse(url).netloc.lower().lstrip("www.")
             
-            for link in parser.links[:max_articles]:
-                link_url = link['url']
-                title = link['title']
-                
-                # Skip if title is too short or generic
-                if len(title) < 5 or title.lower() in ('read article', 'learn more', 'read more', 'click here'):
-                    continue
-                
-                # Extract date
-                published_at = _extract_date(link_url, resp.text)
-                
-                # Build snippet from title (no body fetch for speed)
-                snippet = title
-                
-                result = SearchResult(
-                    url=link_url,
-                    title=title,
-                    snippet=snippet,
-                    locale=locale,
-                    published_at=published_at,
-                    source_domain=domain,
-                    source_type_hint=category,
-                    engine=f"direct_fetch:{source_id}",
-                    query_id=f"df-{source_id}",
-                )
-                results.append(result)
+            # Detect page structure: AEM/corp CMS with "Read article" buttons
+            has_read_more = bool(re.search(
+                r'<a[^>]*>\s*(Read article|Learn [Mm]ore|READ)\s*</a>',
+                resp.text, re.IGNORECASE
+            ))
+            
+            # Phase 1: heading-first links (skip if page has read-more buttons)
+            if not has_read_more:
+                added = 0
+                for link in parser.links:
+                    if added >= max_articles:
+                        break
+                        
+                    link_url = link['url']
+                    title = link['title']
+                    
+                    if len(title) < 10 or title.lower() in ('read article', 'learn more', 'read more', 'click here', 'read', 'press releases', 'newsroom'):
+                        continue
+                    
+                    if len(title.split()) <= 2 and title == title.upper():
+                        continue
+                    
+                    published_at = _extract_date(link_url, resp.text)
+                    
+                    result = SearchResult(
+                        url=link_url,
+                        title=title,
+                        snippet=title,
+                        locale=locale,
+                        published_at=published_at,
+                        source_domain=domain,
+                        source_type_hint=category,
+                        engine=f"direct_fetch:{source_id}",
+                        query_id=f"df-{source_id}",
+                    )
+                    results.append(result)
+                    added += 1
+            
+            # Phase 2: fallback — "Read article" style links with backward heading lookup
+            remaining = max_articles - len(results)
+            if remaining > 0:
+                results.extend(_extract_read_more_links(resp.text, url, domain, locale, 
+                                                         category, source_id, remaining,
+                                                         {r.url for r in results}))
             
         except requests.RequestException as e:
             print(f"  ⚠️  direct_fetch [{source_id}]: {e}", file=sys.stderr)
