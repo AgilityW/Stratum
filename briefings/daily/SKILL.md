@@ -137,6 +137,99 @@ Agent Search → Enrich → Verify → Normalize → Cluster → Agent Edit → 
 | `LOW_CONFIDENCE` | 来源低于 D 级且无佐证 |
 | `IRRELEVANT` | 主题不匹配 |
 
+## 因果链与判断产出（Agent Edit 阶段）
+
+### 目的
+
+Agent Edit 不仅产出读者可见的 briefing.md，还需产出**内部可验证的因果假设**，供 story-tracking 子系统追踪和回溯。
+
+### 输出位置
+
+在 `event-threads.json` 中，除 `threads` 数组外，额外产出两个数组：
+
+```json
+{
+  "threads": [...],
+  "causal_edges": [...],
+  "judgments": [...]
+}
+```
+
+### CausalEdge 格式
+
+每条因果边连接两个 event-thread，带有置信度和因果机制说明：
+
+| 字段 | 类型 | 说明 |
+|:---|:---|:---|
+| `cause_thread_id` | string | 原因 thread 的 id（如 `"et-2026-001"`） |
+| `effect_thread_id` | string | 结果 thread 的 id |
+| `mechanism` | string | 因果传导机制，≤ 500 字符 |
+| `confidence` | string | A / B / C |
+
+```json
+{
+  "cause_thread_id": "et-2026-001",
+  "effect_thread_id": "et-2026-002",
+  "mechanism": "CXMT IPO → 获得 ¥200B 资金 → DDR5 产能扩张 → 对三星/SK 海力士形成价格压力",
+  "confidence": "B"
+}
+```
+
+**生成规则**：
+- 仅连接**同一日 briefing 中出现的 thread**（不跨日）
+- 因果链必须是**可验证的**——有明确的传导路径，不是"相关即因果"
+- 每对 thread 最多一条边
+- 置信度：A=强证据支撑（官方声明中的因果陈述），B=合理推断，C=猜测
+
+### Judgment 格式
+
+判断是一个**可测试的假设**——未来某个时点可以被证实或证伪。
+
+| 字段 | 类型 | 说明 |
+|:---|:---|:---|
+| `target_type` | string | `"entity"` 或 `"event_pair"` |
+| `target_entity_ids` | list | 当 type=entity 时，taxonomy entity id（如 `["cxmt"]`） |
+| `target_thread_ids` | list | 当 type=event_pair 时，涉及的 thread id |
+| `hypothesis` | string | 可被验证的陈述，≤ 500 字符 |
+| `confidence` | string | A / B / C |
+| `expected_verification` | string | 预期可验证的日期 YYYY-MM-DD |
+
+**Entity judgment 示例**：
+```json
+{
+  "target_type": "entity",
+  "target_entity_ids": ["cxmt"],
+  "hypothesis": "CXMT 将在 3 个月内获得至少 2 家一线 OEM 的 DDR5 验证通过",
+  "confidence": "B",
+  "expected_verification": "2026-08-28"
+}
+```
+
+**Event pair judgment 示例**：
+```json
+{
+  "target_type": "event_pair",
+  "target_thread_ids": ["et-2026-001", "et-2026-002"],
+  "hypothesis": "CXMT IPO 完成后 6 个月内，DRAM 合约价格将下降 ≥5%，主要由 DDR5 价格战驱动",
+  "confidence": "C",
+  "expected_verification": "2026-11-15"
+}
+```
+
+**生成规则**：
+- 每条 briefing 产出 **1-3 个判断**（质量 > 数量）
+- 判断必须满足：**具体**（有量化指标）、**有时限**（expected_verification）、**可证伪**（什么信号出现证明它错了）
+- 优先为最高优先级的 thread（priority 1-2）生成判断
+- 置信度 C 的判断也必须产出——"不知道但想知道"是有效信号
+
+### 摄入流程
+
+Pipeline 在 Stage 8 之后自动执行：
+1. 读取 `event-threads.json` 中的 `causal_edges` 和 `judgments`
+2. 通过 `find_by_thread_id` 解析 thread_id → event_id
+3. 写入 `causal.jsonl` 和 `judgments.jsonl`
+4. 建立 causal edge ↔ judgment 双向链接
+
 ## 领域接入点
 
 领域通过 `domain.yaml` 注入以下内容：

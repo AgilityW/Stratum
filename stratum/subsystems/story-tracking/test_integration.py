@@ -19,7 +19,10 @@ import pytest
 import yaml
 
 from story_contracts import EventRecord
-from repository import JsonlEventRepository, StateManager
+from repository import (
+    JsonlEventRepository, JsonlCausalRepository, JsonlJudgmentRepository,
+    StateManager,
+)
 from taxonomy import Taxonomy
 from query import query_events, events_by_topic, events_by_entity
 from briefing_context import generate_context, format_context_for_prompt
@@ -93,6 +96,30 @@ def agent_event_threads():
                 "watch_signals": ["金士顿/威刚是否采用CXMT DDR5",
                                  "CXMT DDR5频率提升路线图"]
             }
+        ],
+        "causal_edges": [
+            {
+                "cause_thread_id": "et-2026-003",
+                "effect_thread_id": "et-2026-001",
+                "mechanism": "CXMT DDR5进入消费市场 → 对三星DRAM ASP形成下行压力 → 三星加速HBM4量产以维持ASP",
+                "confidence": "B",
+            },
+        ],
+        "judgments": [
+            {
+                "target_type": "entity",
+                "target_entity_ids": ["cxmt"],
+                "hypothesis": "CXMT将在3个月内获得至少2家一线OEM的DDR5验证通过",
+                "confidence": "B",
+                "expected_verification": "2026-08-28",
+            },
+            {
+                "target_type": "event_pair",
+                "target_thread_ids": ["et-2026-003", "et-2026-001"],
+                "hypothesis": "CXMT DDR5进入零售渠道后6个月内，三星DRAM ASP将下降≥5%，加速HBM产能转换",
+                "confidence": "C",
+                "expected_verification": "2026-11-28",
+            },
         ],
     }
 
@@ -246,3 +273,166 @@ class TestIntegration:
         assert len(ctx.unassigned_events) == 3
         # And no carried_forward (scale_refs are empty)
         assert len(ctx.carried_forward) == 0
+
+
+# ── Causal & Judgment Ingestion ──
+
+class TestCausalJudgmentIngestion:
+    """Full loop: Agent output → bridge (events + causal + judgment) → store."""
+
+    def test_ingest_causal_edges(self, agent_event_threads, repo_and_state, taxonomy):
+        """After Bridge ingests threads, causal edges should be resolvable and storable."""
+        repo, state, data_dir = repo_and_state
+
+        # Step 1: Bridge ingests threads
+        from story_bridge import ingest_batch
+        ingest_batch(
+            agent_event_threads["threads"], "storage", "2026-05-28",
+            repo, state, taxonomy,
+            briefing_id="daily-2026-05-28",
+        )
+
+        # Step 2: Simulate _try_ingest_causal_and_judgments
+        causal_repo = JsonlCausalRepository(data_dir)
+        judgment_repo = JsonlJudgmentRepository(data_dir)
+        from story_contracts import CausalEdge, Judgment
+        from gate import gate_causal_edge, gate_judgment
+
+        all_events = repo.all()
+        event_ids = {e.id for e in all_events}
+
+        for ce in agent_event_threads["causal_edges"]:
+            cause_ev = repo.find_by_thread_id(ce["cause_thread_id"])
+            effect_ev = repo.find_by_thread_id(ce["effect_thread_id"])
+            assert cause_ev is not None, f"cause thread {ce['cause_thread_id']} not found"
+            assert effect_ev is not None
+
+            seq = state.next_causal_seq()
+            edge = CausalEdge(
+                id=f"causal-storage-{seq:04d}",
+                cause_id=cause_ev.id,
+                effect_id=effect_ev.id,
+                mechanism=ce["mechanism"][:500],
+                confidence=ce["confidence"],
+                created="2026-05-28",
+            )
+            result = gate_causal_edge(edge, causal_repo.all(), event_ids)
+            assert result.passed, f"Gate rejected: {result.errors}"
+            causal_repo.add(edge)
+
+        assert causal_repo.count() == 1
+        stored = causal_repo.all()[0]
+        assert stored.cause_id.startswith("event-")
+        assert stored.effect_id.startswith("event-")
+
+    def test_ingest_judgments(self, agent_event_threads, repo_and_state, taxonomy):
+        """Entity and event_pair judgments should be storable."""
+        repo, state, data_dir = repo_and_state
+
+        from story_bridge import ingest_batch
+        ingest_batch(
+            agent_event_threads["threads"], "storage", "2026-05-28",
+            repo, state, taxonomy,
+            briefing_id="daily-2026-05-28",
+        )
+
+        judgment_repo = JsonlJudgmentRepository(data_dir)
+        from story_contracts import Judgment
+        from gate import gate_judgment
+
+        # Event pair judgment — resolve thread_ids to event_ids
+        event_pair_jd = agent_event_threads["judgments"][1]
+        event_ids_for_pair = []
+        for tid in event_pair_jd["target_thread_ids"]:
+            ev = repo.find_by_thread_id(tid)
+            assert ev is not None, f"thread {tid} not found"
+            event_ids_for_pair.append(ev.id)
+
+        seq = state.next_judgment_seq()
+        j = Judgment(
+            id=f"judgment-storage-{seq:04d}",
+            target_type="event_pair",
+            target_ids=event_ids_for_pair,
+            hypothesis=event_pair_jd["hypothesis"][:500],
+            confidence=event_pair_jd["confidence"],
+            made_at="2026-05-28",
+            expected_verification=event_pair_jd["expected_verification"],
+            triggered_by_events=event_ids_for_pair,
+        )
+        result = gate_judgment(j, judgment_repo.all())
+        assert result.passed, f"Gate rejected: {result.errors}"
+        judgment_repo.add(j)
+
+        # Entity judgment
+        entity_jd = agent_event_threads["judgments"][0]
+        seq2 = state.next_judgment_seq()
+        j2 = Judgment(
+            id=f"judgment-storage-{seq2:04d}",
+            target_type="entity",
+            target_ids=entity_jd["target_entity_ids"],
+            hypothesis=entity_jd["hypothesis"][:500],
+            confidence=entity_jd["confidence"],
+            made_at="2026-05-28",
+            expected_verification=entity_jd["expected_verification"],
+            triggered_by_events=[],
+        )
+        result2 = gate_judgment(j2, judgment_repo.all())
+        assert result2.passed
+        judgment_repo.add(j2)
+
+        assert judgment_repo.count() == 2
+        # Verify both types
+        entities = judgment_repo.find_by_verdict("pending")
+        assert len(entities) == 2
+
+    def test_causal_to_judgment_link(self, agent_event_threads, repo_and_state, taxonomy):
+        """Event pair judgment should be linked to its causal edge."""
+        repo, state, data_dir = repo_and_state
+
+        from story_bridge import ingest_batch
+        ingest_batch(
+            agent_event_threads["threads"], "storage", "2026-05-28",
+            repo, state, taxonomy,
+            briefing_id="daily-2026-05-28",
+        )
+
+        causal_repo = JsonlCausalRepository(data_dir)
+        judgment_repo = JsonlJudgmentRepository(data_dir)
+        from story_contracts import CausalEdge, Judgment
+        from gate import gate_causal_edge, gate_judgment
+
+        all_events = repo.all()
+        event_ids = {e.id for e in all_events}
+
+        # Ingest causal edge first
+        ce = agent_event_threads["causal_edges"][0]
+        cause_ev = repo.find_by_thread_id(ce["cause_thread_id"])
+        effect_ev = repo.find_by_thread_id(ce["effect_thread_id"])
+        seq = state.next_causal_seq()
+        edge = CausalEdge(
+            id=f"causal-storage-{seq:04d}",
+            cause_id=cause_ev.id,
+            effect_id=effect_ev.id,
+            mechanism=ce["mechanism"][:500],
+            confidence=ce["confidence"],
+            created="2026-05-28",
+        )
+        causal_repo.add(edge)
+
+        # Ingest event_pair judgment — should link to causal edge
+        event_pair_jd = agent_event_threads["judgments"][1]
+        event_ids_for_pair = []
+        for tid in event_pair_jd["target_thread_ids"]:
+            ev = repo.find_by_thread_id(tid)
+            event_ids_for_pair.append(ev.id)
+
+        # Find linked causal edge
+        linked_causal = None
+        for e in causal_repo.find_by_cause(event_ids_for_pair[0]):
+            if e.effect_id in event_ids_for_pair:
+                linked_causal = e.id
+                break
+
+        assert linked_causal is not None
+        # Verify the link is correct — it should match our just-created edge
+        assert linked_causal == edge.id

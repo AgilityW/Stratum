@@ -235,6 +235,9 @@ def main():
     # ── Story Bridge: ingest event-threads into Story-Tracking EventStore ──
     _try_ingest_event_threads(args.domain, args.date, paths)
 
+    # ── Causal & Judgment: ingest causal edges and judgments ──
+    _try_ingest_causal_and_judgments(args.domain, args.date, paths)
+
     # ── Summary ──
     article_count = 0
     if os.path.exists(paths["articles"]):
@@ -357,6 +360,141 @@ def _try_ingest_event_threads(domain_id: str, run_date: str, paths: dict):
                 print(f"  ⚠️  {err}", file=sys.stderr)
     except Exception as e:
         print(f"⚠️  Story Bridge ingestion skipped: {e}", file=sys.stderr)
+
+
+def _try_ingest_causal_and_judgments(domain_id: str, run_date: str, paths: dict):
+    """Ingest Agent-produced causal_edges and judgments from event-threads.json.
+
+    Resolves thread_id → event_id via the event repository, then writes
+    to causal.jsonl and judgments.jsonl.
+    """
+    event_threads_path = os.path.join(paths["data_dir"], "..", "event-threads", "event-threads.json")
+    alt_path = os.path.join(paths["data_dir"], "event-threads.json")
+    if os.path.exists(alt_path):
+        event_threads_path = alt_path
+
+    if not os.path.exists(event_threads_path):
+        return
+
+    try:
+        import json as _json
+        with open(event_threads_path) as f:
+            data = _json.load(f)
+
+        causal_data = data.get("causal_edges", [])
+        judgment_data = data.get("judgments", [])
+        if not causal_data and not judgment_data:
+            return
+
+        import sys as _sys
+        _sys.path.insert(0, os.path.join(PROJECT_ROOT, "stratum", "subsystems", "story-tracking"))
+        from repository import (
+            JsonlEventRepository, JsonlCausalRepository, JsonlJudgmentRepository,
+            StateManager,
+        )
+        from story_contracts import CausalEdge, Judgment
+        from gate import gate_causal_edge, gate_judgment
+
+        output_dir = os.path.expanduser("~/WorkSpace/Stratum")
+        data_dir = os.path.join(output_dir, domain_id, "data", "story-tracking")
+        event_repo = JsonlEventRepository(data_dir, domain_id)
+        causal_repo = JsonlCausalRepository(data_dir)
+        judgment_repo = JsonlJudgmentRepository(data_dir)
+        state = StateManager(data_dir)
+
+        ingested_causal = 0
+        ingested_judgments = 0
+
+        # Collect valid event IDs for gate
+        all_events = event_repo.all()
+        event_ids = {e.id for e in all_events}
+
+        # ── Ingest causal edges ──
+        for ce in causal_data:
+            cause_tid = ce.get("cause_thread_id", "")
+            effect_tid = ce.get("effect_thread_id", "")
+            if not cause_tid or not effect_tid:
+                continue
+
+            cause_event = event_repo.find_by_thread_id(cause_tid)
+            effect_event = event_repo.find_by_thread_id(effect_tid)
+            if not cause_event or not effect_event:
+                continue  # Threads not yet ingested
+
+            seq = state.next_causal_seq()
+            edge = CausalEdge(
+                id=f"causal-{domain_id}-{seq:04d}",
+                cause_id=cause_event.id,
+                effect_id=effect_event.id,
+                mechanism=ce.get("mechanism", "")[:500],
+                confidence=ce.get("confidence", "C"),
+                created=run_date,
+            )
+            gate_result = gate_causal_edge(edge, causal_repo.all(), event_ids)
+            if gate_result.passed:
+                causal_repo.add(edge)
+                ingested_causal += 1
+
+        # ── Ingest judgments ──
+        for jd in judgment_data:
+            target_type = jd.get("target_type", "")
+            hypothesis = jd.get("hypothesis", "")
+            if not hypothesis or not target_type:
+                continue
+
+            if target_type == "event_pair":
+                thread_ids = jd.get("target_thread_ids", [])
+                event_ids = []
+                for tid in thread_ids:
+                    ev = event_repo.find_by_thread_id(tid)
+                    if ev:
+                        event_ids.append(ev.id)
+
+                # Resolve causal edge for linking
+                linked_causal_id = None
+                if len(thread_ids) >= 2:
+                    for edge in causal_repo.find_by_cause(event_ids[0] if event_ids else ""):
+                        if edge.effect_id in event_ids:
+                            linked_causal_id = edge.id
+                            break
+
+                seq = state.next_judgment_seq()
+                judgment = Judgment(
+                    id=f"judgment-{domain_id}-{seq:04d}",
+                    target_type="event_pair",
+                    target_ids=event_ids,
+                    hypothesis=hypothesis[:500],
+                    confidence=jd.get("confidence", "C"),
+                    made_at=run_date,
+                    expected_verification=jd.get("expected_verification", ""),
+                    triggered_by_events=event_ids,
+                )
+            elif target_type == "entity":
+                seq = state.next_judgment_seq()
+                judgment = Judgment(
+                    id=f"judgment-{domain_id}-{seq:04d}",
+                    target_type="entity",
+                    target_ids=jd.get("target_entity_ids", []),
+                    hypothesis=hypothesis[:500],
+                    confidence=jd.get("confidence", "C"),
+                    made_at=run_date,
+                    expected_verification=jd.get("expected_verification", ""),
+                    triggered_by_events=[],
+                )
+            else:
+                continue
+
+            gate_result = gate_judgment(judgment, judgment_repo.all())
+            if gate_result.passed:
+                judgment_repo.add(judgment)
+                ingested_judgments += 1
+
+        if ingested_causal or ingested_judgments:
+            print(f"\n🔗 Causal & Judgment: {ingested_causal} edges, {ingested_judgments} judgments "
+                  f"→ {data_dir}/", file=sys.stderr)
+
+    except Exception as e:
+        print(f"⚠️  Causal & Judgment ingestion skipped: {e}", file=sys.stderr)
 
 
 if __name__ == "__main__":
