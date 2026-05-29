@@ -555,9 +555,9 @@ def _try_db_ingest(domain_id: str, run_date: str, paths: dict, db_dir: str):
 
 
 def _run_collector(domain: str, workspace: str, run_date: str, raw_path: str):
-    """Run direct_fetch collector and merge results into raw.json."""
+    """Run all collectors (direct_fetch, rss) and merge results into raw.json."""
     try:
-        from stratum.collectors.direct_fetch import collect
+        from stratum.collectors import collect
         collector_results = collect(domain, workspace, run_date)
 
         if not collector_results:

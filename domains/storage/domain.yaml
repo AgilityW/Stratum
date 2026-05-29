@@ -1072,6 +1072,47 @@ source_registry:
       fetch_interval_hours: 24
       status: active
 
+    # ── Professional Media RSS Feeds ──
+    - id: servethehome-rss
+      name: "ServeTheHome RSS"
+      urls:
+        - "https://www.servethehome.com/feed/"
+      access: rss
+      locale: en
+      category: media
+      fetch_interval_hours: 12
+      status: active
+
+    - id: storagenewsletter-rss
+      name: "StorageNewsletter RSS"
+      urls:
+        - "https://www.storagenewsletter.com/feed/"
+      access: rss
+      locale: en
+      category: media
+      fetch_interval_hours: 12
+      status: active
+
+    - id: eetimes-rss
+      name: "EE Times RSS"
+      urls:
+        - "https://www.eetimes.com/feed/"
+      access: rss
+      locale: en
+      category: media
+      fetch_interval_hours: 12
+      status: active
+
+    - id: semiengineering-rss
+      name: "SemiEngineering RSS"
+      urls:
+        - "https://semiengineering.com/feed/"
+      access: rss
+      locale: en
+      category: media
+      fetch_interval_hours: 12
+      status: active
+
   # ── Per-access-type settings ──
   defaults:
     direct_fetch:
