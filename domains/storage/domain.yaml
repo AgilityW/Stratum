@@ -967,6 +967,80 @@ pipeline:
 
 
 # ═══════════════════════════════════════════════════════════════
+# Source Registry — Per-Domain Source Definitions
+# ═══════════════════════════════════════════════════════════════
+# Domain-scoped: storage sources ≠ robot sources.
+# Each source has an access pattern (how to fetch) and lifecycle status.
+# Collector reads this at runtime; search engines handle the rest.
+source_registry:
+  sources:
+    # ── Manufacturer Newsrooms (direct_fetch) ──
+    - id: micron-newsroom
+      name: "Micron News Releases"
+      urls:
+        - "https://www.micron.com/about/press/news"
+      access: direct_fetch
+      locale: en
+      category: newsroom
+      fetch_interval_hours: 24
+      status: active
+      max_articles: 10
+      timeout: 30
+
+    - id: skhynix-newsroom
+      name: "SK hynix Newsroom"
+      urls:
+        - "https://news.skhynix.com"
+      access: direct_fetch
+      locale: en
+      category: newsroom
+      fetch_interval_hours: 24
+      status: active
+
+    - id: wd-newsroom
+      name: "Western Digital Newsroom"
+      urls:
+        - "https://www.westerndigital.com/company/newsroom"
+      access: direct_fetch
+      locale: en
+      category: newsroom
+      fetch_interval_hours: 24
+      status: active
+
+    # ── JS-rendered newsrooms (browser — deferred) ──
+    - id: samsung-semiconductor-newsroom
+      name: "Samsung Semiconductor Newsroom"
+      urls:
+        - "https://semiconductor.samsung.com/newsroom/"
+      access: browser
+      locale: en
+      category: newsroom
+      fetch_interval_hours: 24
+      status: active
+      note: "JS-rendered; requires browser_navigate"
+
+    - id: kioxia-newsroom
+      name: "Kioxia Americas Newsroom"
+      urls:
+        - "https://americas.kioxia.com/en-us/news.html"
+      access: browser
+      locale: en
+      category: newsroom
+      fetch_interval_hours: 24
+      status: active
+      note: "Likely JS-rendered; test with direct_fetch first"
+
+  # ── Per-access-type settings ──
+  defaults:
+    direct_fetch:
+      max_articles_per_url: 10
+      timeout_seconds: 15
+      user_agent: "Stratum/1.0 (storage industry monitor)"
+    browser:
+      max_articles_per_url: 5
+      timeout_seconds: 30
+
+# ═══════════════════════════════════════════════════════════════
 # Editorial Configuration
 # ═══════════════════════════════════════════════════════════════
 

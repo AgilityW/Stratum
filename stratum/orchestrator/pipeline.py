@@ -185,6 +185,9 @@ def main():
             ], "1/8 Search"):
                 sys.exit(1)
 
+    # ── Stage 1.5: Collect (direct fetch from newsrooms) ──
+    _run_collector(args.domain, PROJECT_ROOT, args.date, paths["raw"])
+
     # ── Stage 2: Enrich ──
     enrich_cmd = [
         "--input", paths["raw"],
@@ -549,6 +552,50 @@ def _try_db_ingest(domain_id: str, run_date: str, paths: dict, db_dir: str):
 
     except Exception as e:
         print(f"⚠️  DB ingestion skipped: {e}", file=sys.stderr)
+
+
+def _run_collector(domain: str, workspace: str, run_date: str, raw_path: str):
+    """Run direct_fetch collector and merge results into raw.json."""
+    try:
+        from stratum.collectors.direct_fetch import collect
+        collector_results = collect(domain, workspace, run_date)
+
+        if not collector_results:
+            return
+
+        # Read existing raw.json (search results)
+        search_results = []
+        if os.path.exists(raw_path):
+            with open(raw_path) as f:
+                data = json.load(f)
+                search_results = data if isinstance(data, list) else data.get("results", [])
+
+        # Merge: collector first, search results appended (collector wins on URL conflict)
+        seen_urls = set()
+        merged = []
+        for r in collector_results:
+            d = r.to_dict() if hasattr(r, 'to_dict') else r
+            url = d.get("url", "")
+            if url and url not in seen_urls:
+                seen_urls.add(url)
+                merged.append(d)
+
+        for r in search_results:
+            url = r.get("url", "")
+            if url and url not in seen_urls:
+                seen_urls.add(url)
+                merged.append(r)
+
+        with open(raw_path, "w") as f:
+            json.dump(merged, f, ensure_ascii=False, indent=2)
+
+        added = len(collector_results)
+        total = len(merged)
+        print(f"\n📡 Collector: +{added} direct-fetch → {total} total in raw.json",
+              file=sys.stderr)
+
+    except Exception as e:
+        print(f"⚠️  Collector skipped: {e}", file=sys.stderr)
 
 
 if __name__ == "__main__":
