@@ -1,29 +1,43 @@
 #!/usr/bin/env python3
 """render.py — MD→HTML→PDF for Stratum briefing (daily/weekly/monthly/quarterly/yearly).
 
-Domain-agnostic. Tag detection keywords loaded from domain.yaml editorial.render_tags.
-Template expects: {{TITLE}}, {{DATE}}, {{WEEKDAY}}, {{CONTENT}}, {{FOOTER}}.
+Domain-agnostic. Template-driven: reads an HTML template file, fills {{TITLE}}/{{BODY}}/etc.
+Tag detection keywords loaded from domain.yaml editorial.render_tags.
 
-Input:  briefing.md (LLM-written markdown) + domain.yaml (for render_tags)
+Architecture:
+    render.py is briefing-type-agnostic. It does NOT know about daily vs weekly.
+    The CALLER (pipeline.py, SKILL.md, cron) selects the template file via --template.
+    To add a new briefing type: create a template .html file — no code changes needed.
+
+Template placeholders: {title} {date_str} {weekday} {body} {footer}
+CSS braces in templates must be escaped as {{{{ and }}}}.
+
+Input:  briefing.md + template.html + domain.yaml (for render_tags)
 Output: briefing.html + briefing.pdf in --output-dir
 Side effects: Writes files. Invokes Chrome headless subprocess (system call).
 Invariants:  HTML output is self-contained (all CSS inline). PDF via Chrome --headless.
-Error behavior: Chrome not found → PDF step skipped, HTML still generated.
+Error behavior: Chrome not found → PDF skipped, HTML still generated.
+                Template not found → falls back to built-in default template.
                 Missing --domain → tags disabled (empty dict).
 
 Usage:
     python3 render.py --input briefing.md --output-dir /path/to/output \
         --title "存储早报" --date "2026年5月30日" --weekday "周五" \
+        --template domains/storage/templates/daily.html \
         --domain domains/storage/domain.yaml \
         --footer "由 AI Agent 自动生成 · 每日 7:30 CST"
 """
 import argparse, re, os, subprocess, sys, yaml
+from pathlib import Path
 from datetime import datetime, timezone, timedelta
 
 CST = timezone(timedelta(hours=8))
 CHROME = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
 
 WEEKDAY_ZH = ["周一", "周二", "周三", "周四", "周五", "周六", "周日"]
+
+# Built-in default template — used when no --template provided or file not found
+_BUILTIN_TEMPLATE = str(Path(__file__).parent / "templates" / "default.html")
 
 
 def esc(t):
@@ -58,7 +72,33 @@ def detect_tags(title, body, tag_config):
     return tags
 
 
+def load_template(template_path: str | None) -> str:
+    """Load HTML template from file. Falls back to built-in default if not found.
+
+    Template must use Python str.format() syntax with these keys:
+        {title} {date_str} {weekday} {body} {footer}
+    CSS braces must be doubled: {{ and }}.
+    """
+    # Try user-provided path
+    if template_path and os.path.exists(template_path):
+        with open(template_path) as f:
+            return f.read()
+
+    # Fall back to built-in
+    if os.path.exists(_BUILTIN_TEMPLATE):
+        print(f"⚠️  Template not found: {template_path}. Using built-in default.",
+              file=sys.stderr)
+        with open(_BUILTIN_TEMPLATE) as f:
+            return f.read()
+
+    # Ultimate fallback — minimal valid HTML
+    print("⚠️  No template available. Using hardcoded minimal HTML.", file=sys.stderr)
+    return """<!DOCTYPE html><html><head><meta charset="UTF-8"><title>{title}</title></head>
+<body><h1>{title}</h1><p>{date_str} · {weekday}</p><div>{body}</div><footer>{footer}</footer></body></html>"""
+
+
 def convert(md_text):
+    """Convert Stratum briefing markdown to HTML body. Domain-agnostic."""
     lines = md_text.split("\n")
     body_parts = []
     item_lines = []
@@ -151,55 +191,20 @@ def convert(md_text):
     return "".join(body_parts)
 
 
-def render_html(md_path, output_dir, title, date_str, weekday, footer):
+def render_html(md_path, output_dir, title, date_str, weekday, footer, template_str):
+    """Render briefing.md → HTML using the provided template string."""
     with open(md_path) as f:
         md = f.read()
 
     body_html = convert(md)
 
-    html = f"""<!DOCTYPE html>
-<html lang="zh-CN">
-<head>
-<meta charset="UTF-8">
-<title>{title}</title>
-<style>
-  *{{margin:0;padding:0;box-sizing:border-box}}
-  body{{font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",sans-serif;background:#fafbfc;color:#1a1a1a;max-width:640px;margin:0 auto;padding:0}}
-  .header{{background:#0f172a;color:#fff;padding:32px 28px 24px}}
-  .header h1{{font-size:20px;font-weight:700;margin-bottom:6px}}
-  .header .date{{font-size:13px;color:#94a3b8}}
-  .content{{padding:28px 28px 40px;background:#fff}}
-  .summary{{background:#eff6ff;border:1px solid #bfdbfe;border-radius:8px;padding:18px 20px;margin-bottom:28px}}
-  .summary p{{font-size:15px;line-height:1.85;color:#1e3a5f;margin:0}}
-  hr{{border:none;border-top:1px solid #e2e8f0;margin:28px 0}}
-  .item{{margin-bottom:24px;padding-bottom:20px;border-bottom:1px solid #f1f5f9}}
-  .item:last-of-type{{border-bottom:none}}
-  .item .num{{display:inline-block;width:26px;height:26px;line-height:26px;text-align:center;background:#1e3a5f;color:#fff;font-size:12px;font-weight:700;border-radius:4px;margin-right:10px;vertical-align:middle}}
-  .item .tag{{display:inline-block;padding:2px 8px;border-radius:3px;font-size:10px;font-weight:600;letter-spacing:.5px;margin-left:8px;vertical-align:middle}}
-  .tag-new{{background:#dcfce7;color:#166534}}
-  .tag-tech{{background:#fef3c7;color:#92400e}}
-  .tag-supply{{background:#f3e8ff;color:#6b21a8}}
-  .tag-price{{background:#fce7f3;color:#9d174d}}
-  .item h3{{font-size:16px;font-weight:700;color:#0f172a;margin-bottom:10px;line-height:1.5}}
-  .item p{{font-size:14.5px;line-height:1.8;color:#334155;margin-bottom:8px}}
-  .item .source{{font-size:11px;color:#94a3b8}}
-  .section-title{{font-size:11px;font-weight:700;color:#64748b;text-transform:uppercase;letter-spacing:1.2px;margin:32px 0 16px}}
-  .bullet{{font-size:14px;line-height:1.7;color:#475569;margin:8px 0;padding-left:16px;position:relative}}
-  .bullet::before{{content:"▸";position:absolute;left:0;color:#3b82f6;font-size:10px;line-height:1.7}}
-  .footer{{text-align:center;padding:20px 28px 36px;background:#fafbfc;font-size:10px;color:#cbd5e1;border-top:1px solid #f1f5f9}}
-</style>
-</head>
-<body>
-<div class="header">
-  <h1>{title}</h1>
-  <div class="date">{date_str} · {weekday}</div>
-</div>
-<div class="content">
-{body_html}
-</div>
-<div class="footer">{footer}</div>
-</body>
-</html>"""
+    html = template_str.format(
+        title=title,
+        date_str=date_str,
+        weekday=weekday,
+        body=body_html,
+        footer=footer,
+    )
 
     html_path = os.path.join(output_dir, "briefing.html")
     with open(html_path, "w") as f:
@@ -227,6 +232,7 @@ def main():
     parser.add_argument("--title", default="Briefing", help="Page title")
     parser.add_argument("--date", help="Date string (e.g. '2026年5月30日')")
     parser.add_argument("--weekday", help="Weekday (e.g. '周五')")
+    parser.add_argument("--template", help="Path to HTML template file (default: built-in)")
     parser.add_argument("--domain", help="Path to domain.yaml (for render_tags)")
     parser.add_argument("--footer", default="由 AI Agent 自动生成",
                         help="Footer text (e.g. '由 AI Agent 自动生成 · 每日 7:30 CST')")
@@ -244,8 +250,12 @@ def main():
 
     os.makedirs(args.output_dir, exist_ok=True)
 
+    # Load template (with fallback)
+    template_str = load_template(args.template)
+
     print(f"📄 Rendering: {args.input}", file=sys.stderr)
-    html_path = render_html(args.input, args.output_dir, args.title, date_str, weekday, args.footer)
+    html_path = render_html(args.input, args.output_dir, args.title, date_str, weekday,
+                            args.footer, template_str)
     print(f"   HTML: {html_path}", file=sys.stderr)
 
     pdf_path = render_pdf(html_path, args.output_dir)

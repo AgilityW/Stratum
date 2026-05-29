@@ -8,7 +8,7 @@ from pathlib import Path
 # Import render functions
 import sys
 sys.path.insert(0, str(Path(__file__).parent.parent))
-from render import esc, detect_tags, load_render_tags, convert
+from render import esc, detect_tags, load_render_tags, load_template, render_html, convert
 
 
 class TestEsc:
@@ -218,3 +218,103 @@ class TestRealBriefing:
                     assert "<div" in html  # produces HTML
                     return
         pytest.skip("No recent briefing.md found in workspace")
+
+
+class TestLoadTemplate:
+    """Template file loading with fallback."""
+
+    def test_loads_storage_daily_template(self):
+        template_path = Path(__file__).parent.parent.parent.parent.parent / \
+                        "domains" / "storage" / "templates" / "daily.html"
+        if template_path.exists():
+            tmpl = load_template(str(template_path))
+            assert "{title}" in tmpl
+            assert "{body}" in tmpl
+            assert "{footer}" in tmpl
+            assert "daily" not in tmpl.lower() or "<!DOCTYPE html>" in tmpl
+
+    def test_loads_robot_daily_template(self):
+        template_path = Path(__file__).parent.parent.parent.parent.parent / \
+                        "domains" / "robot" / "templates" / "daily.html"
+        if template_path.exists():
+            tmpl = load_template(str(template_path))
+            assert "{title}" in tmpl
+            assert "{body}" in tmpl
+
+    def test_falls_back_for_missing_file(self):
+        tmpl = load_template("/nonexistent/template.html")
+        assert "{title}" in tmpl  # built-in default should have placeholders
+        assert "{body}" in tmpl
+
+    def test_falls_back_for_none(self):
+        tmpl = load_template(None)
+        assert "{title}" in tmpl
+        assert "{body}" in tmpl
+
+    def test_fallback_produces_valid_html(self):
+        tmpl = load_template(None)
+        # Should be valid HTML with key placeholders
+        assert "<!DOCTYPE html>" in tmpl or "<html" in tmpl
+        assert "{title}" in tmpl
+        assert "{body}" in tmpl
+        assert "{footer}" in tmpl
+
+
+class TestRenderHtml:
+    """render_html() with template string."""
+
+    def test_renders_with_default_template(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            md_path = os.path.join(tmpdir, "test.md")
+            with open(md_path, "w") as f:
+                f.write("""# Test
+
+---
+
+### Test Item
+
+- Point one
+
+*Source: test.com · 2026年5月29日*""")
+
+            tmpl = load_template(None)
+            html_path = render_html(md_path, tmpdir, "Test Briefing",
+                                    "2026年5月29日", "周四",
+                                    "Test footer", tmpl)
+            assert os.path.exists(html_path)
+            with open(html_path) as f:
+                content = f.read()
+            assert "<!DOCTYPE html>" in content
+            assert "Test Briefing" in content
+            assert "Test footer" in content
+            assert "Point one" in content
+
+    def test_renders_with_domain_template(self):
+        template_path = Path(__file__).parent.parent.parent.parent.parent / \
+                        "domains" / "storage" / "templates" / "daily.html"
+        if not template_path.exists():
+            pytest.skip("storage daily template not found")
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            md_path = os.path.join(tmpdir, "test.md")
+            with open(md_path, "w") as f:
+                f.write("""# Title
+
+---
+
+### An Item
+
+- Detail
+
+*Source: reuters.com · 2026年5月29日*""")
+
+            tmpl = load_template(str(template_path))
+            html_path = render_html(md_path, tmpdir, "早报",
+                                    "2026年5月29日", "周四",
+                                    "Auto-generated", tmpl)
+            assert os.path.exists(html_path)
+            with open(html_path) as f:
+                content = f.read()
+            assert "<!DOCTYPE html>" in content
+            assert "早报" in content
+            assert "An Item" in content

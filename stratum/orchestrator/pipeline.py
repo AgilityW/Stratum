@@ -222,6 +222,7 @@ def main():
             "--output-dir", paths["data_dir"],
             "--domain", paths["domain_config"],
             "--footer", "由 AI Agent 自动生成 · 每日 7:30 CST",
+            "--template", os.path.join(DOMAINS_DIR, args.domain, "templates", "daily.html"),
         ], "8/8 Render HTML + PDF")
     else:
         print("\n⚠️  Skipping render: briefing.md not found", file=sys.stderr)
