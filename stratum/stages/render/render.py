@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""render.py — MD→HTML→PDF for Stratum daily briefing.
+"""render.py — MD→HTML→PDF for Stratum briefing (daily/weekly/monthly/quarterly/yearly).
 
-Domain-agnostic. Tag detection keywords and Chrome path loaded from domain.yaml / config.
+Domain-agnostic. Tag detection keywords loaded from domain.yaml editorial.render_tags.
 Template expects: {{TITLE}}, {{DATE}}, {{WEEKDAY}}, {{CONTENT}}, {{FOOTER}}.
 
 Input:  briefing.md (LLM-written markdown) + domain.yaml (for render_tags)
@@ -14,7 +14,8 @@ Error behavior: Chrome not found → PDF step skipped, HTML still generated.
 Usage:
     python3 render.py --input briefing.md --output-dir /path/to/output \
         --title "存储早报" --date "2026年5月30日" --weekday "周五" \
-        --domain domains/storage/domain.yaml
+        --domain domains/storage/domain.yaml \
+        --footer "由 AI Agent 自动生成 · 每日 7:30 CST"
 """
 import argparse, re, os, subprocess, sys, yaml
 from datetime import datetime, timezone, timedelta
@@ -150,7 +151,7 @@ def convert(md_text):
     return "".join(body_parts)
 
 
-def render_html(md_path, output_dir, title, date_str, weekday):
+def render_html(md_path, output_dir, title, date_str, weekday, footer):
     with open(md_path) as f:
         md = f.read()
 
@@ -196,7 +197,7 @@ def render_html(md_path, output_dir, title, date_str, weekday):
 <div class="content">
 {body_html}
 </div>
-<div class="footer">由 AI Agent 自动生成 · 每日 7:30 CST</div>
+<div class="footer">{footer}</div>
 </body>
 </html>"""
 
@@ -227,6 +228,8 @@ def main():
     parser.add_argument("--date", help="Date string (e.g. '2026年5月30日')")
     parser.add_argument("--weekday", help="Weekday (e.g. '周五')")
     parser.add_argument("--domain", help="Path to domain.yaml (for render_tags)")
+    parser.add_argument("--footer", default="由 AI Agent 自动生成",
+                        help="Footer text (e.g. '由 AI Agent 自动生成 · 每日 7:30 CST')")
     args = parser.parse_args()
 
     # Auto-derive date/weekday if not provided
@@ -242,7 +245,7 @@ def main():
     os.makedirs(args.output_dir, exist_ok=True)
 
     print(f"📄 Rendering: {args.input}", file=sys.stderr)
-    html_path = render_html(args.input, args.output_dir, args.title, date_str, weekday)
+    html_path = render_html(args.input, args.output_dir, args.title, date_str, weekday, args.footer)
     print(f"   HTML: {html_path}", file=sys.stderr)
 
     pdf_path = render_pdf(html_path, args.output_dir)
