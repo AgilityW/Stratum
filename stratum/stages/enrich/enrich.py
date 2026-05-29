@@ -1,43 +1,52 @@
 #!/usr/bin/env python3
 """enrich.py — Extract publication dates from raw search results.
 
-Domain-agnostic. Uses regex patterns to extract dates from snippet/description text.
-No domain-specific data. No network access.
+Domain-agnostic. Uses regex patterns to extract dates from snippet/description text,
+URL paths, and as a last resort fetches the page to extract HTML meta dates.
 
 Input:  JSON array of raw search results ({url, title, snippet, datePublished, ...})
 Output: JSON array — same records as input, datePublished filled where possible
-Side effects: None. Pure function — reads input file, writes output file.
+Side effects: May make HTTP requests for date extraction (web_extract fallback)
 Invariants:  input record count == output record count (no additions or deletions)
 Error behavior: Records with no extractable date retain empty datePublished + date_source="none"
 
 Usage:
-    python3 enrich.py --input raw.json --output enriched.json --date 2026-05-28
+    python3 enrich.py --input raw.json --output enriched.json --date 2026-05-28 [--web-extract]
 """
+
+from __future__ import annotations
+
 import argparse
 import json
 import re
+import subprocess
 import sys
 from datetime import datetime, timezone, timedelta
+from urllib.parse import urlparse
 
 CST = timezone(timedelta(hours=8))
 
-# Date patterns in snippets (ordered by reliability)
+# ── Date patterns (ordered by reliability) ──
+
 DATE_PATTERNS = [
     # ISO dates: 2026-05-28, 2026/05/28
     (r'\b(20\d{2})[-/](0[1-9]|1[0-2])[-/](0[1-9]|[12]\d|3[01])\b', "iso"),
     # Chinese: 2026年5月28日
     (r'(20\d{2})年(\d{1,2})月(\d{1,2})日', "zh"),
-    # Japanese: 2026年5月28日
-    (r'(20\d{2})年(\d{1,2})月(\d{1,2})日', "ja"),
     # English: May 28, 2026 or 28 May 2026
     (r'(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\.?\s+(\d{1,2}),?\s+(20\d{2})', "en_long"),
     (r'(\d{1,2})\s+(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\.?\s+(20\d{2})', "en_short"),
-    # Relative: "today", "yesterday", "2 days ago"
-    (r'(today|yesterday|今天|昨天|昨日)', "relative"),
-    # "X hours ago", "X days ago"
+    # Relative: today / yesterday / 今天/今日 / 昨天/昨日
+    (r'(today|yesterday|今天|今日|昨天|昨日)', "relative"),
+    # English relative: "X hours ago", "X days ago"
     (r'(\d+)\s*(hours?|days?)\s*ago', "relative_en"),
-    (r'(\d+)\s*(小时|天|日前)', "relative_zh"),
+    # Chinese relative: X小时前, X天前, X日前, X分钟前
+    (r'(\d+)\s*(小时前|天前|日前|分钟前)', "relative_zh"),
 ]
+
+# URL path date: /2026/05/28/ or /2026-05-28-
+URL_DATE_RE = re.compile(r'/(\d{4})/(\d{1,2})/(\d{1,2})/')
+URL_DATE_DASH_RE = re.compile(r'/(\d{4})-(\d{1,2})-(\d{1,2})-')
 
 MONTH_MAP = {
     "jan": 1, "feb": 2, "mar": 3, "apr": 4, "may": 5, "jun": 6,
@@ -50,7 +59,7 @@ def parse_date_from_match(match, pattern_type, run_date):
     try:
         if pattern_type == "iso":
             return f"{match.group(1)}-{match.group(2)}-{match.group(3)}"
-        elif pattern_type in ("zh", "ja"):
+        elif pattern_type == "zh":
             month = match.group(2).zfill(2)
             day = match.group(3).zfill(2)
             return f"{match.group(1)}-{month}-{day}"
@@ -66,7 +75,7 @@ def parse_date_from_match(match, pattern_type, run_date):
             return f"{match.group(3)}-{month}-{day}"
         elif pattern_type == "relative":
             word = match.group(1).lower()
-            if word in ("today", "今天"):
+            if word in ("today", "今天", "今日"):
                 return run_date
             elif word in ("yesterday", "昨天", "昨日"):
                 dt = datetime.fromisoformat(run_date) - timedelta(days=1)
@@ -82,7 +91,7 @@ def parse_date_from_match(match, pattern_type, run_date):
             unit = match.group(2)
             if "天" in unit:
                 dt = datetime.fromisoformat(run_date) - timedelta(days=num)
-            elif "小时" in unit:
+            elif "小时" in unit or "分钟" in unit:
                 dt = datetime.fromisoformat(run_date)
             else:
                 dt = datetime.fromisoformat(run_date) - timedelta(days=num)
@@ -92,8 +101,26 @@ def parse_date_from_match(match, pattern_type, run_date):
     return None
 
 
-def extract_date(text, run_date):
-    """Extract the FIRST plausible date from text."""
+def extract_date_from_url(url: str) -> str | None:
+    """Extract date from URL path patterns like /2026/05/28/ or /2026-05-28-."""
+    if not url:
+        return None
+
+    # Pattern: /2026/05/28/
+    m = URL_DATE_RE.search(url)
+    if m:
+        return f"{m.group(1)}-{m.group(2).zfill(2)}-{m.group(3).zfill(2)}"
+
+    # Pattern: /2026-05-28-
+    m = URL_DATE_DASH_RE.search(url)
+    if m:
+        return f"{m.group(1)}-{m.group(2).zfill(2)}-{m.group(3).zfill(2)}"
+
+    return None
+
+
+def extract_date_from_text(text: str, run_date: str) -> str | None:
+    """Extract the FIRST plausible date from text using regex patterns."""
     if not text:
         return None
 
@@ -115,18 +142,92 @@ def extract_date(text, run_date):
     return None
 
 
-def enrich_article(article, run_date):
+def extract_date_from_web(url: str) -> str | None:
+    """Fetch page and extract date from HTML meta tags using curl + regex."""
+    if not url:
+        return None
+    try:
+        result = subprocess.run(
+            ["curl", "-sL", "--max-time", "8",
+             "-H", "User-Agent: Mozilla/5.0 (compatible; Stratum/5.0)",
+             url],
+            capture_output=True, text=True, timeout=10,
+        )
+        if result.returncode != 0:
+            return None
+
+        html = result.stdout[:50000]  # first 50KB
+
+        # Meta date tags
+        for pat in [
+            r'<meta[^>]+property="article:published_time"[^>]+content="([^"]+)"',
+            r'<meta[^>]+name="date"[^>]+content="([^"]+)"',
+            r'<meta[^>]+name="pubdate"[^>]+content="([^"]+)"',
+            r'<meta[^>]+name="publish_date"[^>]+content="([^"]+)"',
+            r'<meta[^>]+name="DC\.date"[^>]+content="([^"]+)"',
+            r'<meta[^>]+itemprop="datePublished"[^>]+content="([^"]+)"',
+            r'<time[^>]+datetime="([^"]+)"',
+        ]:
+            m = re.search(pat, html, re.IGNORECASE)
+            if m:
+                date_str = m.group(1)[:10]  # YYYY-MM-DD
+                if re.match(r'\d{4}-\d{2}-\d{2}', date_str):
+                    return date_str
+
+        # JSON-LD datePublished
+        ld_match = re.search(r'"datePublished"\s*:\s*"([^"]+)"', html)
+        if ld_match:
+            date_str = ld_match.group(1)[:10]
+            if re.match(r'\d{4}-\d{2}-\d{2}', date_str):
+                return date_str
+
+    except Exception:
+        pass
+    return None
+
+
+def enrich_article(article: dict, run_date: str, *, use_web_extract: bool = False) -> dict:
     """Add datePublished if missing/empty. Respect agent-provided dates."""
     existing = article.get("datePublished", "")
     if existing and existing.strip():
         article["date_source"] = "web_extract"
         return article
 
+    # ── Step 1: Regex from text ──
     text = f"{article.get('title', '')} {article.get('snippet', '')} {article.get('description', '')}"
-    extracted = extract_date(text, run_date)
+    extracted = extract_date_from_text(text, run_date)
+    if extracted:
+        article["datePublished"] = extracted
+        article["date_source"] = "snippet_regex"
+        return article
 
-    article["datePublished"] = extracted or ""
-    article["date_source"] = "snippet_regex" if extracted else "none"
+    # ── Step 2: URL path extraction ──
+    url_date = extract_date_from_url(article.get("url", ""))
+    if url_date:
+        article["datePublished"] = url_date
+        article["date_source"] = "url_path"
+        return article
+
+    # ── Step 3: Freshness window inference ──
+    # Search engines configured with freshness=oneDay/day guarantee
+    # results are from the last 24h. Infer date as run_date.
+    engine = article.get("engine", "")
+    if engine in ("bocha", "tavily"):
+        article["datePublished"] = run_date
+        article["date_source"] = "freshness_window"
+        return article
+
+    # ── Step 4: Web extract fallback ──
+    if use_web_extract:
+        url = article.get("url", "")
+        web_date = extract_date_from_web(url)
+        if web_date:
+            article["datePublished"] = web_date
+            article["date_source"] = "web_extract"
+            return article
+
+    article["datePublished"] = ""
+    article["date_source"] = "none"
     return article
 
 
@@ -135,17 +236,22 @@ def main():
     parser.add_argument("--input", "-i", required=True, help="Input raw JSON array")
     parser.add_argument("--output", "-o", required=True, help="Output enriched JSON array")
     parser.add_argument("--date", "-d", required=True, help="Run date (YYYY-MM-DD)")
+    parser.add_argument("--web-extract", action="store_true",
+                        help="Fetch pages to extract dates from HTML meta tags (slow)")
     args = parser.parse_args()
 
     with open(args.input) as f:
         articles = json.load(f)
 
     enriched = []
-    stats = {"total": len(articles), "enriched": 0, "no_date": 0}
+    stats = {"total": len(articles), "enriched": 0, "no_date": 0,
+             "sources": {}}
 
     for article in articles:
-        result = enrich_article(article, args.date)
+        result = enrich_article(article, args.date, use_web_extract=args.web_extract)
         enriched.append(result)
+        source = result.get("date_source", "none")
+        stats["sources"][source] = stats["sources"].get(source, 0) + 1
         if result.get("datePublished"):
             stats["enriched"] += 1
         else:
@@ -158,6 +264,8 @@ def main():
     print(f"   Total:     {stats['total']}", file=sys.stderr)
     print(f"   Enriched:  {stats['enriched']}", file=sys.stderr)
     print(f"   No date:   {stats['no_date']}", file=sys.stderr)
+    for src, count in sorted(stats["sources"].items()):
+        print(f"     {src}: {count}", file=sys.stderr)
 
 
 if __name__ == "__main__":

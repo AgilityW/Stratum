@@ -35,6 +35,7 @@ CST = timezone(timedelta(hours=8))
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 STAGES_DIR = os.path.join(PROJECT_ROOT, "stratum", "stages")
 DOMAINS_DIR = os.path.join(PROJECT_ROOT, "domains")
+CONFIG_PATH = os.path.join(PROJECT_ROOT, "config.yaml")
 
 
 def resolve_paths(domain_id: str, run_date: str, output_dir: str = None) -> dict:
@@ -116,6 +117,8 @@ def main():
     parser.add_argument("--output-dir", help="Override output directory")
     parser.add_argument("--from-stage", choices=["enrich", "verify", "normalize", "cluster", "validate", "render"],
                         help="Start from a specific stage (requires previous output files)")
+    parser.add_argument("--web-extract", action="store_true",
+                        help="Enable web page fetching to extract dates from HTML meta tags (slow)")
     args = parser.parse_args()
 
     # Validate domain
@@ -132,7 +135,7 @@ def main():
 
     pipeline_status = []
 
-    # ── Stage 1: Agent Search (LLM) ──
+    # ── Stage 1: Search (deterministic — calls engine APIs directly) ──
     if args.raw_input:
         # Use provided raw input
         if args.raw_input != paths["raw"]:
@@ -146,22 +149,25 @@ def main():
             sys.exit(1)
         pipeline_status.append({"stage": "search", "status": "skipped", "output": paths["raw"]})
     else:
-        status = print_agent_placeholder(
-            "search", "1/8 Agent Search",
-            f"domain={args.domain}, date={args.date}",
-            paths["raw"]
-        )
-        pipeline_status.append(status)
-        print(f"\n⏸️  Pipeline paused. Run agent search to produce {paths['raw']}, then re-run with --raw-input", file=sys.stderr)
-        print(json.dumps({"status": "agent_search_needed", "raw_output_path": paths["raw"]}))
-        sys.exit(0)
+        queries_path = os.path.join(DOMAINS_DIR, args.domain, "queries.yaml")
+        if not run_stage("search", [
+            "--domain", args.domain,
+            "--date", args.date,
+            "--config", CONFIG_PATH,
+            "--queries", queries_path,
+            "--output", paths["raw"],
+        ], "1/8 Search"):
+            sys.exit(1)
 
     # ── Stage 2: Enrich ──
-    if not run_stage("enrich", [
+    enrich_cmd = [
         "--input", paths["raw"],
         "--output", paths["enriched"],
         "--date", args.date,
-    ], "2/8 Enrich dates"):
+    ]
+    if getattr(args, "web_extract", False):
+        enrich_cmd.append("--web-extract")
+    if not run_stage("enrich", enrich_cmd, "2/8 Enrich dates"):
         sys.exit(1)
 
     # ── Stage 3: Verify ──
