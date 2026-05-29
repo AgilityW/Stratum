@@ -964,3 +964,54 @@ pipeline:
     - '(\\d+(?:\\.\\d+)?\\s*(?:万亿|亿|万)\\s*(?:美元|韩元|日元|人民币))'
     - '(\\d+(?:\\.\\d+)?%\\s*(?:market\\s*share|市占|シェア))'
     - '(\\d+(?:\\.\\d+)?\\s*(?:nm|layer|GB|TB|PB|Gbps|Mbps))'
+
+
+# ═══════════════════════════════════════════════════════════════
+# Editorial Configuration
+# ═══════════════════════════════════════════════════════════════
+
+editorial:
+  platform_admission:
+    companies:
+      - nvidia
+      - marvell
+    test: "Does this change judgment about memory bandwidth, interconnect, compute-storage ratio, or power budget?"
+    rule: "YES = admit. NO = reject as IRRELEVANT."
+  impact_tags:
+    - price
+    - customer
+    - supply
+    - technology
+    - competitor
+    - capital
+    - policy
+  content_routing:
+    threads:
+      - id: ai_hbm_squeeze
+        label: "AI/HBM Structural Squeeze"
+        topics:
+          - "HBM/DDR5/eSSD supply-demand"
+          - "AI GPU storage demand"
+          - "AI-driven price increase"
+      - id: capacity_lockin
+        label: "Capacity Lock-in and Pricing Power"
+        topics:
+          - "Vendor tech roadmap"
+          - "Capacity expansion/cut"
+          - "Long-term supply agreements"
+          - "Equipment/wafer constraints"
+      - id: china_inflection
+        label: "China Storage Inflection"
+        topics:
+          - "CXMT/YMTC"
+          - "China storage policy"
+          - "Domestic equipment"
+          - "IPO"
+    other_max_items: 5
+    supplement_window: "24-48h"
+    background_window: ">48h"
+  domestic_coverage:
+    locales:
+      - zh-CN
+      - zh-TW
+    guidance: "Shift from narrative to business judgment. Probe AVL status, yield rates, volume, customer qualification."
