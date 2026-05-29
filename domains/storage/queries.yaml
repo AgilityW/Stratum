@@ -1,0 +1,84 @@
+# Storage Domain — Search Queries
+# Used by Agent Search stage. Queries organized by locale.
+# Placeholders: ${CURRENT_YEAR}, ${CURRENT_MONTH_EN}, ${CURRENT_MONTH_ZH}
+# Replaced at runtime by pipeline.
+
+seed_queries:
+  zh-CN:
+    - "存储芯片 DRAM NAND 涨价 短缺"
+    - "长鑫存储 IPO 上会 科创板"
+    - "长江存储 扩产 产能 晶圆厂"
+    - "美光 SK海力士 三星 HBM4 量产"
+    - "NAND Flash 合约价 现货价"
+    - "三星 罢工 停产 存储"
+    - "site:chinaflashmarket.com 存储 NAND SSD DRAM"
+    - "site:eet-china.com 存储 半导体 芯片"
+    - "site:digitimes.com 长鑫 长江存储 美光"
+    - "site:sina.com.cn 存储芯片 半导体"
+    - "site:stcn.com 存储 半导体 芯片"
+    - "site:21jingji.com 存储 芯片 半导体"
+
+  zh-TW:
+    - "記憶體 DRAM NAND 漲價 短缺"
+    - "長鑫存儲 IPO 科創板 上市"
+    - "長江存儲 擴產 產能 晶圓廠"
+    - "美光 SK海力士 三星 HBM4 量產"
+    - "NAND Flash 合約價 現貨價"
+    - "site:digitimes.com.tw 記憶體 半導體"
+    - "site:technews.tw 記憶體 半導體"
+    - "site:moneydj.com 記憶體 儲存"
+
+  en:
+    - "memory chip DRAM NAND price hike shortage May 2026"
+    - "CXMT IPO listing Shanghai STAR market"
+    - "Micron SK Hynix Samsung HBM4 production certification"
+    - "NAND flash contract price spot price Q2 2026"
+    - "Samsung strike labor memory production"
+    - "YMTC fab expansion capacity NAND"
+    - "site:reuters.com memory chip DRAM NAND storage"
+    - "site:bloomberg.com Micron SK Hynix memory semiconductor"
+    - "site:digitimes.com memory HBM NAND DRAM"
+    - "site:trendforce.com DRAM NAND HBM memory price"
+    - "site:tomshardware.com SSD NAND DRAM HBM memory"
+    - "site:blocksandfiles.com storage SSD NAND"
+    - "site:semianalysis.com HBM NAND DRAM"
+    - "site:nikkei.com semiconductor memory chip storage"
+    - "site:koreaherald.com Samsung SK hynix semiconductor"
+
+  ja:
+    - "半導体 メモリ DRAM NAND 価格 高騰"
+    - "キオクシア サンディスク NAND 3D 積層"
+    - "サムスン SKハイニックス HBM4 量産"
+    - "マイクロン 広島 工場 メモリ"
+    - "site:nikkei.com 半導体 メモリ キオクシア"
+    - "site:xtech.nikkei.com 半導体 メモリ"
+    - "site:eetimes.jp 半導体 メモリ NAND"
+    - "site:pc.watch.impress.co.jp 半導体 メモリ SSD"
+    - "マイクロン メモリ AI"
+    - "TSMC 先端プロセス"
+    - "NAND フラッシュ 価格 ${CURRENT_YEAR}"
+    - "site:eetimes.jp 半導体 メモリ"
+
+  ko:
+    - "반도체 메모리 DRAM NAND 가격 상승 부족"
+    - "삼성전자 SK하이닉스 HBM4 양산 인증"
+    - "마이크론 메모리 공장 증설"
+    - "site:etnews.com 반도체 메모리"
+    - "site:mk.co.kr 반도체 메모리 삼성 SK하이닉스"
+    - "site:hankyung.com 반도체 메모리"
+
+gap_searches:
+  - query: "Samsung SK hynix Micron latest ${CURRENT_MONTH_EN} ${CURRENT_YEAR}"
+    locale: en
+  - query: "Kioxia Western Digital WDC SanDisk latest ${CURRENT_MONTH_EN} ${CURRENT_YEAR}"
+    locale: en
+  - query: "NAND flash DRAM price ${CURRENT_MONTH_EN} ${CURRENT_YEAR}"
+    locale: en
+  - query: "YMTC CXMT 长江存储 长鑫存储 最新 ${CURRENT_YEAR}年${CURRENT_MONTH_ZH}"
+    locale: zh-CN
+  - query: "SK hynix iHBM cooling technology ${CURRENT_MONTH_EN} ${CURRENT_YEAR}"
+    locale: en
+  - query: "Samsung V-NAND CMB prototype ${CURRENT_MONTH_EN} ${CURRENT_YEAR}"
+    locale: en
+  - query: "Pure Storage NetApp Dell enterprise storage AI ${CURRENT_MONTH_EN} ${CURRENT_YEAR}"
+    locale: en

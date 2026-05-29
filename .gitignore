@@ -22,10 +22,11 @@ config.yaml
 *.html
 !skills/render-engine/templates/*.html
 
-# Runtime data files (outputs from daily pipeline)
+# Runtime data files (outputs from daily pipeline — under output_dir)
+# Do NOT block domains/storage/ — that's domain config, not runtime output.
 data/
 health-data/
-storage/
+/storage/
 *.ndjson
 *.jsonl
 

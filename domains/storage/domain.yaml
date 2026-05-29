@@ -1,0 +1,966 @@
+# Storage Domain — Seed Configuration
+# The ONLY file with domain-specific data. Everything else is engine logic.
+# To add a new industry: copy this file, change the values, done.
+
+domain:
+  id: storage
+  title: 存储早报
+  emoji: 📦
+
+# ── Companies (seed) ──
+# Engine discovers new companies; these are the initial anchors.
+companies:
+  - id: samsung
+    type: COMPANY
+    aliases:
+      en: "Samsung Electronics"
+      zh-CN: "三星电子"
+      zh-TW: "三星電子"
+      ja: "サムスン電子"
+
+  - id: sk-hynix
+    type: COMPANY
+    aliases:
+      en: "SK hynix"
+      zh-CN: "SK海力士"
+      zh-TW: "SK海力士"
+      ja: "SKハイニックス"
+      ko: "SK하이닉스"
+
+  - id: micron
+    type: COMPANY
+    aliases:
+      en: "Micron Technology"
+      zh-CN: "美光科技"
+      zh-TW: "美光科技"
+      ja: "マイクロンテクノロジー"
+      ko: "마이크론 테크놀로지"
+
+  - id: kioxia
+    type: COMPANY
+    aliases:
+      en: "Kioxia"
+      zh-CN: "铠侠"
+      zh-TW: "鎧俠"
+      ja: "キオクシア"
+
+  - id: wd
+    type: COMPANY
+    aliases:
+      en: "Western Digital"
+      zh-CN: "西部数据"
+      zh-TW: "威騰電子"
+
+  - id: sandisk
+    type: COMPANY
+    aliases:
+      en: "SanDisk"
+
+  - id: cxmt
+    type: COMPANY
+    aliases:
+      en: "CXMT"
+      zh-CN: "长鑫存储"
+      zh-TW: "長鑫存儲"
+
+  - id: ymtc
+    type: COMPANY
+    aliases:
+      en: "YMTC"
+      zh-CN: "长江存储"
+      zh-TW: "長江存儲"
+
+  - id: tsmc
+    type: COMPANY
+    aliases:
+      en: "TSMC"
+      zh-CN: "台积电"
+      zh-TW: "台積電"
+
+  - id: nvidia
+    type: COMPANY
+    aliases:
+      en: "NVIDIA"
+      zh-CN: "英伟达"
+      zh-TW: "輝達"
+
+  - id: marvell
+    type: COMPANY
+    aliases:
+      en: "Marvell Technology"
+
+  - id: phison
+    type: COMPANY
+    aliases:
+      en: "Phison Electronics"
+      zh-CN: "群联电子"
+      zh-TW: "群聯電子"
+
+# ── Technology Terms (seed) ──
+# Engine discovers new terms; these are the initial anchors.
+terms:
+  - id: hbm
+    type: TECHNOLOGY
+    aliases: {en: "HBM"}
+    children: [hbm3e, hbm4]
+
+  - id: hbm3e
+    type: TECHNOLOGY
+    aliases: {en: "HBM3E"}
+
+  - id: hbm4
+    type: TECHNOLOGY
+    aliases: {en: "HBM4"}
+
+  - id: ddr5
+    type: TECHNOLOGY
+    aliases: {en: "DDR5"}
+
+  - id: lpddr5x
+    type: TECHNOLOGY
+    aliases: {en: "LPDDR5X"}
+
+  - id: nand
+    type: TECHNOLOGY
+    aliases: {en: "NAND Flash"}
+
+  - id: v-nand
+    type: TECHNOLOGY
+    aliases: {en: "V-NAND"}
+
+  - id: ssd
+    type: TECHNOLOGY
+    aliases: {en: "SSD"}
+
+  - id: essd
+    type: TECHNOLOGY
+    aliases: {en: "Enterprise SSD"}
+
+  - id: cxl
+    type: STANDARD
+    aliases: {en: "CXL"}
+
+  - id: pcie
+    type: STANDARD
+    aliases: {en: "PCIe"}
+
+  - id: 3nm
+    type: TECHNOLOGY
+    aliases: {en: "3nm"}
+
+  - id: advanced-packaging
+    type: TECHNIQUE
+    aliases:
+      en: "Advanced Packaging"
+      zh-CN: "先进封装"
+      zh-TW: "先進封裝"
+
+# ── Channels (seed) ──
+# Engine discovers new channels; these are the initial anchors.
+channels:
+  - id: samsung-newsroom
+    type: NEWSROOM
+    url: "https://semiconductor.samsung.com/newsroom/"
+    reliability: 1.0
+    js_rendered: true
+
+  - id: sk-hynix-newsroom
+    type: NEWSROOM
+    url: "https://news.skhynix.com/"
+    reliability: 1.0
+    js_rendered: false
+
+  - id: micron-newsroom
+    type: NEWSROOM
+    url: "https://www.micron.com/about/press/news"
+    reliability: 1.0
+    js_rendered: false
+
+  - id: nvidia-newsroom
+    type: NEWSROOM
+    url: "https://nvidianews.nvidia.com/"
+    reliability: 1.0
+    js_rendered: false
+
+  - id: wd-blog
+    type: BLOG
+    url: "https://blog.westerndigital.com/"
+    reliability: 0.8
+    js_rendered: false
+
+  - id: marvell-blog
+    type: BLOG
+    url: "https://www.marvell.com/blogs.html"
+    reliability: 0.8
+    js_rendered: false
+
+  - id: trendforce
+    type: ANALYST
+    url: "https://www.trendforce.com/"
+    reliability: 0.9
+    js_rendered: false
+
+  - id: reuters
+    type: MEDIA
+    url: "https://www.reuters.com/"
+    reliability: 0.9
+    js_rendered: false
+
+  - id: bloomberg
+    type: MEDIA
+    url: "https://www.bloomberg.com/"
+    reliability: 0.9
+    js_rendered: false
+
+# ── Seed Queries ──
+# PRINCIPLE: Event-focused, not company-focused.
+# "CXMT IPO" finds news. "CXMT 最新" finds the company homepage.
+# Every query targets WHAT happened, not WHO did it.
+# site: operators target proven high-signal news sources.
+seed_queries:
+  zh-CN:
+    # Breaking news / events
+    - "存储芯片 DRAM NAND 涨价 短缺"
+    - "长鑫存储 IPO 上会 科创板"
+    - "长江存储 扩产 产能 晶圆厂"
+    - "美光 SK海力士 三星 HBM4 量产"
+    - "NAND Flash 合约价 现货价"
+    - "三星 罢工 停产 存储"
+    # Targeted news sources
+    - "site:chinaflashmarket.com 存储 NAND SSD DRAM"
+    - "site:eet-china.com 存储 半导体 芯片"
+    - "site:digitimes.com 长鑫 长江存储 美光"
+    - "site:sina.com.cn 存储芯片 半导体"
+    - "site:stcn.com 存储 半导体 芯片"
+    - "site:21jingji.com 存储 芯片 半导体"
+
+  zh-TW:
+    - "記憶體 DRAM NAND 漲價 短缺"
+    - "長鑫存儲 IPO 科創板 上市"
+    - "長江存儲 擴產 產能 晶圓廠"
+    - "美光 SK海力士 三星 HBM4 量產"
+    - "NAND Flash 合約價 現貨價"
+    - "site:digitimes.com.tw 記憶體 半導體"
+    - "site:technews.tw 記憶體 半導體"
+    - "site:moneydj.com 記憶體 儲存"
+
+  en:
+    # Breaking news / events
+    - "memory chip DRAM NAND price hike shortage May 2026"
+    - "CXMT IPO listing Shanghai STAR market"
+    - "Micron SK Hynix Samsung HBM4 production certification"
+    - "NAND flash contract price spot price Q2 2026"
+    - "Samsung strike labor memory production"
+    - "YMTC fab expansion capacity NAND"
+    # Targeted news sources (proven to return results)
+    - "site:reuters.com memory chip DRAM NAND storage"
+    - "site:bloomberg.com Micron SK Hynix memory semiconductor"
+    - "site:digitimes.com memory HBM NAND DRAM"
+    - "site:trendforce.com DRAM NAND HBM memory price"
+    - "site:tomshardware.com SSD NAND DRAM HBM memory"
+    - "site:blocksandfiles.com storage SSD NAND"
+    - "site:semianalysis.com HBM NAND DRAM"
+    - "site:nikkei.com semiconductor memory chip storage"
+    - "site:koreaherald.com Samsung SK hynix semiconductor"
+
+  ja:
+    - "半導体 メモリ DRAM NAND 価格 高騰"
+    - "キオクシア サンディスク NAND 3D 積層"
+    - "サムスン SKハイニックス HBM4 量産"
+    - "マイクロン 広島 工場 メモリ"
+    - "site:nikkei.com 半導体 メモリ キオクシア"
+    - "site:xtech.nikkei.com 半導体 メモリ"
+    - "site:eetimes.jp 半導体 メモリ NAND"
+    - "site:pc.watch.impress.co.jp 半導体 メモリ SSD"
+    - "マイクロン メモリ AI"
+    - "TSMC 先端プロセス"
+    - "NAND フラッシュ 価格 ${CURRENT_YEAR}"
+    - "site:eetimes.jp 半導体 メモリ"
+
+  ko:
+    - "반도체 메모리 DRAM NAND 가격 상승 부족"
+    - "삼성전자 SK하이닉스 HBM4 양산 인증"
+    - "마이크론 메모리 공장 증설"
+    - "site:etnews.com 반도체 메모리"
+    - "site:mk.co.kr 반도체 메모리 삼성 SK하이닉스"
+    - "site:hankyung.com 반도체 메모리"
+
+# ── Gap Searches ──
+# Adversarial verification — queries designed to catch what main search might miss.
+# ${CURRENT_MONTH_EN} / ${CURRENT_YEAR} / ${CURRENT_MONTH_ZH} substituted at runtime.
+gap_searches:
+  - query: "Samsung SK hynix Micron latest ${CURRENT_MONTH_EN} ${CURRENT_YEAR}"
+    locale: en
+  - query: "Kioxia Western Digital WDC SanDisk latest ${CURRENT_MONTH_EN} ${CURRENT_YEAR}"
+    locale: en
+  - query: "NAND flash DRAM price ${CURRENT_MONTH_EN} ${CURRENT_YEAR}"
+    locale: en
+  - query: "YMTC CXMT 长江存储 长鑫存储 最新 ${CURRENT_YEAR}年${CURRENT_MONTH_ZH}"
+    locale: zh-CN
+  - query: "SK hynix iHBM cooling technology ${CURRENT_MONTH_EN} ${CURRENT_YEAR}"
+    locale: en
+  - query: "Samsung V-NAND CMB prototype ${CURRENT_MONTH_EN} ${CURRENT_YEAR}"
+    locale: en
+  - query: "Pure Storage NetApp Dell enterprise storage AI ${CURRENT_MONTH_EN} ${CURRENT_YEAR}"
+    locale: en
+
+# ── Platform Companies ──
+# Companies outside storage whose technology directly affects memory/storage architecture.
+# Content from these passes admission test if it changes storage/memory landscape judgment.
+platform_companies:
+  - nvidia
+  - marvell
+
+# ── Value Chain Exploration ──
+# 十一层探测模型。每层定义探测逻辑、信源种子、查询模板、覆盖告警阈值。
+# value-chain-monitor skill 读取此配置执行主动探测。
+# 跨行业复用：只需替换此 section，框架逻辑不变。
+
+value_chain:
+  layers:
+    # ── Layer 1: 上游设备/材料 ──
+    - id: upstream_equipment
+      label: 上游设备/材料
+      question: 能不能造？
+      criticality: critical
+      frequency: weekly
+      coverage_alert_weeks: 2
+      seed_sources:
+        - name: ASML
+          aliases: {zh-CN: "阿斯麦"}
+        - name: Lam Research
+          aliases: {zh-CN: "泛林半导体"}
+        - name: Tokyo Electron
+          aliases: {zh-CN: "东京电子", ja: "東京エレクトロン"}
+        - name: SUMCO
+          aliases: {zh-CN: "胜高"}
+        - name: 东京应化
+          aliases: {en: "TOK"}
+      watch_patterns:
+        - EUV 分配给 memory 客户的比例变化
+        - 刻蚀/沉积设备 lead time 变化
+        - 硅片/光刻胶涨价公告
+        - 新产能投资
+      probe_templates:
+        - "ASML EUV allocation memory DRAM {year}"
+        - "Lam Research equipment lead time semiconductor {quarter}"
+        - "silicon wafer price increase {year}"
+        - "semiconductor equipment capex expansion {quarter}"
+      gap_indicators:
+        - "4周无设备交期更新"
+        - "2周无产能投资公告"
+
+    # ── Layer 2: 中间信号节点 ──
+    - id: mid_signal_proxy
+      label: 中间信号节点
+      question: 拐点到了吗？
+      criticality: high
+      frequency: weekly
+      coverage_alert_weeks: 2
+      seed_sources:
+        - name: Phison
+          aliases: {zh-CN: "群联电子"}
+        - name: Silicon Motion
+          aliases: {zh-CN: "慧荣科技"}
+        - name: Kingston
+          aliases: {zh-CN: "金士顿"}
+        - name: ADATA
+          aliases: {zh-CN: "威刚科技"}
+      watch_patterns:
+        - SSD 控制器库存堆积
+        - 模组厂毛利率压缩
+        - 现货价 vs 合约价 价差扩大
+      probe_templates:
+        - "{company} inventory NAND SSD controller {quarter}"
+        - "{company} gross margin memory module {quarter}"
+        - "DRAM spot price vs contract price {month}"
+      gap_indicators:
+        - "2周无控制器/模组厂库存更新"
+
+    # ── Layer 3: 下游需求 ──
+    - id: downstream_demand
+      label: 下游需求
+      question: 谁会买？
+      criticality: critical
+      frequency: weekly
+      coverage_alert_weeks: 3
+      seed_sources:
+        - name: AWS
+          aliases: {zh-CN: "亚马逊云"}
+        - name: Microsoft Azure
+          aliases: {zh-CN: "微软云"}
+        - name: Google Cloud
+          aliases: {zh-CN: "谷歌云"}
+        - name: NVIDIA
+          aliases: {zh-CN: "英伟达"}
+        - name: Apple
+        - name: Tesla
+      watch_patterns:
+        - 云厂商 capex 指引变化
+        - 自研存储控制器/芯片
+        - GPU 内存规格升级
+        - 消费电子 NAND tier 升级
+      probe_templates:
+        - "{company} capex cloud infrastructure {quarter}"
+        - "{company} custom storage controller silicon chip"
+        - "NVIDIA GPU HBM memory specification roadmap {year}"
+      gap_indicators:
+        - "3周无 hyperscaler capex 更新"
+
+    # ── Layer 4: 配套/互联 ──
+    - id: packaging_interconnect
+      label: 配套/互联
+      question: 怎么被消费？
+      criticality: high
+      frequency: biweekly
+      coverage_alert_weeks: 4
+      seed_sources:
+        - name: TSMC
+          aliases: {zh-CN: "台积电"}
+      watch_patterns:
+        - CoWoS 产能分配给 HBM 客户
+        - CXL 3.0 规范进度
+        - HBM 散热/堆叠方案突破
+      probe_templates:
+        - "TSMC CoWoS capacity allocation HBM {quarter}"
+        - "CXL memory pooling deployment hyperscaler {year}"
+        - "HBM thermal management cooling solution stack"
+      gap_indicators:
+        - "4周无先进封装产能更新"
+
+    # ── Layer 5: 替代威胁 ──
+    - id: substitute_threat
+      label: 替代威胁
+      question: 会不会被换掉？
+      criticality: medium
+      frequency: monthly
+      coverage_alert_weeks: 8
+      seed_sources:
+        - name: Mythic
+        - name: Untether AI
+      watch_patterns:
+        - 存算一体芯片 benchmark
+        - CXL 内存池化商用部署
+        - 持久内存/SCM 进展
+      probe_templates:
+        - "processing-in-memory benchmark performance {year}"
+        - "CXL memory pooling production deployment"
+        - "storage class memory SCM persistent memory progress"
+      gap_indicators:
+        - "8周无替代技术进展"
+
+    # ── Layer 6: 竞争对手 (已有日频管线覆盖) ──
+    - id: competitors
+      label: 竞争对手
+      question: 别人在干什么？
+      criticality: critical
+      frequency: daily
+      coverage_alert_weeks: 1
+      seed_sources: []
+      watch_patterns:
+        - 产能公告/调整
+        - 技术路线图更新
+        - 产品发布
+        - 财务/经营异常
+      probe_templates: []
+      gap_indicators:
+        - "1周无竞争动态 — 已有日频管线覆盖"
+      note: "covered by daily pipeline; value-chain-monitor only logs coverage"
+
+    # ── Layer 7: 地缘/管制 ──
+    - id: geopolitics
+      label: 地缘/管制
+      question: 游戏规则变了吗？
+      criticality: critical
+      frequency: weekly
+      coverage_alert_weeks: 4
+      seed_sources:
+        - name: BIS
+          aliases: {zh-CN: "美国工业安全局"}
+        - name: 日本经产省
+          aliases: {en: "METI"}
+        - name: CHIPS Program Office
+      watch_patterns:
+        - 实体清单更新
+        - 出口管制新规
+        - CHIPS Act 拨款/补贴
+        - 日本/荷兰 设备管制
+      probe_templates:
+        - "BIS entity list semiconductor China {date}"
+        - "export control semiconductor equipment Japan Netherlands"
+        - "CHIPS Act funding allocation memory DRAM NAND"
+      gap_indicators:
+        - "4周无管制/政策更新"
+
+    # ── Layer 8: 标准组织 ──
+    - id: standards
+      label: 标准组织
+      question: 技术路线锁定了吗？
+      criticality: medium
+      frequency: monthly
+      coverage_alert_weeks: 12
+      seed_sources:
+        - name: JEDEC
+        - name: PCI-SIG
+        - name: CXL Consortium
+      watch_patterns:
+        - DDR6/PCIe Gen6/CXL 3.0 规范定稿
+        - 新工作组组建
+      probe_templates:
+        - "JEDEC DDR6 standard specification finalization"
+        - "CXL 3.0 specification release date"
+        - "PCIe Gen6 specification memory storage"
+      gap_indicators:
+        - "12周无标准更新"
+
+    # ── Layer 9: 物理基础设施 ──
+    - id: physical_infrastructure
+      label: 物理基础设施
+      question: 产线能跑吗？
+      criticality: high
+      frequency: weekly
+      coverage_alert_weeks: null
+      seed_sources: []
+      watch_patterns:
+        - 台湾/韩国/日本 限电/停电
+        - 地震影响半导体产线
+        - 缺水
+        - 物流/航运中断
+        - 劳工行动/罢工
+      probe_templates:
+        - "Taiwan power shortage TSMC semiconductor fab"
+        - "earthquake semiconductor fab Taiwan Japan Korea"
+        - "water shortage semiconductor manufacturing"
+        - "Red Sea shipping disruption semiconductor equipment"
+        - "Samsung semiconductor labor strike union"
+      gap_indicators:
+        - "事件驱动层 — 无事件=无覆盖=正常"
+      note: "event-driven: no gap alert when quiet"
+
+    # ── Layer 10: 客户健康 ──
+    - id: customer_health
+      label: 客户健康
+      question: 需求信号可信吗？
+      criticality: high
+      frequency: weekly
+      coverage_alert_weeks: 4
+      seed_sources:
+        - name: AWS
+        - name: Microsoft
+        - name: Google
+        - name: Apple
+        - name: Tesla
+      watch_patterns:
+        - 云客户流失/份额下降
+        - 消费电子销量下滑
+        - 电动车交付不及预期
+      probe_templates:
+        - "{company} revenue miss cloud customer loss {quarter}"
+        - "{company} iPhone sales forecast downgrade"
+        - "{company} vehicle delivery decline Q{quarter}"
+      gap_indicators:
+        - "探测的是坏消息 — 连续4周无覆盖=客户健康假设成立"
+
+    # ── Layer 11: 人才流动 ──
+    - id: talent_flow
+      label: 人才流动
+      question: 技术能力在往哪流？
+      criticality: medium
+      frequency: monthly
+      coverage_alert_weeks: 12
+      seed_sources: []
+      watch_patterns:
+        - DRAM/HBM 核心工程师跳槽
+        - 高管更换
+        - 招聘公告揭示技术方向
+      probe_templates:
+        - "DRAM engineer Samsung SK hynix Micron hires CXMT YMTC"
+        - "semiconductor VP memory departure hire"
+        - "CXMT YMTC hiring EUV DRAM engineer"
+      gap_indicators:
+        - "12周无人才流动信号"
+
+# ═══════════════════════════════════════════════════════════════
+# Pipeline Configuration
+# ═══════════════════════════════════════════════════════════════
+# All hardcoded domain knowledge from pipeline stages extracted here.
+# Framework stages read this; no domain logic in stage code.
+# ═══════════════════════════════════════════════════════════════
+
+pipeline:
+  # ── Verify Stage: Search Blocklist ──
+  # Domains that should never appear in search results.
+  blocklist:
+    social:
+      - youtube.com
+      - youtu.be
+      - reddit.com
+      - threads.com
+      - threads.net
+      - facebook.com
+      - fb.com
+      - twitter.com
+      - x.com
+      - instagram.com
+      - tiktok.com
+    encyclopedia:
+      - wikipedia.org
+      - namu.wiki
+      - baike.baidu.com
+    ecommerce:
+      - amazon.com
+      - amazon.co.jp
+      - jd.com
+      - taobao.com
+    qa_forums:
+      - quora.com
+      - zhidao.baidu.com
+      - zhihu.com
+    job_boards:
+      - linkedin.com
+      - indeed.com
+
+  # Domains that are valid but low priority (search engines, not content)
+  low_priority_domains:
+    - bing.com
+    - google.com
+
+  # ── Verify Stage: Magnitude Sanity Rules ──
+  magnitude_rules:
+    revenue_max_usd: 1000000000000    # $1T flag
+    share_max_pct: 100                 # 100% reject (mathematically impossible)
+    growth_max_pct: 1000               # 1000% YoY flag
+    chip_price_max_usd: 10000          # $10K flag
+
+  # ── Verify Stage: Date Window ──
+  date_window:
+    stale_days: 2                      # Articles older than this rejected
+    max_future_days: 1                 # Future-dated articles beyond this rejected
+
+  # ── Verify Stage: Rejection Codes ──
+  rejection_codes:
+    BLOCKED: "Domain in search blocklist"
+    NO_DATE: "No publication date found in metadata or content"
+    STALE: "Article older than 2 days"
+    FUTURE: "Article date is in the future"
+    LOW_SIGNAL: "Domain is low-priority (search engine, aggregator)"
+    IMPOSSIBLE: "Value violates physical/mathematical constraints"
+
+  # ── Normalize Stage: Source Type Classification ──
+  source_classification:
+    official:
+      - samsung.com
+      - news.skhynix.com
+      - skhynix.com
+      - micron.com
+      - cxmt.com
+      - ymte.com
+      - ymtc.com
+      - kioxia.com
+      - kioxia-holdings.com
+      - westerndigital.com
+      - intel.com
+      - amd.com
+      - nvidia.com
+      - tsmc.com
+      - apple.com
+      - huawei.com
+      - mediatek.com
+    analyst:
+      - trendforce.com
+      - icinsights.com
+      - counterpointresearch.com
+      - gartner.com
+      - idc.com
+      - yolegroup.com
+      - yole.fr
+      - chinaflashmarket.com
+      - semiengineering.com
+      - semianalysis.com
+      - semi.org
+      - dramexchange.com
+      - cfm闪存市场
+    media:
+      - reuters.com
+      - bloomberg.com
+      - nikkei.com
+      - nikkei.co.jp
+      - tomsguide.com
+      - tomshardware.com
+      - tomshardware.jp
+      - anandtech.com
+      - blocksandfiles.com
+      - eet-china.com
+      - eet-japan.com
+      - eetimes.com
+      - eetimes.jp
+      - digitimes.com
+      - digitimes.com.tw
+      - moneydj.com
+      - ithome.com
+      - ithome.com.tw
+      - technews.tw
+      - cool3c.com
+      - techzine.nl
+      - pcwatch.co.jp
+      - itmedia.co.jp
+      - yahoo.com
+      - sina.com.cn
+      - finance.sina.com.cn
+      - wallstreetcn.com
+      - xueqiu.com
+      - 雪球
+      - global-net.co.jp
+      - prtimes.jp
+      - gigazine.net
+      - マイナビニュース
+      - news.mynavi.jp
+      - ndtv.com
+      - techspot.com
+      - wccftech.com
+      - extremetech.com
+      - servethehome.com
+      - theregister.com
+      - datacenterdynamics.com
+      - networkworld.com
+      - abmedia.io
+      - blocktempo.com
+      - hk.finance.yahoo.com
+      - finance.yahoo.com
+      - caixinglobal.com
+      - 财新
+      - 電子工程專輯
+      - 电子工程专辑
+      - cnews.com.tw
+      - ctee.com.tw
+    blog:
+      - medium.com
+      - dev.to
+      - substack.com
+      - hashnode.dev
+      - blogspot.com
+      - wordpress.com
+      - zhuanlan.zhihu.com
+    social:
+      - weibo.com
+      - tieba.baidu.com
+      - douyin.com
+      - bilibili.com
+      - xiaohongshu.com
+
+  # ── Normalize Stage: Artifact Type Classification ──
+  artifact_types:
+    financial_transcript:
+      pattern: "(earnings|Q\\d\\s+(20|FY)|quarterly\\s+result|fiscal\\s+year|SEC\\s+filing|10-K|10-Q|earnings\\s+call)"
+    product_announcement:
+      pattern: "(announce|launch|release|unveil|debut|introduce|発表|発売|推出|发布)"
+    patent:
+      pattern: "(patent|USPTO|KIPRIS|专利|特許|出願)"
+    paper:
+      pattern: "(arXiv|Nature|Science|IEEE|ISSCC|VLSI|IEDM|proceedings|journal|論文|论文)"
+    hiring:
+      pattern: "(hiring|job\\s+posting|careers|招聘|求人|採用)"
+    conference_abstract:
+      pattern: "(keynote|conference|symposium|forum|summit|GTC|CFMS|MWC|Computex)"
+
+  # ── Normalize Stage: Entity & Term Extraction ──
+  # Flat lists for regex matching in title+snippet.
+  # Also used by cluster stage for Jaccard similarity.
+  flat_entities:
+    - Samsung
+    - "SK hynix"
+    - "SK Hynix"
+    - SK하이닉스
+    - Micron
+    - Kioxia
+    - 铠侠
+    - "Western Digital"
+    - WD
+    - SanDisk
+    - CXMT
+    - 长鑫存储
+    - YMTC
+    - 长江存储
+    - Intel
+    - AMD
+    - NVIDIA
+    - 台积电
+    - TSMC
+    - Phison
+    - 群联
+    - "Silicon Motion"
+    - 慧荣
+    - Marvell
+    - Broadcom
+    - 联发科
+    - MediaTek
+    - "Applied Materials"
+    - "Lam Research"
+    - TEL
+    - 东京电子
+    - ASML
+    - 中微公司
+    - AMEC
+    - 北方华创
+    - NAURA
+    - Solidigm
+    - Kingston
+    - 金士顿
+    - OpenAI
+    - Google
+    - Microsoft
+    - Meta
+    - Amazon
+    - Apple
+
+  flat_terms:
+    - HBM
+    - HBM4
+    - HBM3E
+    - HBM3
+    - NAND
+    - DRAM
+    - DDR5
+    - DDR4
+    - LPDDR5
+    - LPDDR5X
+    - SSD
+    - eMMC
+    - UFS
+    - QLC
+    - TLC
+    - PLC
+    - PCIe
+    - CXL
+    - NVMe
+    - "3D NAND"
+    - 堆叠
+    - layer
+    - "层"
+    - 晶圆
+    - wafer
+    - fab
+    - 工厂
+    - EUV
+    - DUV
+    - 光刻
+    - lithography
+    - NVIDIA
+    - Rubin
+    - Vera
+    - Grace
+    - Hopper
+    - 1c
+    - 1γ
+    - 1alpha
+    - 1β
+    - 1b
+    - 1a
+    - "NAND Flash"
+    - "NOR Flash"
+    - "storage class memory"
+    - Optane
+    - "3D XPoint"
+    - CBRAM
+    - ReRAM
+    - MRAM
+    - FeRAM
+    - chiplet
+    - "advanced packaging"
+    - CoWoS
+    - EMIB
+    - Foveros
+    - "AI training"
+    - "AI inference"
+    - "data center"
+    - hyperscaler
+    - cloud
+    - "enterprise SSD"
+    - "QLC SSD"
+    - "PLC NAND"
+    - price
+    - "price hike"
+    - shortage
+    - supply
+    - demand
+    - ASP
+    - "contract price"
+    - "spot price"
+    - semiconductor
+    - memory
+    - storage
+    - 半導体
+    - メモリ
+    - ストレージ
+    - NAND型フラッシュメモリ
+    - 반도체
+    - 메모리
+    - 저장장치
+    - 半导体
+    - 存储器
+    - 闪存
+    - 内存
+
+  # ── Validate Stage: Source Alias Mapping ──
+  # Maps display names in briefing to verified domains.
+  source_aliases:
+    "caixin global": "caixinglobal.com"
+    wsj: "wsj.com"
+    bloomberg: "bloomberg.com"
+    reuters: "reuters.com"
+    digitimes: "digitimes.com"
+    forbes: "forbes.com"
+    "yahoo finance": "finance.yahoo.com"
+    marketwatch: "marketwatch.com"
+    "tom's hardware": "tomshardware.com"
+    trendforce: "trendforce.com"
+    counterpoint: "counterpointresearch.com"
+    "counterpoint research": "counterpointresearch.com"
+    东方财富: "eastmoney.com"
+    新浪财经: "finance.sina.com.cn"
+    新浪: "sina.com.cn"
+    凤凰网: "ifeng.com"
+    财新: "caixin.com"
+    "36氪": "36kr.com"
+    财联社: "cls.cn"
+    "21世纪经济报道": "21jingji.com"
+    野村证券: "nomura.com"
+    搜狐: "sohu.com"
+    aastocks: "aastocks.com"
+    tradingkey: "tradingkey.com"
+
+  # ── Fiscal Year Mappings ──
+  fiscal_year_mappings:
+    Micron:
+      fy_end: "Aug"
+      cy_q1_equals: "FY Q4"
+    Samsung:
+      fy_end: "Dec"
+      cy_q1_equals: "FY Q1"
+    "SK hynix":
+      fy_end: "Dec"
+      cy_q1_equals: "FY Q1"
+
+  # ── Locale Routing ──
+  locale_rules:
+    # Domain patterns → BCP 47 locale
+    domain_patterns:
+      - pattern: ".jp"
+        locale: ja
+        keywords: ["nikkei", "kioxia", "itmedia", "pcwatch"]
+      - pattern: ".kr"
+        locale: ko
+      - pattern: ".cn"
+        locale: "zh-CN"
+      - pattern: ".tw"
+        locale: "zh-TW"
+        keywords: ["ithome", "eet-china", "moneydj", "xueqiu", "sina", "chinaflashmarket"]
+    default_locale: en
+
+  # ── Numeric Claim Extraction Patterns ──
+  numeric_patterns:
+    - '(\\+?\\d+(?:\\.\\d+)?%\\s*(?:QoQ|YoY|环比|同比))'
+    - '(\\$\\d+(?:\\.\\d+)?\\s*(?:billion|million|B|M)\\b)'
+    - '(\\d+(?:\\.\\d+)?\\s*(?:万亿|亿|万)\\s*(?:美元|韩元|日元|人民币))'
+    - '(\\d+(?:\\.\\d+)?%\\s*(?:market\\s*share|市占|シェア))'
+    - '(\\d+(?:\\.\\d+)?\\s*(?:nm|layer|GB|TB|PB|Gbps|Mbps))'
