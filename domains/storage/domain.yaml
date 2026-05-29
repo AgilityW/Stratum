@@ -984,6 +984,7 @@ source_registry:
       category: newsroom
       fetch_interval_hours: 24
       status: active
+      suppress_search: true
       max_articles: 10
       timeout: 30
 
@@ -996,16 +997,40 @@ source_registry:
       category: newsroom
       fetch_interval_hours: 24
       status: active
+      suppress_search: true
+
+    - id: micron-blog
+      name: "Micron Technical Blog"
+      urls:
+        - "https://www.micron.com/about/blog"
+      access: direct_fetch
+      locale: en
+      category: blog
+      fetch_interval_hours: 24
+      status: active
+      suppress_search: true
+
+    - id: wd-blog
+      name: "Western Digital Corporate Blog"
+      urls:
+        - "https://blog.westerndigital.com"
+      access: direct_fetch
+      locale: en
+      category: blog
+      fetch_interval_hours: 24
+      status: active
+      suppress_search: true
 
     - id: wd-newsroom
       name: "Western Digital Newsroom"
       urls:
         - "https://www.westerndigital.com/company/newsroom"
-      access: direct_fetch
+      access: browser
       locale: en
       category: newsroom
       fetch_interval_hours: 24
       status: active
+      note: "Corp CMS; needs browser for article extraction"
 
     # ── JS-rendered newsrooms (browser — deferred) ──
     - id: samsung-semiconductor-newsroom
@@ -1031,16 +1056,6 @@ source_registry:
       note: "Likely JS-rendered; test with direct_fetch first"
 
     # ── Manufacturer Technical Blogs ──
-    - id: micron-blog
-      name: "Micron Technical Blog"
-      urls:
-        - "https://www.micron.com/about/blog"
-      access: direct_fetch
-      locale: en
-      category: blog
-      fetch_interval_hours: 24
-      status: active
-
     - id: samsung-tech-blog
       name: "Samsung Semiconductor Tech Blog"
       urls:
@@ -1055,24 +1070,13 @@ source_registry:
     - id: kioxia-blog
       name: "Kioxia Technical Blog"
       urls:
-        - "https://blog-us.kioxia.com"
+        - "https://americas.kioxia.com/en-us/insights.html"
       access: direct_fetch
       locale: en
       category: blog
       fetch_interval_hours: 24
       status: active
 
-    - id: wd-blog
-      name: "Western Digital Corporate Blog"
-      urls:
-        - "https://blog.westerndigital.com"
-      access: direct_fetch
-      locale: en
-      category: blog
-      fetch_interval_hours: 24
-      status: active
-
-    # ── Professional Media RSS Feeds ──
     - id: servethehome-rss
       name: "ServeTheHome RSS"
       urls:

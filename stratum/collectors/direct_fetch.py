@@ -42,6 +42,7 @@ _ARTICLE_URL_PATTERNS = [
     r'/blog/', r'/article/', r'/story/', r'/fact/',
     r'/\d{4}/\d{2}/',  # WordPress date URLs
     r'/news-releases/', r'/post/',
+    r'/insights/',  # Kioxia insights/articles
 ]
 
 
