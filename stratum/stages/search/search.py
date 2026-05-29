@@ -31,10 +31,24 @@ REQUEST_TIMEOUT = 12
 
 
 def load_config(config_path: str) -> dict:
-    """Load and resolve env vars in config.yaml."""
+    """Load config.yaml, resolving ${VAR} references from environment and .env file."""
+    # Read .env from project root if it exists (gitignored, user-provided)
+    project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    env_path = os.path.join(project_root, ".env")
+    if os.path.exists(env_path):
+        with open(env_path) as f:
+            for line in f:
+                line = line.strip()
+                if line and not line.startswith("#") and "=" in line:
+                    key, _, val = line.partition("=")
+                    key = key.strip()
+                    val = val.strip().strip('"').strip("'")
+                    if key and key not in os.environ:
+                        os.environ[key] = val
+
     with open(config_path) as f:
         raw = f.read()
-    # Resolve ${VAR} references
+    # Resolve ${VAR} references from environment
     for match in re.finditer(r'\$\{(\w+)\}', raw):
         var_name = match.group(1)
         env_val = os.environ.get(var_name, "")
