@@ -1052,8 +1052,8 @@ source_registry:
       locale: en
       category: newsroom
       fetch_interval_hours: 24
-      status: active
-      note: "Likely JS-rendered; test with direct_fetch first"
+      status: inactive
+      note: "List page hides article dates (same as blog). Needs per-page browser scraping."
 
     # ── Manufacturer Technical Blogs ──
     - id: samsung-tech-blog
@@ -1075,7 +1075,8 @@ source_registry:
       locale: en
       category: blog
       fetch_interval_hours: 24
-      status: active
+      status: inactive
+      note: "List page hides article dates — verify stage always rejects. Needs browser per-page scraping."
 
     - id: servethehome-rss
       name: "ServeTheHome RSS"

@@ -6,7 +6,7 @@ Dispatches by source.access to the right strategy module.
 Strategy modules:
   direct_fetch  — HTTP GET → HTML parse (heading-first + read-more fallback)
   rss           — HTTP GET → XML parse (RSS 2.0 + Atom)
-  browser       — headless Chrome (future)
+  browser       — headless Chrome via Playwright
 
 All strategies return list[SearchResult]. The orchestrator merges and
 returns the combined pool. Pipeline only knows about collect().
@@ -58,8 +58,9 @@ def collect(domain: str, workspace: str, run_date: str) -> list[SearchResult]:
                 for url in urls:
                     results += fetch_feed(url, keywords, sid, locale, category, timeout)
 
-            # elif access == "browser":  # future
-            #     results = []
+            elif access == "browser":
+                from stratum.collectors.browser import fetch_source
+                results = fetch_source(source, run_date)
 
             else:
                 print(f"  ⚠️  Unknown access type '{access}' for [{sid}]", file=sys.stderr)

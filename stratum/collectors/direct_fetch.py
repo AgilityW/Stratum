@@ -176,9 +176,9 @@ def _extract_read_more_links(html: str, base_url: str, domain: str, locale: str,
     """
     results = []
     
-    # Match: <a href="...">Read article</a> or <a href="...">Learn More</a>
+    # Match: <a href="...">Read article</a>, <a href="...">Read More</a>, <a href="...">Learn More</a>
     pattern = re.compile(
-        r'<a[^>]*href="([^"]*)"[^>]*>\s*(Read article|Learn [Mm]ore|READ)\s*</a>',
+        r'<a[^>]*href="([^"]*)"[^>]*>\s*(Read article|Read [Mm]ore|Learn [Mm]ore|READ)\s*</a>',
         re.IGNORECASE,
     )
     
