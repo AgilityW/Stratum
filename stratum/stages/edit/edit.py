@@ -1,14 +1,12 @@
 #!/usr/bin/env python3
 """edit.py — Agent Edit: LLM generates validated briefing.md from articles + clusters.
 
-The v3 path is a timescale-aware block editor: deterministic planning creates
-dynamic categories, category-sized LLM calls edit those blocks, and the final
-Markdown is rendered through the configured timescale template. The legacy
-monolithic prompt path remains available when a manifest profile does not set
-``budget.edit_mode: v3``.
+Edit is a timescale-aware block editor: deterministic planning creates dynamic
+categories, category-sized LLM calls edit those blocks, and the final Markdown
+is rendered through the configured timescale template.
 
 Input:  verified articles (JSONL), clusters (JSON), story context (JSON),
-        domain.yaml, config.yaml, manifest + prompt fragments.
+        domain.yaml, config.yaml, manifest + block/polish prompts.
 Output: briefing.md (+ optional event-threads.json for threads/causal_edges/judgments).
 
 Usage:
@@ -34,13 +32,12 @@ from urllib.parse import urlparse
 # ── Internal imports ──
 _EDIT_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, _EDIT_DIR)
-from assembler import assemble, _format_cn_date
 from llm_client import call_llm
-from planner import build_block_plan, build_plan
+from planner import build_block_plan
 
 CST_WEEKDAYS = ["周一", "周二", "周三", "周四", "周五", "周六", "周日"]
 THREAD_ID_RE = re.compile(r"^et-[A-Za-z0-9][A-Za-z0-9_-]*$")
-NON_NEWS_SECTIONS = {"今日要点", "行业要点", "产业信号", "特别关注", "关注", "反向信号"}
+NON_NEWS_SECTIONS = {"今日要点", "行业要点", "产业信号", "特别关注", "反向信号"}
 EDGE_SIGNAL_KEYWORDS = (
     "anthropic",
     "模型公司",
@@ -53,6 +50,16 @@ EDGE_SIGNAL_KEYWORDS = (
     "任命",
     "光盘",
 )
+
+
+def _format_cn_date(date_str: str) -> str:
+    """Format YYYY-MM-DD as Chinese date with weekday."""
+    try:
+        dt = datetime.strptime(date_str, "%Y-%m-%d")
+        weekday = CST_WEEKDAYS[dt.weekday()]
+        return f"{dt.year}年{dt.month}月{dt.day}日 · {weekday}"
+    except ValueError:
+        return date_str
 
 
 def load_manifest(manifest_path: str, timescale: str) -> dict:
@@ -499,17 +506,6 @@ def repair_missing_source_lines(markdown: str, articles: list[dict], run_date: s
     return "\n".join(repaired).rstrip() + ("\n" if markdown.endswith("\n") else "")
 
 
-def prepare_llm_response(response: str, articles: list[dict], run_date: str, domain_id: str) -> tuple[str, dict | None]:
-    """Split, repair, and normalize one LLM response."""
-    briefing, structured_data = split_llm_output(response)
-    briefing = strip_source_locale_tags(briefing)
-    briefing = repair_missing_source_lines(briefing, articles, run_date)
-    briefing = normalize_edge_signal_headings(briefing)
-    briefing = repair_source_line_dates(briefing, articles, run_date)
-    structured_data = normalize_structured_data(structured_data, domain_id, run_date)
-    return briefing, structured_data
-
-
 def _extract_json_object(text: str) -> dict | None:
     """Best-effort extraction for JSON-only LLM helper calls."""
     stripped = text.strip()
@@ -533,41 +529,6 @@ def _load_prompt(name: str) -> str:
         return f.read()
 
 
-def _chunks(items: list[dict], size: int) -> list[list[dict]]:
-    return [items[i:i + size] for i in range(0, len(items), size)]
-
-
-def _chunk_payload(items: list[dict]) -> dict:
-    """Small evidence package for chunk writing."""
-    return {
-        "items": [
-            {
-                "item_id": item["item_id"],
-                "kind": item["kind"],
-                "title_hint": item["title_hint"],
-                "reason": item.get("reason", ""),
-                "thread_label": item.get("thread_label"),
-                "evidence": item.get("evidence", []),
-            }
-            for item in items
-        ]
-    }
-
-
-def _fallback_chunk_items(items: list[dict], detail: str) -> dict:
-    return {
-        "items": [
-            {
-                "item_id": item["item_id"],
-                "title": item["title_hint"],
-                "paragraphs": fallback_paragraphs(item),
-                "_fallback": detail,
-            }
-            for item in items
-        ]
-    }
-
-
 def fallback_paragraphs(item: dict) -> list[str]:
     evidence = item.get("evidence") or []
     first = evidence[0] if evidence else {}
@@ -586,76 +547,6 @@ def fallback_paragraphs(item: dict) -> list[str]:
         snippet or item.get("title_hint", ""),
         "这条信息的增量在于它与今日存储产业的供需、技术路线或资本开支判断相关，后续仍需用更多来源验证其持续性。",
     ]
-
-
-def write_chunk(
-    chunk_index: int,
-    items: list[dict],
-    llm_cfg: dict,
-    prompt_text: str,
-) -> dict:
-    """Call LLM for one planned chunk and return normalized chunk data."""
-    user_prompt = json.dumps(_chunk_payload(items), ensure_ascii=False, indent=2)
-    try:
-        response = call_llm(prompt_text, user_prompt, llm_cfg)
-    except Exception as exc:
-        return {
-            "chunk_index": chunk_index,
-            "status": "fallback",
-            "detail": str(exc),
-            **_fallback_chunk_items(items, f"llm_error: {exc}"),
-        }
-    parsed = _extract_json_object(response)
-    if not isinstance(parsed, dict) or not isinstance(parsed.get("items"), list):
-        return {
-            "chunk_index": chunk_index,
-            "status": "fallback",
-            "detail": "invalid_json",
-            **_fallback_chunk_items(items, "invalid_json"),
-        }
-    by_id = {item["item_id"]: item for item in items}
-    normalized = []
-    for generated in parsed.get("items", []):
-        if not isinstance(generated, dict):
-            continue
-        item_id = str(generated.get("item_id") or "").strip()
-        planned = by_id.get(item_id)
-        if not planned:
-            continue
-        paragraphs = generated.get("paragraphs")
-        if isinstance(paragraphs, str):
-            paragraphs = [paragraphs]
-        if not isinstance(paragraphs, list) or not paragraphs:
-            paragraphs = fallback_paragraphs(planned)
-        normalized.append({
-            "item_id": item_id,
-            "title": str(generated.get("title") or planned["title_hint"]).strip()[:140],
-            "paragraphs": [str(p).strip() for p in paragraphs if str(p).strip()][:2] or fallback_paragraphs(planned),
-        })
-    missing = [item for item in items if item["item_id"] not in {entry["item_id"] for entry in normalized}]
-    normalized.extend(_fallback_chunk_items(missing, "missing_from_llm")["items"])
-    return {
-        "chunk_index": chunk_index,
-        "status": "ok",
-        "detail": "",
-        "items": normalized,
-    }
-
-
-def run_chunk_writing(plan: dict, llm_cfg: dict, budget: dict) -> list[dict]:
-    chunk_size = int(budget.get("chunk_size", 6) or 6)
-    max_workers = int(budget.get("chunk_parallelism", 3) or 3)
-    prompt_text = _load_prompt("daily_chunk.md")
-    chunks = _chunks(plan.get("items", []), chunk_size)
-    results: list[dict] = []
-    with ThreadPoolExecutor(max_workers=max(1, max_workers)) as pool:
-        futures = {
-            pool.submit(write_chunk, idx, chunk, llm_cfg, prompt_text): idx
-            for idx, chunk in enumerate(chunks, start=1)
-        }
-        for future in as_completed(futures):
-            results.append(future.result())
-    return sorted(results, key=lambda chunk: chunk["chunk_index"])
 
 
 def _category_payload(category: dict, selected_ids: set[str]) -> dict:
@@ -806,31 +697,6 @@ def _source_line(item: dict, run_date: str, title: str = "", paragraphs: list[st
     return f"*{', '.join(sources)} · {_date_cn(date, run_date)}*"
 
 
-def _chunk_item_map(chunks: list[dict]) -> dict[str, dict]:
-    mapped = {}
-    for chunk in chunks:
-        for item in chunk.get("items", []):
-            mapped[item.get("item_id")] = item
-    return mapped
-
-
-def assemble_items_markdown(plan: dict, chunks: list[dict], run_date: str) -> str:
-    generated = _chunk_item_map(chunks)
-    parts = []
-    for item in plan.get("items", []):
-        written = generated.get(item["item_id"], {})
-        title = str(written.get("title") or item["title_hint"]).strip()
-        if item.get("kind") == "edge" and not title.startswith("【边缘信号】"):
-            title = f"【边缘信号】{title}"
-        parts.append(f"### {title}\n")
-        paragraphs = written.get("paragraphs") or fallback_paragraphs(item)
-        for paragraph in paragraphs[:2]:
-            parts.append(f"\n{paragraph.strip()}\n")
-        parts.append(f"\n{_source_line(item, run_date, title, paragraphs)}\n")
-        parts.append("\n---\n\n")
-    return "".join(parts).rstrip("-\n ") + "\n"
-
-
 def _block_item_map(blocks: list[dict]) -> dict[str, dict]:
     mapped = {}
     for block in blocks:
@@ -950,38 +816,6 @@ def fallback_contrarian(titles: list[str]) -> list[str]:
         "HBM 产能扩张若快于客户认证节奏，可能造成局部供需错配。",
         "部分边缘技术和个股信号仍缺少量产、订单或客户认证支撑。",
     ]
-
-
-def split_main_and_edge_markdown(item_markdown: str) -> tuple[str, str]:
-    main_blocks = []
-    edge_blocks = []
-    for block in re.split(r"\n---\n", item_markdown.strip()):
-        cleaned = block.strip()
-        if not cleaned:
-            continue
-        if cleaned.startswith("### 【边缘信号】"):
-            edge_blocks.append(cleaned)
-        else:
-            main_blocks.append(cleaned)
-    return "\n\n".join(main_blocks), "\n\n".join(edge_blocks)
-
-
-def assemble_full_markdown(title: str, run_date: str, sections: dict, item_markdown: str) -> str:
-    cn_date = _format_cn_date(run_date)
-    main_markdown, edge_markdown = split_main_and_edge_markdown(item_markdown)
-    parts = [f"# {title}\n## {cn_date}\n\n"]
-    parts.append("## 今日要点\n\n")
-    parts.append("".join(f"{sentence}\n" for sentence in sections["summary"]))
-    parts.append("\n---\n\n## 行业要点\n\n")
-    parts.append(main_markdown.strip())
-    parts.append("\n\n---\n\n## 产业信号\n\n")
-    parts.append(edge_markdown.strip())
-    parts.append("\n\n---\n\n## 特别关注\n\n")
-    parts.extend(f"- {item}\n" for item in sections["focus"])
-    parts.append("\n## 反向信号\n\n")
-    parts.extend(f"- {item}\n" for item in sections["contrarian"])
-    parts.append("\n---\n\n*由 AI Agent 自动生成 · 每日 7:30 CST*\n")
-    return "".join(parts)
 
 
 def _paragraph_block(items: list[str]) -> str:
@@ -1115,38 +949,6 @@ def run_block_edit(
     return briefing, structured_data, {"plan": plan, "chunks": blocks, "trace": trace}
 
 
-def run_daily_v2(
-    args: argparse.Namespace,
-    title: str,
-    articles: list[dict],
-    clusters: dict,
-    context: dict,
-    llm_cfg: dict,
-    output_cfg: dict,
-) -> tuple[str, dict | None, dict]:
-    budget = output_cfg.get("_budget", {})
-    output_dir = os.path.dirname(args.output) or "."
-    os.makedirs(output_dir, exist_ok=True)
-    plan = build_plan(articles, clusters, context, args.date, budget)
-    chunks = run_chunk_writing(plan, llm_cfg, budget)
-    item_markdown = assemble_items_markdown(plan, chunks, args.date)
-    item_markdown = repair_source_line_dates(normalize_edge_signal_headings(item_markdown), articles, args.date)
-    sections = polish_sections(plan, item_markdown, llm_cfg)
-    briefing = assemble_full_markdown(title, args.date, sections, item_markdown)
-    briefing = repair_source_line_dates(strip_source_locale_tags(briefing), articles, args.date)
-    structured_data = deterministic_structured_data(plan, args.domain, args.date)
-    trace = {
-        "mode": "v2",
-        "plan_counts": plan.get("counts", {}),
-        "chunk_count": len(chunks),
-        "chunk_status": [
-            {"chunk_index": chunk["chunk_index"], "status": chunk["status"], "detail": chunk.get("detail", "")}
-            for chunk in chunks
-        ],
-    }
-    return briefing, structured_data, {"plan": plan, "chunks": chunks, "trace": trace}
-
-
 def main():
     parser = argparse.ArgumentParser(description="LLM-driven briefing generation")
     parser.add_argument("--domain", "-d", required=True, help="Domain ID (e.g. 'storage')")
@@ -1187,138 +989,60 @@ def main():
     domain_cfg = load_domain_cfg(domain_config_path)
     title = resolve_domain_title(config, domain_cfg, args.domain)
 
-    # ── Assemble prompt via assembler ──
+    # ── Load Edit profile ──
     prompts_dir = os.path.join(_EDIT_DIR, "prompts")
     manifest_path = os.path.join(prompts_dir, "manifest.yaml")
     timescale_cfg = load_manifest(manifest_path, args.timescale)
 
     output_cfg = dict(timescale_cfg.get("output", {}))
     output_cfg["_budget"] = timescale_cfg.get("budget", {})
-    edit_mode = str(output_cfg.get("_budget", {}).get("edit_mode", "v1")).lower()
-    if edit_mode == "v3":
-        print(f"\n📝 Edit V3 dynamic block editing (timescale={args.timescale})...", file=sys.stderr)
-        print(f"   Articles: {len(articles)}", file=sys.stderr)
-        print(f"   Clusters: {len(clusters.get('clusters', []))}", file=sys.stderr)
-        print(f"   Model: {llm_cfg.get('model', 'deepseek-v4-pro')}", file=sys.stderr)
-        briefing, structured_data, artifacts = run_block_edit(
-            args=args,
-            title=title,
-            articles=articles,
-            clusters=clusters,
-            context=context,
-            llm_cfg=llm_cfg,
-            output_cfg=output_cfg,
-            timescale_cfg=timescale_cfg,
+    edit_mode = str(output_cfg.get("_budget", {}).get("edit_mode", "")).lower()
+    if edit_mode != "v3":
+        print(
+            f"❌ Unsupported edit_mode={edit_mode!r}; all manifest profiles must use v3",
+            file=sys.stderr,
         )
-        in_budget, budget_detail = item_count_within_budget(briefing, output_cfg)
-        if not in_budget:
-            print(f"❌ Edit V3 output outside item budget: {budget_detail}", file=sys.stderr)
-            sys.exit(1)
-        print(f"   Item budget: {budget_detail}", file=sys.stderr)
+        sys.exit(1)
 
-        output_dir = os.path.dirname(args.output) or "."
-        plan_path = args.plan_output or os.path.join(output_dir, "briefing_plan.json")
-        chunks_path = args.chunks_output or os.path.join(output_dir, "briefing_chunks.json")
-        trace_path = args.trace_output or os.path.join(output_dir, "edit_trace.json")
-        with open(plan_path, "w") as f:
-            json.dump(artifacts["plan"], f, ensure_ascii=False, indent=2)
-        with open(chunks_path, "w") as f:
-            json.dump(artifacts["chunks"], f, ensure_ascii=False, indent=2)
-        with open(trace_path, "w") as f:
-            json.dump(artifacts["trace"], f, ensure_ascii=False, indent=2)
-
-        with open(args.output, "w") as f:
-            f.write(briefing)
-        print(f"✅ Briefing written: {args.output} ({len(briefing)} chars)", file=sys.stderr)
-        print(f"✅ Briefing plan written: {plan_path}", file=sys.stderr)
-        print(f"✅ Briefing blocks written: {chunks_path}", file=sys.stderr)
-        print(f"✅ Edit trace written: {trace_path}", file=sys.stderr)
-        if should_write_event_threads(structured_data):
-            event_threads_path = os.path.join(output_dir, "event-threads.json")
-            with open(event_threads_path, "w") as f:
-                json.dump(structured_data, f, ensure_ascii=False, indent=2)
-            counts = structured_event_counts(structured_data)
-            print(f"✅ Event threads written: {event_threads_path} "
-                  f"({counts['threads']} threads, {counts['causal_edges']} causal_edges, "
-                  f"{counts['judgments']} judgments)", file=sys.stderr)
-        return
-
-    print(f"\n📝 Assembling prompt (timescale={args.timescale})...", file=sys.stderr)
-    system_prompt, user_prompt, output_cfg = assemble(
-        manifest_path=manifest_path,
-        prompts_dir=prompts_dir,
-        timescale=args.timescale,
-        domain_cfg=domain_cfg,
-        domain_id=args.domain,
-        run_date=args.date,
+    print(f"\n📝 Edit V3 dynamic block editing (timescale={args.timescale})...", file=sys.stderr)
+    print(f"   Articles: {len(articles)}", file=sys.stderr)
+    print(f"   Clusters: {len(clusters.get('clusters', []))}", file=sys.stderr)
+    print(f"   Model: {llm_cfg.get('model', 'deepseek-v4-pro')}", file=sys.stderr)
+    briefing, structured_data, artifacts = run_block_edit(
+        args=args,
         title=title,
         articles=articles,
         clusters=clusters,
         context=context,
+        llm_cfg=llm_cfg,
+        output_cfg=output_cfg,
+        timescale_cfg=timescale_cfg,
     )
-
-    print(f"   System prompt: {len(system_prompt)} chars", file=sys.stderr)
-    print(f"   User prompt:   {len(user_prompt)} chars", file=sys.stderr)
-    print(f"   Model: {llm_cfg.get('model', 'deepseek-v4-pro')}", file=sys.stderr)
-    print(f"   Title: {title or '(from domain)'}", file=sys.stderr)
-
-    # ── Call LLM ──
-    print(f"   Calling LLM...", file=sys.stderr)
-    try:
-        response = call_llm(system_prompt, user_prompt, llm_cfg)
-    except Exception as e:
-        print(f"❌ LLM call failed: {e}", file=sys.stderr)
-        sys.exit(1)
-
-    # ── Split output ──
-    briefing, structured_data = prepare_llm_response(response, articles, args.date, args.domain)
     in_budget, budget_detail = item_count_within_budget(briefing, output_cfg)
-    max_retries = int(output_cfg.get("_budget", {}).get("retry_attempts", 1) or 1)
-    retry_count = 0
-    while not in_budget and retry_count < max_retries:
-        retry_count += 1
-        print(
-            f"⚠️  LLM output outside item budget: {budget_detail}; retrying "
-            f"{retry_count}/{max_retries}",
-            file=sys.stderr,
-        )
-        retry_prompt = (
-            user_prompt
-            + "\n\n## 强制修正\n"
-            + f"上一版不符合条数要求：{budget_detail}。\n"
-            + "请重写完整简报，必须严格满足总条数、主线新闻条数、边缘信号条数要求；"
-            + "如果主线新闻不足，必须从来源索引中补充普通 `### 标题` 条目，不能用 `【边缘信号】` 抵扣主线数量；"
-            + "保留 `---DATA---` 结构化 JSON；弱相关条目必须使用 `【边缘信号】` 前缀。\n"
-            + "上一版标题如下：\n"
-            + "\n".join(f"- {title}" for title in markdown_news_titles(briefing))
-        )
-        try:
-            response = call_llm(system_prompt, retry_prompt, llm_cfg)
-            briefing, structured_data = prepare_llm_response(response, articles, args.date, args.domain)
-            in_budget, budget_detail = item_count_within_budget(briefing, output_cfg)
-        except Exception as e:
-            print(f"❌ LLM retry failed: {e}", file=sys.stderr)
-            sys.exit(1)
     if not in_budget:
-        print(f"❌ LLM output still outside item budget after retry: {budget_detail}", file=sys.stderr)
+        print(f"❌ Edit V3 output outside item budget: {budget_detail}", file=sys.stderr)
         sys.exit(1)
     print(f"   Item budget: {budget_detail}", file=sys.stderr)
 
-    # ── Apply header ──
-    if title:
-        cn_date = _format_cn_date(args.date)
-        header = f"# {title}\n## {cn_date}\n\n"
-        if not briefing.startswith("# "):
-            briefing = header + briefing
-
-    # ── Write briefing.md ──
     output_dir = os.path.dirname(args.output) or "."
     os.makedirs(output_dir, exist_ok=True)
+    plan_path = args.plan_output or os.path.join(output_dir, "briefing_plan.json")
+    chunks_path = args.chunks_output or os.path.join(output_dir, "briefing_chunks.json")
+    trace_path = args.trace_output or os.path.join(output_dir, "edit_trace.json")
+    with open(plan_path, "w") as f:
+        json.dump(artifacts["plan"], f, ensure_ascii=False, indent=2)
+    with open(chunks_path, "w") as f:
+        json.dump(artifacts["chunks"], f, ensure_ascii=False, indent=2)
+    with open(trace_path, "w") as f:
+        json.dump(artifacts["trace"], f, ensure_ascii=False, indent=2)
+
     with open(args.output, "w") as f:
         f.write(briefing)
     print(f"✅ Briefing written: {args.output} ({len(briefing)} chars)", file=sys.stderr)
+    print(f"✅ Briefing plan written: {plan_path}", file=sys.stderr)
+    print(f"✅ Briefing blocks written: {chunks_path}", file=sys.stderr)
+    print(f"✅ Edit trace written: {trace_path}", file=sys.stderr)
 
-    # ── Write event-threads.json (if structured output) ──
     if should_write_event_threads(structured_data):
         event_threads_path = os.path.join(output_dir, "event-threads.json")
         with open(event_threads_path, "w") as f:

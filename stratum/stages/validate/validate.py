@@ -76,12 +76,34 @@ _TOKEN_STOPWORDS = {
     "announced", "announces", "company", "industry", "memory",
 }
 
+_TOKEN_ALIASES = {
+    "contract": {"合约"},
+    "supply": {"供应"},
+    "chain": {"链"},
+    "seasonality": {"季节", "季节性"},
+    "seasonal": {"季节", "季节性"},
+    "hike": {"上涨"},
+    "hikes": {"上涨"},
+    "increase": {"上涨"},
+    "increases": {"上涨"},
+    "increased": {"上涨"},
+    "quarter": {"季度"},
+    "q1": {"一季度", "第一季度"},
+    "1q26": {"一季度", "第一季度", "2026"},
+    "dram": {"dram"},
+    "nand": {"nand"},
+    "hbm": {"hbm"},
+}
+
 
 def _content_tokens(text: str) -> set[str]:
     """Extract coarse multilingual content tokens for item/article alignment."""
     tokens: set[str] = set()
     for token in re.findall(r"[A-Za-z0-9][A-Za-z0-9+.-]*|[\u4e00-\u9fff]{2,}", text.lower()):
         token = token.strip(".-")
+        aliases = _TOKEN_ALIASES.get(token, set())
+        if aliases:
+            tokens.update(aliases)
         if len(token) < 2 or token in _TOKEN_STOPWORDS:
             continue
         tokens.add(token)
@@ -275,7 +297,7 @@ def _parse_source_line(line: str) -> tuple[list[str], str | None] | None:
     return sources, date_part
 
 
-NON_NEWS_SECTION_TITLES = {"今日要点", "行业要点", "产业信号", "特别关注", "关注", "反向信号"}
+NON_NEWS_SECTION_TITLES = {"今日要点", "行业要点", "产业信号", "特别关注", "反向信号"}
 
 
 def parse_markdown(path):

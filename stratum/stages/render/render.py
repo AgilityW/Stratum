@@ -28,7 +28,7 @@ Usage:
         --footer "由 AI Agent 自动生成 · 每日 7:30 CST"
 """
 from __future__ import annotations
-import argparse, re, os, shutil, subprocess, sys, yaml
+import argparse, re, os, subprocess, sys, yaml
 from pathlib import Path
 from datetime import datetime, timezone, timedelta
 
@@ -116,12 +116,6 @@ def artifact_basename(domain: str, briefing_type: str, run_date: str) -> str:
     return f"{_slug_part(domain)}_{_slug_part(briefing_type)}_Briefing_{run_date}"
 
 
-def _legacy_copy(path: str, legacy_name: str) -> None:
-    legacy_path = os.path.join(os.path.dirname(path), legacy_name)
-    if os.path.abspath(path) != os.path.abspath(legacy_path):
-        shutil.copyfile(path, legacy_path)
-
-
 def _render_tag_spans(tags):
     """Render item tag badges."""
     return "".join(
@@ -136,7 +130,7 @@ def _clean_source_line_display(text: str) -> str:
 
 
 MAJOR_SECTION_TITLES = {"今日要点", "行业要点", "产业信号", "特别关注", "反向信号"}
-NON_ITEM_SECTION_TITLES = MAJOR_SECTION_TITLES | {"关注"}
+NON_ITEM_SECTION_TITLES = MAJOR_SECTION_TITLES
 
 
 def convert(md_text, tag_config=None):
@@ -276,7 +270,7 @@ def convert(md_text, tag_config=None):
 
 
 def render_html(md_path, output_dir, title, date_str, weekday, footer, template_str,
-                artifact_name="briefing", write_legacy=False, tag_config=None):
+                artifact_name="briefing", tag_config=None):
     """Render briefing.md → HTML using the provided template string."""
     with open(md_path) as f:
         md = f.read()
@@ -295,12 +289,10 @@ def render_html(md_path, output_dir, title, date_str, weekday, footer, template_
     html_path = os.path.join(output_dir, f"{artifact_name}.html")
     with open(html_path, "w") as f:
         f.write(html)
-    if write_legacy:
-        _legacy_copy(html_path, "briefing.html")
     return html_path
 
 
-def render_pdf(html_path, output_dir, artifact_name="briefing", write_legacy=False):
+def render_pdf(html_path, output_dir, artifact_name="briefing"):
     pdf_path = os.path.join(output_dir, f"{artifact_name}.pdf")
     if not os.path.exists(CHROME):
         print(f"PDF render skipped: Chrome not found at {CHROME}", file=sys.stderr)
@@ -317,8 +309,6 @@ def render_pdf(html_path, output_dir, artifact_name="briefing", write_legacy=Fal
     if result.returncode != 0:
         print(f"PDF render failed: {result.stderr[-300:]}", file=sys.stderr)
         return None
-    if write_legacy:
-        _legacy_copy(pdf_path, "briefing.pdf")
     return pdf_path
 
 
@@ -337,8 +327,6 @@ def main():
                         help="Briefing type for artifact filename (e.g. daily)")
     parser.add_argument("--artifact-name",
                         help="Output basename without extension. Defaults to Domain_Type_Briefing_YYYY-MM-DD")
-    parser.add_argument("--legacy-names", action="store_true",
-                        help="Also write briefing.html/pdf compatibility copies")
     parser.add_argument("--footer", default="由 AI Agent 自动生成",
                         help="Footer text (e.g. '由 AI Agent 自动生成 · 每日 7:30 CST')")
     args = parser.parse_args()
@@ -373,12 +361,10 @@ def main():
     tag_config = load_render_tags(args.domain)
     html_path = render_html(args.input, args.output_dir, args.title, date_str, weekday,
                             args.footer, template_str, artifact_name,
-                            write_legacy=args.legacy_names,
                             tag_config=tag_config)
     print(f"   HTML: {html_path}", file=sys.stderr)
 
-    pdf_path = render_pdf(html_path, args.output_dir, artifact_name,
-                          write_legacy=args.legacy_names)
+    pdf_path = render_pdf(html_path, args.output_dir, artifact_name)
     if pdf_path:
         print(f"   PDF:  {pdf_path}", file=sys.stderr)
     print(f"✅ Render complete", file=sys.stderr)

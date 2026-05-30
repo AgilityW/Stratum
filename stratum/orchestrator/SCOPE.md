@@ -159,10 +159,8 @@ omits optional watch signals.
 
 Edit profiles are loaded from `stratum/stages/edit/prompts/manifest.yaml`.
 The active daily path uses Edit v3 dynamic category blocks and Markdown
-templates from `stratum/stages/edit/templates/`; legacy prompt fragments remain
-available for profiles that do not opt into v3. Domain prompt files under
-`domains/{id}/prompts/` are reserved assets for future override support; the
-current pipeline does not read them.
+templates from `stratum/stages/edit/templates/`. Profiles that do not opt into
+`budget.edit_mode: v3` fail fast.
 
 The daily Markdown template is organized into five major chunks: `今日要点`,
 `行业要点`, `产业信号`, `特别关注`, and `反向信号`. Render turns those major

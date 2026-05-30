@@ -1,12 +1,11 @@
-"""Tests for edit-stage output parsing and prompt data assembly."""
+"""Tests for edit-stage output parsing and block editing."""
 import json
 import os
 import sys
 
 sys.path.insert(0, os.path.dirname(__file__))
 
-from assembler import _build_data_section, _source_name, assemble
-from planner import build_block_plan, build_plan
+from planner import build_block_plan
 from edit import (
     _article_source_label,
     item_count_within_budget,
@@ -17,7 +16,6 @@ from edit import (
     repair_missing_source_lines,
     resolve_domain_title,
     run_block_edit,
-    run_daily_v2,
     should_write_event_threads,
     split_llm_output,
     structured_event_counts,
@@ -41,11 +39,9 @@ def _fake_article(article_id, title, source="example.com", source_type="media", 
 
 def test_source_labels_strip_only_known_presentation_prefixes():
     article = {"url": "https://ww2.example.com/news"}
-    assert _source_name(article) == "ww2.example.com"
     assert _article_source_label(article) == "ww2.example.com"
 
     mobile_article = {"url": "https://m.reuters.com/technology"}
-    assert _source_name(mobile_article) == "reuters.com"
     assert _article_source_label(mobile_article) == "reuters.com"
 
 
@@ -75,176 +71,6 @@ Body
     briefing, data = split_llm_output(response)
     assert briefing == "# Briefing\n\nBody"
     assert data is None
-
-
-def test_build_data_section_falls_back_to_source_domain():
-    articles = [
-        {
-            "id": "a1",
-            "title": "Samsung HBM4 update",
-            "url": "https://www.reuters.com/technology/test",
-            "source_domain": "reuters.com",
-            "published_at": "2026-05-28T00:00:00+08:00",
-            "snippet": "HBM4 sample update.",
-        }
-    ]
-    clusters = {
-        "clusters": [
-            {
-                "article_ids": ["a1"],
-                "canonical_title": "Samsung HBM4 update",
-                "confidence": 0.9,
-            }
-        ]
-    }
-    section = _build_data_section(articles, clusters, {}, "2026-05-28")
-    assert "- reuters.com" in section
-    assert "来源: reuters.com | 日期: 2026-05-28" in section
-    assert "[en]" not in section
-
-
-def test_build_data_section_respects_prompt_budget():
-    articles = []
-    for index in range(5):
-        articles.append({
-            "id": f"a{index}",
-            "title": f"Samsung HBM4 update {index}",
-            "url": f"https://example.com/{index}",
-            "source": "example.com",
-            "source_type": "media",
-            "published_at": "2026-05-30T00:00:00+08:00",
-            "snippet": f"HBM4 update {index}",
-        })
-    clusters = {
-        "clusters": [{
-            "id": "sc-1",
-            "article_ids": [a["id"] for a in articles],
-            "canonical_title": "Samsung HBM4 update",
-            "confidence": "high",
-        }]
-    }
-
-    section = _build_data_section(
-        articles,
-        clusters,
-        {},
-        "2026-05-30",
-        {"max_articles_per_cluster": 2, "prompt_max_chars": 10000},
-    )
-
-    assert "本 prompt 选入 2 篇" in section
-    assert "省略 3 篇" in section
-    assert "Samsung HBM4 update 0" in section
-    assert "Samsung HBM4 update 2" not in section
-
-
-def test_daily_prompt_requests_threads_and_watch_signals():
-    edit_dir = os.path.dirname(__file__)
-    prompts_dir = os.path.join(edit_dir, "prompts")
-    manifest_path = os.path.join(prompts_dir, "manifest.yaml")
-
-    _system, user_prompt, output_cfg = assemble(
-        manifest_path=manifest_path,
-        prompts_dir=prompts_dir,
-        timescale="daily",
-        domain_cfg={"editorial": {}},
-        domain_id="storage",
-        run_date="2026-05-30",
-        title="存储早报",
-        articles=[{
-            "id": "a1",
-            "title": "Samsung HBM4 qualification advances",
-            "source": "reuters.com",
-            "published_at": "2026-05-30",
-            "snippet": "Samsung HBM4 qualification advances with Nvidia.",
-        }],
-        clusters={"clusters": []},
-        context={},
-    )
-
-    assert output_cfg["threads"]["enabled"] is True
-    assert "请生成 threads 数组" in user_prompt
-    assert "watch_signals" in user_prompt
-    assert '"threads": [...]' in user_prompt
-    assert '"causal_edges": [...]' in user_prompt
-    assert '"judgments": [...]' in user_prompt
-
-
-def test_daily_prompt_instructs_edge_signal_category():
-    edit_dir = os.path.dirname(__file__)
-    prompts_dir = os.path.join(edit_dir, "prompts")
-    manifest_path = os.path.join(prompts_dir, "manifest.yaml")
-
-    system_prompt, user_prompt, _output_cfg = assemble(
-        manifest_path=manifest_path,
-        prompts_dir=prompts_dir,
-        timescale="daily",
-        domain_cfg={"editorial": {}},
-        domain_id="storage",
-        run_date="2026-05-30",
-        title="存储早报",
-        articles=[{
-            "id": "a1",
-            "title": "Glass storage reaches small scale production",
-            "source": "example.com",
-            "published_at": "2026-05-30",
-            "snippet": "Glass storage is a weak but observable storage signal.",
-        }],
-        clusters={"clusters": []},
-        context={},
-    )
-
-    combined = system_prompt + user_prompt
-    assert "【边缘信号】" in combined
-    assert "20-30 条" in combined
-    assert "16-18 条" in combined
-    assert "5-8 条" in combined
-    assert "Anthropic" in combined
-    assert "为什么值得观察" in combined
-
-
-def test_build_plan_selects_main_and_edge_items():
-    articles = [
-        _fake_article("a1", "Samsung HBM4 sample shipment", "samsung.com", "official"),
-        _fake_article("a2", "SK hynix HBM4 production update", "skhynix.com", "official"),
-        _fake_article("a3", "WD appoints Manuvir Das to board", "westerndigital.com", "official"),
-        _fake_article("a4", "Glass storage pilot remains early", "example.com", "media"),
-    ]
-    clusters = {
-        "clusters": [
-            {
-                "id": "c1",
-                "canonical_title": "Samsung HBM4 sample shipment",
-                "confidence": "high",
-                "article_ids": ["a1"],
-                "article_count": 1,
-                "source_types": ["official"],
-                "thread_id": "et-storage-hbm4",
-            },
-            {
-                "id": "c2",
-                "canonical_title": "SK hynix HBM4 production update",
-                "confidence": "high",
-                "article_ids": ["a2"],
-                "article_count": 1,
-                "source_types": ["official"],
-            },
-        ]
-    }
-
-    plan = build_plan(
-        articles,
-        clusters,
-        {},
-        "2026-05-30",
-        {"target_main_items": 2, "target_edge_items": 2, "evidence_articles_per_item": 2},
-    )
-
-    assert plan["counts"]["main_items"] == 2
-    assert plan["counts"]["edge_items"] == 2
-    assert [item["kind"] for item in plan["items"]] == ["main", "main", "edge", "edge"]
-    assert plan["items"][0]["article_ids"] == ["a1"]
-    assert plan["items"][2]["sources"] == ["westerndigital.com"]
 
 
 def test_build_block_plan_creates_dynamic_categories():
@@ -467,94 +293,9 @@ def test_run_block_edit_can_render_weekly_template(monkeypatch, tmp_path):
 
     assert "### 本周结论" in briefing
     assert "## 趋势变化" in briefing
-    assert "## 下周关注" in briefing
+    assert "## 特别关注" in briefing
     assert "每日 7:30" not in briefing
     assert artifacts["trace"]["timescale"] == "weekly"
-
-
-def test_run_daily_v2_writes_plan_driven_report(monkeypatch, tmp_path):
-    articles = [
-        _fake_article("a1", "Samsung HBM4 sample shipment", "samsung.com", "official"),
-        _fake_article("a2", "SK hynix HBM4 production update", "skhynix.com", "official"),
-        _fake_article("a3", "WD appoints Manuvir Das to board", "westerndigital.com", "official"),
-    ]
-    clusters = {
-        "clusters": [
-            {
-                "id": "c1",
-                "canonical_title": "Samsung HBM4 sample shipment",
-                "confidence": "high",
-                "article_ids": ["a1"],
-                "article_count": 1,
-                "source_types": ["official"],
-            },
-            {
-                "id": "c2",
-                "canonical_title": "SK hynix HBM4 production update",
-                "confidence": "high",
-                "article_ids": ["a2"],
-                "article_count": 1,
-                "source_types": ["official"],
-            },
-        ]
-    }
-
-    def fake_call_llm(system_prompt, user_prompt, llm_cfg):
-        if "summary" in system_prompt:
-            return json.dumps({
-                "summary": ["HBM4 remains the main signal.", "Edge items stay in observation."],
-                "focus": ["HBM4 validation", "DRAM supply", "China storage"],
-                "contrarian": ["Demand may weaken", "Certification may slip", "Edge signals are early"],
-            })
-        payload = json.loads(user_prompt)
-        return json.dumps({
-            "items": [
-                {
-                    "item_id": item["item_id"],
-                    "title": item["title_hint"],
-                    "paragraphs": [item["evidence"][0]["snippet"], "This matters for storage supply."],
-                }
-                for item in payload["items"]
-            ]
-        })
-
-    monkeypatch.setattr("edit.call_llm", fake_call_llm)
-    args = type("Args", (), {
-        "date": "2026-05-30",
-        "domain": "storage",
-        "output": str(tmp_path / "briefing.md"),
-    })()
-
-    briefing, structured, artifacts = run_daily_v2(
-        args,
-        "存储早报",
-        articles,
-        clusters,
-        {},
-        {"api_key": "fake"},
-        {"_budget": {
-            "target_main_items": 2,
-            "target_edge_items": 1,
-            "chunk_size": 2,
-            "chunk_parallelism": 1,
-            "main_min_items": 2,
-            "main_max_items": 2,
-            "edge_min_items": 1,
-            "edge_max_items": 1,
-        }},
-    )
-
-    assert "## 今日要点" in briefing
-    assert "## 行业要点" in briefing
-    assert "## 产业信号" in briefing
-    assert "## 特别关注" in briefing
-    assert "## 反向信号" in briefing
-    assert "### Samsung HBM4 sample shipment" in briefing
-    assert "### 【边缘信号】WD appoints Manuvir Das to board" in briefing
-    assert briefing.index("## 行业要点") < briefing.index("### Samsung HBM4 sample shipment")
-    assert briefing.index("## 产业信号") < briefing.index("### 【边缘信号】WD appoints Manuvir Das to board")
-    assert artifacts["plan"]["counts"]["total_items"] == 3
-    assert structured["threads"]
 
 
 def test_strip_source_locale_tags_only_on_source_lines():
@@ -830,13 +571,17 @@ Body.
 
 
 def test_item_count_within_budget_checks_min_and_max():
-    md = """### 今日要点
+    md = """## 今日要点
 
 Summary.
+
+## 行业要点
 
 ### Item 1
 
 Body.
+
+## 产业信号
 
 ### 【边缘信号】Item 2
 
@@ -852,9 +597,11 @@ Body.
 
 
 def test_item_count_within_budget_checks_main_and_edge_ranges():
-    md = """### 今日要点
+    md = """## 今日要点
 
 Summary.
+
+## 行业要点
 
 ### Item 1
 
@@ -863,6 +610,8 @@ Body.
 ### Item 2
 
 Body.
+
+## 产业信号
 
 ### 【边缘信号】Item 3
 

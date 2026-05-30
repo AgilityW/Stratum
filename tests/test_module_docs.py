@@ -94,7 +94,7 @@ def test_contract_scope_lists_current_json_schemas_once():
         assert listed.count(schema) == 1, f"duplicate or missing contract doc entry for {schema}"
 
 
-def test_domain_prompts_are_documented_as_reserved_assets():
+def test_domain_prompt_overrides_are_not_documented_as_active_assets():
     docs = [
         PROJECT_ROOT / "README.md",
         PROJECT_ROOT / "domains/storage/SCOPE.md",
@@ -103,7 +103,7 @@ def test_domain_prompts_are_documented_as_reserved_assets():
     ]
     for path in docs:
         text = path.read_text()
-        assert "reserved" in text.lower(), f"{path} should document domain prompt boundary"
+        assert "prompts/daily.md" not in text, f"{path} should not document removed domain prompt override files"
 
 
 def test_orchestrator_paths_do_not_expose_unused_domain_prompt_dir():

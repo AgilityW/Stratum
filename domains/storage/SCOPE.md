@@ -13,7 +13,6 @@
 | `domain.yaml` | domain metadata, pipeline rules, source registry, source classification, render tags |
 | `queries.yaml` | structured Search query templates by intent, dimension, and locale |
 | `taxonomy.yaml` | story-tracking controlled vocabulary |
-| `prompts/daily.md` | reserved domain prompt override asset; not active in the current Edit stage |
 | `templates/daily.html` | domain-level render template |
 | `tests/fixtures/` | domain-specific fixture area |
 
@@ -31,13 +30,14 @@
   single domain string or a list of domain patterns when one publisher brand
   spans multiple domains.
 - Render template assets that are specific to storage.
-- Reserved prompt override assets under `prompts/`; active prompt assembly currently lives in `stratum/stages/edit/prompts/` and injects storage policy from `domain.yaml`.
 
 ### 不包含
 
 - Runtime output. Pipeline output belongs under configured `reports_dir`/`output_dir`.
 - Python implementation logic.
 - API keys or secrets.
+- Prompt override assets. Edit prompts and templates live under
+  `stratum/stages/edit/`; storage policy is injected from `domain.yaml`.
 
 ## Main Consumers
 

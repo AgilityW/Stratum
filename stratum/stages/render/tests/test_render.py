@@ -278,13 +278,13 @@ Today's summary paragraph text here.
     def test_convert_section_header(self):
         md = """# Title
 
-### 今日要点
+## 今日要点
 
 - Key insight
 
 ---"""
         html = convert(md)
-        assert '<div class="section-title">' in html
+        assert '<div class="major-section">' in html
         assert '今日要点' in html
 
     def test_convert_daily_major_chunks_and_dynamic_subsections(self):
@@ -479,7 +479,6 @@ class TestRenderHtml:
                                     "2026年5月29日", "周四",
                                     "Test footer", tmpl,
                                     artifact_name="Storage_Daily_Briefing_2026-05-29",
-                                    write_legacy=True,
                                     tag_config={
                                         "new": {
                                             "label": "new",
@@ -489,7 +488,7 @@ class TestRenderHtml:
                                     })
             assert os.path.exists(html_path)
             assert html_path.endswith("Storage_Daily_Briefing_2026-05-29.html")
-            assert os.path.exists(os.path.join(tmpdir, "briefing.html"))
+            assert not os.path.exists(os.path.join(tmpdir, "briefing.html"))
             with open(html_path) as f:
                 content = f.read()
             assert "<!DOCTYPE html>" in content

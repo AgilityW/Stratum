@@ -247,7 +247,7 @@ Inputs:
 - `articles.jsonl`
 - `clusters.json`
 - generated story context
-- prompt manifest and prompt fragments from `stratum/stages/edit/prompts/`
+- prompt manifest and block/polish prompts from `stratum/stages/edit/prompts/`
 - timescale Markdown template from `stratum/stages/edit/templates/`
 - `config.yaml` LLM settings
 - `domain.yaml` policy and title values injected into the prompt
@@ -263,9 +263,9 @@ Output:
   or `judgments`
 
 Important boundary:
-- Legacy monolithic prompt assembly lives in `assembler.py`; v3 block editing
-  uses `planner.py`, `category_block.md`, `profile_polish.md`, and the
-  timescale templates.
+- Edit uses `planner.py`, `category_block.md`, `profile_polish.md`, and the
+  timescale templates. Manifest profiles are expected to set
+  `budget.edit_mode: v3`; non-v3 edit modes fail fast.
 - LLM transport lives in `llm_client.py`.
 - The orchestrator currently invokes Edit with `--timescale daily`; other
   timescale profiles are present for direct Edit use and future orchestrator
@@ -281,9 +281,6 @@ Important boundary:
 - If the LLM leaves a new thread id blank, Edit assigns a deterministic
   `et-{domain}-{date}-{hash}` id before writing `event-threads.json`. This keeps
   DB ingest and watch-query persistence pointed at the same thread surface.
-- Domain prompt files under `domains/<domain>/prompts/` are reserved for future
-  override support; the active prompt engine is the manifest/fragments in this
-  stage directory.
 - The stage should still write the Markdown briefing if optional structured JSON is malformed.
 - Before writing, Edit applies a deterministic source-line repair: if a news
   item has no source/date line and clearly matches one input article, it adds

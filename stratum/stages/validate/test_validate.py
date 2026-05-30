@@ -47,13 +47,10 @@ DRAM and NAND prices continue upward trend.
 
 ---
 
-### 关注
-- Follow HBM4 certification progress
-
-### 特别关注
+## 特别关注
 - Watch HBM4 validation
 
-### 反向信号
+## 反向信号
 - If hyperscaler capex drops sharply
 
 ---
@@ -73,7 +70,6 @@ class TestParseMarkdown:
     def test_skips_section_headers(self):
         items = parse_markdown_from_str(SAMPLE_BRIEFING)
         titles = [i["title"] for i in items]
-        assert "关注" not in titles
         assert "特别关注" not in titles
         assert "反向信号" not in titles
 
@@ -85,15 +81,34 @@ HBM supply is a valid news item.
 
 *Trendforce · 2026年5月28日*
 
-### 关注
+## 特别关注
 - Follow price checks
 
-### 反向信号
+## 反向信号
 - Watch demand risk
 """
         items = parse_markdown_from_str(content)
         assert len(items) == 1
         assert items[0]["title"] == "HBM 供应受关注"
+
+    def test_source_alignment_accepts_core_storage_term_translation(self):
+        item = {
+            "title": "存储供应链逆季节性而行，2026年第一季度合约价格上涨",
+            "body": ["合约价逆季节性上涨表明供需紧张超出预期。"],
+            "sources": ["digitimes.com"],
+            "date": "2026年5月30日",
+        }
+        articles = [{
+            "title": "Memory supply chain defies seasonality with contract price hikes in 1Q26",
+            "snippet": "The memory sector saw contract price increases significantly reflected in first quarter 2026 results.",
+            "source": "digitimes.com",
+            "published_at": "2026-05-30T08:00:00+08:00",
+            "quality_flags": [],
+        }]
+
+        violations = validate_item(item, articles, "2026-05-30", MOCK_SOURCE_ALIASES)
+
+        assert violations == []
 
     def test_source_line_keeps_full_date_with_weekday(self):
         parsed = _parse_source_line("*news.qq.com [zh-CN] · 2026年5月30日 · 周六*")

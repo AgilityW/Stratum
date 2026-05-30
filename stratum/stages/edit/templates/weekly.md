@@ -9,11 +9,11 @@
 
 {{ main_categories }}
 
-## 边缘信号
+## 产业信号
 
 {{ edge_items }}
 
-## 下周关注
+## 特别关注
 
 {{ focus }}
 

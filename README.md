@@ -37,7 +37,6 @@ Stratum/
 │   │   ├── domain.yaml          #     Companies, terms, source_registry, pipeline rules
 │   │   ├── queries.yaml         #     Search queries by locale (5 locales)
 │   │   ├── taxonomy.yaml        #     Industry taxonomy
-│   │   ├── prompts/daily.md     #     Reserved domain prompt override asset
 │   │   └── templates/daily.html #     HTML template
 │   └── robot/                   #   Robotics (placeholder)
 │
@@ -70,7 +69,7 @@ Stage 8:    Render     → HTML + PDF       (template-driven)
 | `site:` queries | Tavily search | Digitimes, TrendForce, Tom's Hardware, etc. |
 | `broad` queries | Tavily search | New source discovery |
 
-**Iron law**: `stratum/` has **zero** hardcoded domain data. Domain-owned knowledge lives under `domains/{id}/`: `domain.yaml` for entities, sources, validation/editorial rules; `queries.yaml` for search templates; HTML template files for rendering. The active Edit engine lives in `stratum/stages/edit/`: it builds dynamic categories from normalized evidence, edits those blocks with LLM calls, and renders Markdown through timescale templates in `stratum/stages/edit/templates/`. Domain prompt files under `domains/{id}/prompts/` are reserved for future override support.
+**Iron law**: `stratum/` has **zero** hardcoded domain data. Domain-owned knowledge lives under `domains/{id}/`: `domain.yaml` for entities, sources, validation/editorial rules; `queries.yaml` for search templates; HTML template files for rendering. The active Edit engine lives in `stratum/stages/edit/`: it builds dynamic categories from normalized evidence, edits those blocks with LLM calls, and renders Markdown through timescale templates in `stratum/stages/edit/templates/`.
 
 **Edit artifacts**: Stage 6 writes `briefing.md` plus debugging sidecars:
 
@@ -113,7 +112,6 @@ cp -r domains/storage domains/new_domain
 # Edit domain.yaml (companies, terms, sources, pipeline rules)
 # Edit queries.yaml (search queries by locale)
 # Optional: templates/daily.html (HTML template)
-# Reserved: prompts/daily.md (future domain prompt override)
 ```
 
 Zero framework changes required.
