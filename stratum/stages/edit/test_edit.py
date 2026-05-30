@@ -5,7 +5,7 @@ import sys
 
 sys.path.insert(0, os.path.dirname(__file__))
 
-from planner import build_block_plan
+from planner import build_block_plan, clean_evidence_text
 from edit import (
     _article_source_label,
     item_count_within_budget,
@@ -209,6 +209,107 @@ def test_run_block_edit_uses_template_and_category_blocks(monkeypatch, tmp_path)
     assert artifacts["plan"]["version"] == 3
     assert artifacts["trace"]["mode"] == "block_edit"
     assert structured["threads"]
+
+
+def test_clean_evidence_text_removes_site_boilerplate():
+    text = """正文第一段。
+
+#### 推荐：电脑用的少，手机扫一扫，资讯快一步！
+
+扫码关注我们
+
+#### 标签:
+
+#### 报价中心
+
+#### 简讯快报
+
+不应进入日报的后续站点内容。
+"""
+
+    cleaned = clean_evidence_text(text)
+
+    assert cleaned == "正文第一段。"
+    assert "扫码关注我们" not in cleaned
+    assert "报价中心" not in cleaned
+    assert "简讯快报" not in cleaned
+
+
+def test_run_block_edit_strips_boilerplate_from_generated_paragraphs(monkeypatch, tmp_path):
+    articles = [_fake_article(
+        "a1",
+        "存储现货结构性分化",
+        "chinaflashmarket.com",
+        "analyst",
+        snippet="渠道市场正文。\n\n扫码关注我们\n\n#### 报价中心",
+    )]
+    articles[0]["query_dimension"] = "market_pricing"
+    clusters = {"clusters": [{
+        "id": "c1",
+        "canonical_title": "存储现货结构性分化",
+        "confidence": "high",
+        "article_ids": ["a1"],
+        "article_count": 1,
+        "source_types": ["analyst"],
+    }]}
+
+    def fake_call_llm(system_prompt, user_prompt, llm_cfg):
+        if "summary" in system_prompt:
+            return json.dumps({
+                "summary": ["渠道市场正文。"],
+                "focus": ["价格验证", "供应验证", "需求验证"],
+                "contrarian": ["需求可能转弱", "价格可能回落", "证据仍需确认"],
+            })
+        payload = json.loads(user_prompt)
+        return json.dumps({
+            "category_id": payload["category_id"],
+            "label": payload["label"],
+            "items": [{
+                "item_id": payload["items"][0]["item_id"],
+                "title": "存储现货结构性分化",
+                "paragraphs": [
+                    "扫码关注我们\n\n#### 标签:\n\n#### 报价中心\n\n#### 简讯快报",
+                    "渠道市场正文。\n\n扫码关注我们",
+                ],
+            }],
+            "dropped": [],
+        })
+
+    monkeypatch.setattr("edit.call_llm", fake_call_llm)
+    args = type("Args", (), {
+        "date": "2026-05-30",
+        "domain": "storage",
+        "timescale": "daily",
+        "output": str(tmp_path / "briefing.md"),
+    })()
+
+    briefing, _structured, _artifacts = run_block_edit(
+        args,
+        "存储早报",
+        articles,
+        clusters,
+        {},
+        {"api_key": "fake"},
+        {"_budget": {
+            "target_main_items": 1,
+            "target_edge_items": 0,
+            "min_items": 1,
+            "max_items": 1,
+            "main_min_items": 1,
+            "main_max_items": 1,
+            "edge_min_items": 0,
+            "edge_max_items": 0,
+            "block_parallelism": 1,
+            "max_categories": 1,
+        }},
+        {"system": {"template": "daily.md"}},
+    )
+
+    assert "渠道市场正文。" in briefing
+    assert "扫码关注我们" not in briefing
+    assert "#### 标签" not in briefing
+    assert "#### 报价中心" not in briefing
+    assert "#### 简讯快报" not in briefing
 
 
 def test_run_block_edit_can_render_weekly_template(monkeypatch, tmp_path):

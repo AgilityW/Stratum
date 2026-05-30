@@ -33,7 +33,7 @@ from urllib.parse import urlparse
 _EDIT_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, _EDIT_DIR)
 from llm_client import call_llm
-from planner import build_block_plan
+from planner import build_block_plan, clean_evidence_text
 
 CST_WEEKDAYS = ["周一", "周二", "周三", "周四", "周五", "周六", "周日"]
 THREAD_ID_RE = re.compile(r"^et-[A-Za-z0-9][A-Za-z0-9_-]*$")
@@ -532,7 +532,7 @@ def _load_prompt(name: str) -> str:
 def fallback_paragraphs(item: dict) -> list[str]:
     evidence = item.get("evidence") or []
     first = evidence[0] if evidence else {}
-    snippet = str(first.get("snippet") or first.get("title") or item.get("title_hint") or "").strip()
+    snippet = clean_evidence_text(first.get("snippet") or first.get("title") or item.get("title_hint") or "")
     title = str(item.get("title_hint") or first.get("title") or "").strip()
     if not re.search(r"[\u4e00-\u9fff]", snippet):
         snippet = f"该来源围绕“{title[:80]}”提供了当日增量信息。"
@@ -635,10 +635,15 @@ def write_category_block(
             paragraphs = [paragraphs]
         if not isinstance(paragraphs, list) or not paragraphs:
             paragraphs = fallback_paragraphs(planned)
+        clean_paragraphs = [
+            clean_evidence_text(p)
+            for p in paragraphs
+            if clean_evidence_text(p)
+        ][:2]
         normalized.append({
             "item_id": item_id,
             "title": str(generated.get("title") or planned["title_hint"]).strip()[:140],
-            "paragraphs": [str(p).strip() for p in paragraphs if str(p).strip()][:2] or fallback_paragraphs(planned),
+            "paragraphs": clean_paragraphs or fallback_paragraphs(planned),
         })
     missing = [item for item in items if item["item_id"] not in {entry["item_id"] for entry in normalized}]
     normalized.extend(_fallback_block(category, missing, "missing_from_llm")["items"])
@@ -728,7 +733,9 @@ def assemble_block_markdown(plan: dict, blocks: list[dict], run_date: str) -> tu
             paragraphs = written.get("paragraphs") or fallback_paragraphs(item)
             main_parts.append(f"### {title}\n")
             for paragraph in paragraphs[:2]:
-                main_parts.append(f"\n{paragraph.strip()}\n")
+                paragraph = clean_evidence_text(paragraph)
+                if paragraph:
+                    main_parts.append(f"\n{paragraph}\n")
             main_parts.append(f"\n{_source_line(item, run_date, title, paragraphs)}\n\n")
 
     for item in plan.get("items", []):
@@ -741,7 +748,9 @@ def assemble_block_markdown(plan: dict, blocks: list[dict], run_date: str) -> tu
         paragraphs = written.get("paragraphs") or fallback_paragraphs(item)
         edge_parts.append(f"### {title}\n")
         for paragraph in paragraphs[:2]:
-            edge_parts.append(f"\n{paragraph.strip()}\n")
+            paragraph = clean_evidence_text(paragraph)
+            if paragraph:
+                edge_parts.append(f"\n{paragraph}\n")
         edge_parts.append(f"\n{_source_line(item, run_date, title, paragraphs)}\n\n")
 
     return "".join(main_parts).strip(), "".join(edge_parts).strip()

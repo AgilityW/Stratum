@@ -149,6 +149,51 @@ STORAGE_RELEVANCE_TERMS = (
     "威刚",
 )
 
+BOILERPLATE_CUT_MARKERS = (
+    "#### 推荐",
+    "扫码关注我们",
+    "#### 标签",
+    "#### 报价中心",
+    "#### 简讯快报",
+    "#### 资讯推荐",
+    "#### CFM分析",
+    "#### 厂商动态",
+    "深圳市闪存市场资讯有限公司",
+    "Copyright©",
+)
+
+BOILERPLATE_LINE_PATTERNS = (
+    r"^#{2,6}\s*(推荐|标签:?|报价中心|简讯快报|资讯推荐|CFM分析|厂商动态|闪存市场APP|闪存市场|手机网页版|微信小程序)\s*$",
+    r"^扫码关注我们\s*$",
+    r"^客服邮箱[:：]?.*$",
+    r"^粤ICP备.*$",
+    r"^粤公网安备.*$",
+)
+
+
+def clean_evidence_text(text: str) -> str:
+    """Remove source-site boilerplate before evidence reaches Edit prompts."""
+    cleaned = str(text or "")
+    cut_positions = [
+        cleaned.find(marker)
+        for marker in BOILERPLATE_CUT_MARKERS
+        if marker in cleaned
+    ]
+    if cut_positions:
+        cleaned = cleaned[:min(cut_positions)]
+    lines = []
+    for line in cleaned.splitlines():
+        stripped = line.strip()
+        if not stripped:
+            lines.append("")
+            continue
+        if any(re.match(pattern, stripped, re.IGNORECASE) for pattern in BOILERPLATE_LINE_PATTERNS):
+            continue
+        lines.append(line)
+    cleaned = "\n".join(lines)
+    cleaned = re.sub(r"\n{3,}", "\n\n", cleaned).strip()
+    return cleaned
+
 
 def article_source(article: dict) -> str:
     """Return a stable display source label."""
@@ -173,7 +218,7 @@ def article_date(article: dict, fallback: str) -> str:
 
 def article_text(article: dict) -> str:
     return " ".join(
-        str(article.get(key) or "")
+        clean_evidence_text(str(article.get(key) or ""))
         for key in ("title", "snippet", "extracted_summary")
     )
 
@@ -608,7 +653,7 @@ def planned_item(
                 "source": article_source(article),
                 "date": article_date(article, run_date),
                 "url": article.get("url", ""),
-                "snippet": (article.get("snippet") or article.get("extracted_summary") or "")[:600],
+                "snippet": clean_evidence_text(article.get("snippet") or article.get("extracted_summary") or "")[:600],
                 "quality_flags": article.get("quality_flags") or [],
                 "query_dimension": article_dimension(article),
                 "entities": article.get("entities") or [],
