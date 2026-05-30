@@ -1,10 +1,12 @@
 """Tests for edit-stage output parsing and prompt data assembly."""
+import json
 import os
 import sys
 
 sys.path.insert(0, os.path.dirname(__file__))
 
 from assembler import _build_data_section, _source_name, assemble
+from planner import build_plan
 from edit import (
     _article_source_label,
     item_count_within_budget,
@@ -14,11 +16,26 @@ from edit import (
     repair_source_line_dates,
     repair_missing_source_lines,
     resolve_domain_title,
+    run_daily_v2,
     should_write_event_threads,
     split_llm_output,
     structured_event_counts,
     strip_source_locale_tags,
 )
+
+
+def _fake_article(article_id, title, source="example.com", source_type="media", snippet=None):
+    return {
+        "id": article_id,
+        "title": title,
+        "source": source,
+        "published_at": "2026-05-30",
+        "snippet": snippet or title,
+        "source_type": source_type,
+        "url": f"https://{source}/{article_id}",
+        "entities": ["Samsung"],
+        "terms": ["HBM4"],
+    }
 
 
 def test_source_labels_strip_only_known_presentation_prefixes():
@@ -183,6 +200,128 @@ def test_daily_prompt_instructs_edge_signal_category():
     assert "5-8 条" in combined
     assert "Anthropic" in combined
     assert "为什么值得观察" in combined
+
+
+def test_build_plan_selects_main_and_edge_items():
+    articles = [
+        _fake_article("a1", "Samsung HBM4 sample shipment", "samsung.com", "official"),
+        _fake_article("a2", "SK hynix HBM4 production update", "skhynix.com", "official"),
+        _fake_article("a3", "WD appoints Manuvir Das to board", "westerndigital.com", "official"),
+        _fake_article("a4", "Glass storage pilot remains early", "example.com", "media"),
+    ]
+    clusters = {
+        "clusters": [
+            {
+                "id": "c1",
+                "canonical_title": "Samsung HBM4 sample shipment",
+                "confidence": "high",
+                "article_ids": ["a1"],
+                "article_count": 1,
+                "source_types": ["official"],
+                "thread_id": "et-storage-hbm4",
+            },
+            {
+                "id": "c2",
+                "canonical_title": "SK hynix HBM4 production update",
+                "confidence": "high",
+                "article_ids": ["a2"],
+                "article_count": 1,
+                "source_types": ["official"],
+            },
+        ]
+    }
+
+    plan = build_plan(
+        articles,
+        clusters,
+        {},
+        "2026-05-30",
+        {"target_main_items": 2, "target_edge_items": 2, "evidence_articles_per_item": 2},
+    )
+
+    assert plan["counts"]["main_items"] == 2
+    assert plan["counts"]["edge_items"] == 2
+    assert [item["kind"] for item in plan["items"]] == ["main", "main", "edge", "edge"]
+    assert plan["items"][0]["article_ids"] == ["a1"]
+    assert plan["items"][2]["sources"] == ["westerndigital.com"]
+
+
+def test_run_daily_v2_writes_plan_driven_report(monkeypatch, tmp_path):
+    articles = [
+        _fake_article("a1", "Samsung HBM4 sample shipment", "samsung.com", "official"),
+        _fake_article("a2", "SK hynix HBM4 production update", "skhynix.com", "official"),
+        _fake_article("a3", "WD appoints Manuvir Das to board", "westerndigital.com", "official"),
+    ]
+    clusters = {
+        "clusters": [
+            {
+                "id": "c1",
+                "canonical_title": "Samsung HBM4 sample shipment",
+                "confidence": "high",
+                "article_ids": ["a1"],
+                "article_count": 1,
+                "source_types": ["official"],
+            },
+            {
+                "id": "c2",
+                "canonical_title": "SK hynix HBM4 production update",
+                "confidence": "high",
+                "article_ids": ["a2"],
+                "article_count": 1,
+                "source_types": ["official"],
+            },
+        ]
+    }
+
+    def fake_call_llm(system_prompt, user_prompt, llm_cfg):
+        if "summary" in system_prompt:
+            return json.dumps({
+                "summary": ["HBM4 remains the main signal.", "Edge items stay in observation."],
+                "focus": ["HBM4 validation", "DRAM supply", "China storage"],
+                "contrarian": ["Demand may weaken", "Certification may slip", "Edge signals are early"],
+            })
+        payload = json.loads(user_prompt)
+        return json.dumps({
+            "items": [
+                {
+                    "item_id": item["item_id"],
+                    "title": item["title_hint"],
+                    "paragraphs": [item["evidence"][0]["snippet"], "This matters for storage supply."],
+                }
+                for item in payload["items"]
+            ]
+        })
+
+    monkeypatch.setattr("edit.call_llm", fake_call_llm)
+    args = type("Args", (), {
+        "date": "2026-05-30",
+        "domain": "storage",
+        "output": str(tmp_path / "briefing.md"),
+    })()
+
+    briefing, structured, artifacts = run_daily_v2(
+        args,
+        "存储早报",
+        articles,
+        clusters,
+        {},
+        {"api_key": "fake"},
+        {"_budget": {
+            "target_main_items": 2,
+            "target_edge_items": 1,
+            "chunk_size": 2,
+            "chunk_parallelism": 1,
+            "main_min_items": 2,
+            "main_max_items": 2,
+            "edge_min_items": 1,
+            "edge_max_items": 1,
+        }},
+    )
+
+    assert "### Samsung HBM4 sample shipment" in briefing
+    assert "### 【边缘信号】WD appoints Manuvir Das to board" in briefing
+    assert artifacts["plan"]["counts"]["total_items"] == 3
+    assert structured["threads"]
 
 
 def test_strip_source_locale_tags_only_on_source_lines():

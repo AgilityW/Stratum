@@ -74,6 +74,9 @@ def resolve_paths(domain_id: str, run_date: str, output_dir: str) -> dict:
         "briefing_md": os.path.join(data_dir, f"{artifact_base}.md"),
         "briefing_html": os.path.join(data_dir, f"{artifact_base}.html"),
         "briefing_pdf": os.path.join(data_dir, f"{artifact_base}.pdf"),
+        "briefing_plan": os.path.join(data_dir, "briefing_plan.json"),
+        "briefing_chunks": os.path.join(data_dir, "briefing_chunks.json"),
+        "edit_trace": os.path.join(data_dir, "edit_trace.json"),
         "run_manifest": os.path.join(data_dir, "run_manifest.json"),
         # Story-tracking closed loop
         "story_tracking_dir": os.path.join(output_dir, domain_id, "data", "story-tracking"),
@@ -451,6 +454,9 @@ def main():
             "--context", story_ctx_path,
             "--config", CONFIG_PATH,
             "--output", paths["briefing_md"],
+            "--plan-output", paths["briefing_plan"],
+            "--chunks-output", paths["briefing_chunks"],
+            "--trace-output", paths["edit_trace"],
             "--timescale", "daily",
         ], "6/8 Agent Edit (LLM)", timeout=720):
             print("❌ Agent Edit failed — stopping before validate/render to avoid reusing stale briefing artifacts", file=sys.stderr)
