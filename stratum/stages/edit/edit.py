@@ -35,6 +35,19 @@ from llm_client import call_llm
 
 CST_WEEKDAYS = ["周一", "周二", "周三", "周四", "周五", "周六", "周日"]
 THREAD_ID_RE = re.compile(r"^et-[A-Za-z0-9][A-Za-z0-9_-]*$")
+NON_NEWS_SECTIONS = {"今日要点", "关注", "反向信号"}
+EDGE_SIGNAL_KEYWORDS = (
+    "anthropic",
+    "模型公司",
+    "玻璃硬盘",
+    "玻璃存储",
+    "威刚",
+    "创见",
+    "模组",
+    "董事会",
+    "任命",
+    "光盘",
+)
 
 
 def load_config_with_env(config_path: str) -> dict:
@@ -200,6 +213,54 @@ def should_write_event_threads(data: dict | None) -> bool:
     return any(structured_event_counts(data).values())
 
 
+def markdown_news_titles(markdown: str) -> list[str]:
+    """Return markdown item titles, excluding structural sections."""
+    titles = []
+    for line in markdown.splitlines():
+        stripped = line.strip()
+        if not stripped.startswith("### "):
+            continue
+        title = stripped.replace("### ", "", 1).strip()
+        if title not in NON_NEWS_SECTIONS:
+            titles.append(title)
+    return titles
+
+
+def normalize_edge_signal_headings(markdown: str) -> str:
+    """Prefix weak-signal item headings so they stay visually separated."""
+    lines = []
+    for line in markdown.splitlines():
+        stripped = line.strip()
+        if not stripped.startswith("### "):
+            lines.append(line)
+            continue
+        title = stripped.replace("### ", "", 1).strip()
+        if title in NON_NEWS_SECTIONS or title.startswith("【边缘信号】"):
+            lines.append(line)
+            continue
+        title_lower = title.lower()
+        if any(keyword.lower() in title_lower for keyword in EDGE_SIGNAL_KEYWORDS):
+            prefix = line[:len(line) - len(line.lstrip())]
+            lines.append(f"{prefix}### 【边缘信号】{title}")
+        else:
+            lines.append(line)
+    return "\n".join(lines) + ("\n" if markdown.endswith("\n") else "")
+
+
+def item_count_within_budget(markdown: str, output_cfg: dict) -> tuple[bool, str]:
+    """Check generated news item count against prompt budget."""
+    budget = output_cfg.get("_budget", {}) if isinstance(output_cfg, dict) else {}
+    min_items = int(budget.get("min_items", 0) or 0)
+    max_items = int(budget.get("max_items", 0) or 0)
+    titles = markdown_news_titles(markdown)
+    count = len(titles)
+    if min_items and count < min_items:
+        return False, f"generated {count} news items; minimum is {min_items}"
+    if max_items and count > max_items:
+        return False, f"generated {count} news items; maximum is {max_items}"
+    return True, f"generated {count} news items"
+
+
 def _article_source_label(article: dict) -> str:
     """Best display label for a source line."""
     source = article.get("source") or article.get("source_domain") or ""
@@ -225,6 +286,15 @@ def _article_date_label(article: dict, fallback_date: str) -> str:
         return f"{dt.year}年{dt.month}月{dt.day}日"
     except ValueError:
         return _format_cn_date(fallback_date).split(" · ")[0]
+
+
+def _source_matches_label(article: dict, label: str) -> bool:
+    article_source = _article_source_label(article).lower()
+    source_label = label.lower().strip()
+    if article_source == source_label:
+        return True
+    url = str(article.get("url") or "").lower()
+    return bool(source_label and source_label in url)
 
 
 def _match_tokens(text: str) -> set[str]:
@@ -259,18 +329,98 @@ def _best_article_for_item(title: str, body_lines: list[str], articles: list[dic
     return best_article if best_score >= 0.35 else None
 
 
+def _best_article_for_source_item(
+    source: str,
+    title: str,
+    body_lines: list[str],
+    articles: list[dict],
+) -> dict | None:
+    """Find the best article from a cited source backing a markdown item."""
+    source_articles = [article for article in articles if _source_matches_label(article, source)]
+    return _best_article_for_item(title, body_lines, source_articles)
+
+
+def repair_source_line_dates(markdown: str, articles: list[dict], run_date: str) -> str:
+    """Rewrite source-line dates from matched article dates instead of LLM guesses."""
+    lines = markdown.splitlines()
+    repaired: list[str] = []
+    current: dict | None = None
+
+    def flush_current():
+        if not current:
+            return
+        source_line_idx = current.get("source_line_idx")
+        if source_line_idx is not None and current["title"] not in NON_NEWS_SECTIONS:
+            line = current["lines"][source_line_idx].strip()
+            parsed = re.match(r"^\*(.+?)·(.+?)\*$", line)
+            if parsed:
+                sources = [src.strip() for src in parsed.group(1).split(",") if src.strip()]
+                supporting_articles = [
+                    article
+                    for source in sources
+                    if (article := _best_article_for_source_item(
+                        source, current["title"], current["body"], articles
+                    ))
+                ]
+                if not supporting_articles:
+                    supporting_articles = [
+                        article
+                        for source in sources
+                        for article in articles
+                        if _source_matches_label(article, source)
+                    ]
+                dated_articles = [
+                    article for article in supporting_articles
+                    if article.get("published_at") or article.get("date")
+                ]
+                if dated_articles:
+                    latest = max(
+                        dated_articles,
+                        key=lambda article: str(article.get("published_at") or article.get("date") or ""),
+                    )
+                    prefix = current["lines"][source_line_idx][
+                        :len(current["lines"][source_line_idx]) - len(current["lines"][source_line_idx].lstrip())
+                    ]
+                    current["lines"][source_line_idx] = (
+                        f"{prefix}*{', '.join(sources)} · {_article_date_label(latest, run_date)}*"
+                    )
+        repaired.extend(current["lines"])
+
+    for line in lines:
+        if line.strip().startswith("### "):
+            flush_current()
+            current = {
+                "title": line.strip().replace("### ", "", 1).strip(),
+                "body": [],
+                "lines": [line],
+                "source_line_idx": None,
+            }
+            continue
+        if current is None:
+            repaired.append(line)
+            continue
+        current["lines"].append(line)
+        stripped = line.strip()
+        if stripped.startswith("*") and "·" in stripped:
+            current["source_line_idx"] = len(current["lines"]) - 1
+        elif stripped and not stripped.startswith("#") and not stripped.startswith("---"):
+            current["body"].append(stripped)
+
+    flush_current()
+    return "\n".join(repaired) + ("\n" if markdown.endswith("\n") else "")
+
+
 def repair_missing_source_lines(markdown: str, articles: list[dict], run_date: str) -> str:
     """Add a source/date line to items that lack one when article match is clear."""
     lines = markdown.splitlines()
     repaired: list[str] = []
     current: dict | None = None
-    non_news_sections = {"今日要点", "关注", "反向信号"}
 
     def flush_current():
         if not current:
             return
         repaired.extend(current["lines"])
-        if current["title"] not in non_news_sections and not current["has_source"]:
+        if current["title"] not in NON_NEWS_SECTIONS and not current["has_source"]:
             article = _best_article_for_item(current["title"], current["body"], articles)
             if article:
                 source = _article_source_label(article)
@@ -303,6 +453,17 @@ def repair_missing_source_lines(markdown: str, articles: list[dict], run_date: s
 
     flush_current()
     return "\n".join(repaired).rstrip() + ("\n" if markdown.endswith("\n") else "")
+
+
+def prepare_llm_response(response: str, articles: list[dict], run_date: str, domain_id: str) -> tuple[str, dict | None]:
+    """Split, repair, and normalize one LLM response."""
+    briefing, structured_data = split_llm_output(response)
+    briefing = strip_source_locale_tags(briefing)
+    briefing = repair_missing_source_lines(briefing, articles, run_date)
+    briefing = normalize_edge_signal_headings(briefing)
+    briefing = repair_source_line_dates(briefing, articles, run_date)
+    structured_data = normalize_structured_data(structured_data, domain_id, run_date)
+    return briefing, structured_data
 
 
 def main():
@@ -374,10 +535,30 @@ def main():
         sys.exit(1)
 
     # ── Split output ──
-    briefing, structured_data = split_llm_output(response)
-    briefing = strip_source_locale_tags(briefing)
-    briefing = repair_missing_source_lines(briefing, articles, args.date)
-    structured_data = normalize_structured_data(structured_data, args.domain, args.date)
+    briefing, structured_data = prepare_llm_response(response, articles, args.date, args.domain)
+    in_budget, budget_detail = item_count_within_budget(briefing, output_cfg)
+    if not in_budget:
+        print(f"⚠️  LLM output outside item budget: {budget_detail}; retrying once", file=sys.stderr)
+        retry_prompt = (
+            user_prompt
+            + "\n\n## 强制修正\n"
+            + f"上一版不符合条数要求：{budget_detail}。\n"
+            + "请重写完整简报，必须严格满足 min/max item 数量；"
+            + "保留 `---DATA---` 结构化 JSON；弱相关条目必须使用 `【边缘信号】` 前缀。\n"
+            + "上一版标题如下：\n"
+            + "\n".join(f"- {title}" for title in markdown_news_titles(briefing))
+        )
+        try:
+            response = call_llm(system_prompt, retry_prompt, llm_cfg)
+            briefing, structured_data = prepare_llm_response(response, articles, args.date, args.domain)
+            in_budget, budget_detail = item_count_within_budget(briefing, output_cfg)
+        except Exception as e:
+            print(f"❌ LLM retry failed: {e}", file=sys.stderr)
+            sys.exit(1)
+    if not in_budget:
+        print(f"❌ LLM output still outside item budget after retry: {budget_detail}", file=sys.stderr)
+        sys.exit(1)
+    print(f"   Item budget: {budget_detail}", file=sys.stderr)
 
     # ── Apply header ──
     if title:

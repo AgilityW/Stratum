@@ -104,6 +104,53 @@ class TestVerifyArticle:
         assert result["rejection_reason"] == "NO_DATE"
         assert result["date_source"] == "none"
 
+    def test_no_date_official_collector_can_be_background_evidence(self):
+        article = {
+            "url": "https://news.skhynix.com/hbm4",
+            "title": "SK hynix HBM4 update",
+            "snippet": "HBM4 customer sample update",
+            "engine": "direct_fetch:skhynix-newsroom",
+            "source_type_hint": "official",
+        }
+        config = {
+            **MOCK_PIPELINE_CONFIG,
+            "date_window": {
+                **MOCK_PIPELINE_CONFIG["date_window"],
+                "background_no_date_source_types": ["official"],
+                "background_no_date_engines": ["direct_fetch"],
+            },
+        }
+
+        result = verify_article(article, "2026-05-28", 0, config)
+
+        assert result["verification_status"] == "verified"
+        assert result["date_source"] == "freshness_window"
+        assert result["date_confidence"] == "medium"
+        assert result["quality_flags"] == ["BACKGROUND_NO_DATE"]
+
+    def test_stale_official_article_can_be_background_evidence(self):
+        article = {
+            "url": "https://investors.micron.com/news",
+            "title": "Micron HBM capacity update",
+            "snippet": "HBM capacity update",
+            "datePublished": "2026-05-20",
+            "source_type_hint": "official",
+        }
+        config = {
+            **MOCK_PIPELINE_CONFIG,
+            "date_window": {
+                **MOCK_PIPELINE_CONFIG["date_window"],
+                "background_stale_days": 30,
+                "background_source_types": ["official"],
+            },
+        }
+
+        result = verify_article(article, "2026-05-28", 0, config)
+
+        assert result["verification_status"] == "verified"
+        assert result["published_at"].startswith("2026-05-20")
+        assert result["quality_flags"] == ["BACKGROUND_STALE"]
+
     def test_valid_article_verified(self):
         article = {
             "url": "https://reuters.com/technology/memory-chip",

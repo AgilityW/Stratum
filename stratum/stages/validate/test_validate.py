@@ -294,6 +294,57 @@ class TestValidateItem:
         violations = validate_item(item, articles, "2026-05-28", MOCK_SOURCE_ALIASES)
         assert any("SOURCE_DATE" in v for v in violations)
 
+    def test_background_article_cannot_be_only_support(self):
+        articles = [
+            {
+                "source": "investors.micron.com",
+                "id": "a1",
+                "title": "Micron HBM capacity update",
+                "snippet": "HBM capacity update",
+                "published_at": "2026-05-20T09:30:00+08:00",
+                "quality_flags": ["BACKGROUND_STALE"],
+            },
+        ]
+        item = {
+            "title": "Micron HBM capacity update",
+            "sources": ["investors.micron.com"],
+            "date": "2026年5月28日",
+            "body": ["HBM capacity update."],
+        }
+
+        violations = validate_item(item, articles, "2026-05-28", MOCK_SOURCE_ALIASES)
+
+        assert any("only by background evidence" in v for v in violations)
+
+    def test_background_source_can_supplement_fresh_support(self):
+        articles = [
+            {
+                "source": "trendforce.com",
+                "id": "a1",
+                "title": "HBM capacity update",
+                "snippet": "HBM capacity update",
+                "published_at": "2026-05-28T09:30:00+08:00",
+            },
+            {
+                "source": "investors.micron.com",
+                "id": "a2",
+                "title": "Micron HBM capacity update",
+                "snippet": "HBM capacity update",
+                "published_at": "2026-05-20T09:30:00+08:00",
+                "quality_flags": ["BACKGROUND_STALE"],
+            },
+        ]
+        item = {
+            "title": "Micron HBM capacity update",
+            "sources": ["trendforce.com", "investors.micron.com"],
+            "date": "2026年5月28日",
+            "body": ["HBM capacity update."],
+        }
+
+        violations = validate_item(item, articles, "2026-05-28", MOCK_SOURCE_ALIASES)
+
+        assert violations == []
+
     def test_source_date_allows_supporting_article_within_stale_window(self):
         articles = [
             {

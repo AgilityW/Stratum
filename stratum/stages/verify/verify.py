@@ -160,6 +160,72 @@ def validate_date(article: dict, run_date_str: str, date_window: dict) -> tuple[
     return True, "verified", dt.isoformat(), date_source
 
 
+def _source_type_hint(article: dict) -> str:
+    raw = article.get("raw_metadata", {}) if isinstance(article.get("raw_metadata"), dict) else {}
+    return str(
+        article.get("source_type")
+        or article.get("source_type_hint")
+        or raw.get("source_type")
+        or raw.get("source_type_hint")
+        or ""
+    ).strip().lower()
+
+
+def _engine_name(article: dict) -> str:
+    raw = article.get("raw_metadata", {}) if isinstance(article.get("raw_metadata"), dict) else {}
+    return str(article.get("engine") or raw.get("engine") or "").strip().lower()
+
+
+def _engine_allowed(engine: str, prefixes: list[str]) -> bool:
+    return any(engine == prefix or engine.startswith(f"{prefix}:") for prefix in prefixes)
+
+
+def _background_flags_for_date_failure(
+    article: dict,
+    status: str,
+    parsed_date: str | None,
+    run_date: str,
+    date_window: dict,
+) -> tuple[bool, str | None, str | None, list[str]]:
+    """Admit selected stale/no-date records as background evidence only."""
+    source_type = _source_type_hint(article)
+    engine = _engine_name(article)
+
+    if status == "STALE" and parsed_date:
+        allowed_types = {
+            str(item).lower()
+            for item in date_window.get("background_source_types", [])
+        }
+        if source_type not in allowed_types:
+            return False, None, None, []
+        background_stale_days = int(date_window.get("background_stale_days", 0) or 0)
+        if background_stale_days <= int(date_window.get("stale_days", 2)):
+            return False, None, None, []
+        parsed_dt = parse_date(parsed_date)
+        if not parsed_dt:
+            return False, None, None, []
+        if parsed_dt.tzinfo is None:
+            parsed_dt = parsed_dt.replace(tzinfo=CST)
+        run_dt = datetime.fromisoformat(run_date).replace(tzinfo=CST)
+        if (run_dt - parsed_dt).days <= background_stale_days:
+            return True, parsed_dt.isoformat(), "search_api", ["BACKGROUND_STALE"]
+
+    if status == "NO_DATE":
+        allowed_types = {
+            str(item).lower()
+            for item in date_window.get("background_no_date_source_types", [])
+        }
+        allowed_engines = [
+            str(item).lower()
+            for item in date_window.get("background_no_date_engines", [])
+        ]
+        if source_type in allowed_types and _engine_allowed(engine, allowed_engines):
+            run_dt = datetime.fromisoformat(run_date).replace(tzinfo=CST)
+            return True, run_dt.isoformat(), "freshness_window", ["BACKGROUND_NO_DATE"]
+
+    return False, None, None, []
+
+
 def check_magnitude(article: dict, magnitude_rules: dict) -> list[str]:
     """Check for implausible magnitude claims in snippet/title."""
     flags = []
@@ -317,12 +383,23 @@ def verify_article(article: dict, run_date: str, index: int,
     verified["date_confidence"] = date_confidence
 
     if not passed:
-        verified["verification_status"] = "rejected"
-        verified["rejection_reason"] = status
-        return verified
+        admitted, background_date, background_source, flags = _background_flags_for_date_failure(
+            article, status, parsed_date, run_date, date_window
+        )
+        if not admitted:
+            verified["verification_status"] = "rejected"
+            verified["rejection_reason"] = status
+            return verified
+        verified["published_at"] = background_date
+        verified["date_source"] = background_source or date_source
+        date_confidence = date_confidence_for_source(verified["date_source"])
+        verified["date_confidence"] = date_confidence
+        verified["quality_flags"] = flags
 
     if date_confidence == "low":
-        verified["quality_flags"] = ["LOW_CONFIDENCE_DATE"]
+        verified["quality_flags"] = list(dict.fromkeys(
+            (verified.get("quality_flags") or []) + ["LOW_CONFIDENCE_DATE"]
+        ))
 
     min_date_confidence = date_window.get("min_date_confidence", "low")
     if not date_confidence_meets_minimum(date_confidence, min_date_confidence):

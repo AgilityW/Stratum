@@ -28,12 +28,12 @@ daily:
       enabled: true
       schema: _schemas/judgment.schema.json
   budget:
-    max_items: 12
-    min_items: 9
-    prompt_max_chars: 90000
-    max_articles_per_cluster: 10
-    max_low_confidence_articles_per_cluster: 3
-    max_unclustered_articles: 16
+    max_items: 18
+    min_items: 16
+    prompt_max_chars: 150000
+    max_articles_per_cluster: 18
+    max_low_confidence_articles_per_cluster: 6
+    max_unclustered_articles: 32
 
 weekly:
   label: "周报"

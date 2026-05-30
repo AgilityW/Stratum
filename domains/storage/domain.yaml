@@ -545,6 +545,10 @@ pipeline:
   date_window:
     stale_days: 2                      # Articles older than this rejected
     max_future_days: 1                 # Future-dated articles beyond this rejected
+    background_stale_days: 30          # Older high-signal evidence can support context only
+    background_source_types: [official, analyst]
+    background_no_date_source_types: [official]
+    background_no_date_engines: [direct_fetch, browser]
 
   # ── Verify Stage: Rejection Codes ──
   rejection_codes:

@@ -150,9 +150,14 @@ def _build_data_section(
         snippet = a.get("snippet", a.get("extracted_summary", ""))
         if len(snippet) > 200:
             snippet = snippet[:200] + "..."
+        quality_flags = a.get("quality_flags") or []
+        flag_line = ""
+        if quality_flags:
+            flag_line = f"  证据属性: {', '.join(str(flag) for flag in quality_flags)}（背景证据，不能作为唯一今日来源）\n"
         return (
             f"- **[{title}]({a.get('url', '')})**\n"
             f"  来源: {source} | 日期: {date_str}\n"
+            f"{flag_line}"
             f"  摘要: {snippet}\n"
         )
 
@@ -398,7 +403,8 @@ def assemble(
     user_prompt += f"共 {len(articles)} 篇文章，选出 {budget.get('min_items', 6)}-{budget.get('max_items', 10)} 条最重要的新闻。\n"
 
     # ── Structured output instructions ──
-    output_cfg = cfg["output"]
+    output_cfg = dict(cfg["output"])
+    output_cfg["_budget"] = budget
     if output_cfg.get("threads", {}).get("enabled"):
         user_prompt += _thread_output_instructions()
     if output_cfg.get("causal_edges", {}).get("enabled"):

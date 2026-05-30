@@ -7,7 +7,11 @@ sys.path.insert(0, os.path.dirname(__file__))
 from assembler import _build_data_section, _source_name, assemble
 from edit import (
     _article_source_label,
+    item_count_within_budget,
+    markdown_news_titles,
     normalize_structured_data,
+    normalize_edge_signal_headings,
+    repair_source_line_dates,
     repair_missing_source_lines,
     resolve_domain_title,
     should_write_event_threads,
@@ -146,6 +150,37 @@ def test_daily_prompt_requests_threads_and_watch_signals():
     assert '"threads": [...]' in user_prompt
     assert '"causal_edges": [...]' in user_prompt
     assert '"judgments": [...]' in user_prompt
+
+
+def test_daily_prompt_instructs_edge_signal_category():
+    edit_dir = os.path.dirname(__file__)
+    prompts_dir = os.path.join(edit_dir, "prompts")
+    manifest_path = os.path.join(prompts_dir, "manifest.yaml")
+
+    system_prompt, user_prompt, _output_cfg = assemble(
+        manifest_path=manifest_path,
+        prompts_dir=prompts_dir,
+        timescale="daily",
+        domain_cfg={"editorial": {}},
+        domain_id="storage",
+        run_date="2026-05-30",
+        title="存储早报",
+        articles=[{
+            "id": "a1",
+            "title": "Glass storage reaches small scale production",
+            "source": "example.com",
+            "published_at": "2026-05-30",
+            "snippet": "Glass storage is a weak but observable storage signal.",
+        }],
+        clusters={"clusters": []},
+        context={},
+    )
+
+    combined = system_prompt + user_prompt
+    assert "【边缘信号】" in combined
+    assert "3-5 条" in combined
+    assert "Anthropic" in combined
+    assert "为什么值得观察" in combined
 
 
 def test_strip_source_locale_tags_only_on_source_lines():
@@ -357,6 +392,67 @@ Samsung HBM4 samples moved forward for Nvidia qualification.
     repaired = repair_missing_source_lines(md, articles, "2026-05-30")
 
     assert "reuters.com" not in repaired
+
+
+def test_normalize_edge_signal_headings_prefixes_weak_titles():
+    md = """### Anthropic investment update
+
+Body.
+
+---
+
+### 三星HBM4E样品出货
+
+Body.
+"""
+
+    normalized = normalize_edge_signal_headings(md)
+
+    assert "### 【边缘信号】Anthropic investment update" in normalized
+    assert "### 三星HBM4E样品出货" in normalized
+
+
+def test_item_count_within_budget_checks_min_and_max():
+    md = """### 今日要点
+
+Summary.
+
+### Item 1
+
+Body.
+
+### 【边缘信号】Item 2
+
+Body.
+"""
+
+    assert markdown_news_titles(md) == ["Item 1", "【边缘信号】Item 2"]
+    ok, detail = item_count_within_budget(md, {"_budget": {"min_items": 2, "max_items": 3}})
+    assert ok, detail
+    ok, detail = item_count_within_budget(md, {"_budget": {"min_items": 3, "max_items": 4}})
+    assert not ok
+    assert "minimum" in detail
+
+
+def test_repair_source_line_dates_uses_matching_article_date():
+    md = """### SK hynix iHBM update
+
+SK hynix iHBM thermal solution for HBM5.
+
+*trendforce.com · 2026年5月26日*
+"""
+    articles = [
+        {
+            "title": "SK hynix iHBM thermal solution",
+            "snippet": "SK hynix iHBM thermal solution for HBM5",
+            "source": "trendforce.com",
+            "published_at": "2026-05-30T00:00:00+08:00",
+        }
+    ]
+
+    repaired = repair_source_line_dates(md, articles, "2026-05-30")
+
+    assert "*trendforce.com · 2026年5月30日*" in repaired
 
 
 def test_repair_missing_source_lines_keeps_existing_source_line():

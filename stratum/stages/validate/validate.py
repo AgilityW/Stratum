@@ -30,6 +30,7 @@ from urllib.parse import urlparse
 from stratum.subsystems.search.models import source_pattern_matches
 
 CST = timezone(timedelta(hours=8))
+BACKGROUND_QUALITY_FLAGS = {"BACKGROUND_STALE", "BACKGROUND_NO_DATE"}
 
 
 def load_domain_config(domain_path: str) -> dict:
@@ -249,6 +250,11 @@ def _parse_article_date(article: dict) -> datetime | None:
     return None
 
 
+def _is_background_article(article: dict) -> bool:
+    flags = set(article.get("quality_flags") or [])
+    return bool(flags & BACKGROUND_QUALITY_FLAGS)
+
+
 def _parse_source_line(line: str) -> tuple[list[str], str | None] | None:
     """Parse an italic source line, ignoring generated footer lines."""
     source_line = line.strip('* ').strip()
@@ -325,6 +331,7 @@ def validate_item(
     for article in articles:
         article_sources.update(_article_source_values(article))
 
+    has_fresh_aligned_support = False
     for src in cited_sources:
         src_lower = src.lower().strip()
         if any(x in src_lower for x in ['ai agent', '由 ', 'cst', '每日']):
@@ -353,10 +360,13 @@ def validate_item(
                     f"article from that source supports item '{item.get('title', '')[:60]}'."
                 )
                 continue
+            if any(not _is_background_article(article) for article in aligned_candidates):
+                has_fresh_aligned_support = True
 
             article_dates = [
                 parsed
                 for article in aligned_candidates
+                if not _is_background_article(article)
                 if (parsed := _parse_article_date(article)) is not None
             ]
             if cited_range and article_dates and all(
@@ -375,6 +385,12 @@ def validate_item(
                     f"article date(s) {observed} do not match cited date "
                     f"'{cited_date}'."
                 )
+
+    if cited_sources and not has_fresh_aligned_support:
+        violations.append(
+            "SOURCE_CONTEXT: Item is supported only by background evidence; "
+            "at least one fresh non-background source is required."
+        )
 
     # Check 2: Date within 48h window
     if cited_date:
