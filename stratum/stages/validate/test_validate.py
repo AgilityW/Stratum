@@ -9,6 +9,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../../.."))
 from stratum.stages.validate.validate import (
     parse_markdown, validate_item, load_domain_config, _parse_source_line,
     _domain_from_url, validate_structured_output, _parse_cited_date_range,
+    validate_boilerplate,
 )
 
 
@@ -72,6 +73,20 @@ class TestParseMarkdown:
         titles = [i["title"] for i in items]
         assert "特别关注" not in titles
         assert "反向信号" not in titles
+
+    def test_boilerplate_validation_uses_domain_rules(self):
+        pipeline_config = {
+            "boilerplate": {
+                "source_rules": [{
+                    "domains": ["chinaflashmarket.com"],
+                    "cut_markers": ["#### 报价中心"],
+                }]
+            }
+        }
+
+        violations = validate_boilerplate("正文\n\n#### 报价中心", pipeline_config)
+
+        assert any("BOILERPLATE" in violation for violation in violations)
 
     def test_keeps_news_titles_that_contain_section_words(self):
         content = """# 存储早报

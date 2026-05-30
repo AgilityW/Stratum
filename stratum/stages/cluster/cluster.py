@@ -25,6 +25,10 @@ from collections import defaultdict
 from datetime import datetime, timezone, timedelta
 from typing import Optional
 
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+if PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, PROJECT_ROOT)
+
 from stratum.subsystems.search.models import canonicalize_url
 
 CST = timezone(timedelta(hours=8))

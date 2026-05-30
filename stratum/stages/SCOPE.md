@@ -266,6 +266,10 @@ Important boundary:
 - Edit uses `planner.py`, `category_block.md`, `profile_polish.md`, and the
   timescale templates. Manifest profiles are expected to set
   `budget.edit_mode: v3`; non-v3 edit modes fail fast.
+- Raw search data is not rewritten by Edit. `boilerplate.py` applies
+  deterministic generic and `domain.yaml` source-specific cleanup rules to the
+  evidence surface before LLM calls, and Edit fails fast if generated briefing
+  or block artifacts still contain configured boilerplate markers.
 - LLM transport lives in `llm_client.py`.
 - The orchestrator currently invokes Edit with `--timescale daily`; other
   timescale profiles are present for direct Edit use and future orchestrator
@@ -314,8 +318,12 @@ Checks:
   when that article carries date evidence
 - cited dates are parseable and within `pipeline.date_window`
 - structured threads, causal edges, and judgments match JSON Schema when present
+- generated Markdown contains no configured evidence boilerplate markers
 
 Important boundary:
+- Validate reuses the same `pipeline.boilerplate` rule contract as Edit so
+  template/navigation leaks are caught as deterministic `BOILERPLATE`
+  violations instead of being left to LLM style judgment.
 - Validate strips source-line locale tags such as `[en]` or `[zh-CN]` while
   parsing, so one missed Edit cleanup does not cause a false source violation.
   The prompt and Edit cleanup still require rendered source lines to omit those

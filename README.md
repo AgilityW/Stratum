@@ -87,6 +87,13 @@ The active daily report template uses five fixed major chunks: `今日要点`,
 are rendered as subsections under `行业要点`; weak/edge items are grouped under
 `产业信号` and keep the `【边缘信号】` title prefix for machine counting.
 
+Edit keeps raw search data immutable, then applies deterministic boilerplate
+rules to the evidence surface before LLM calls. Generic cleanup rules live in
+the Edit stage, while source-specific template markers such as site navigation,
+QR follow blocks, tags, quote centers, or fast-news modules are configured in
+`domain.yaml` under `pipeline.boilerplate`. Validate reuses the same rule set
+and fails the report if generated Markdown still contains those markers.
+
 ## Quick Start
 
 ```bash

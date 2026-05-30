@@ -5,6 +5,7 @@ import sys
 
 sys.path.insert(0, os.path.dirname(__file__))
 
+from boilerplate import artifact_boilerplate_violations, build_boilerplate_rules
 from planner import build_block_plan, clean_evidence_text
 from edit import (
     _article_source_label,
@@ -235,6 +236,23 @@ def test_clean_evidence_text_removes_site_boilerplate():
     assert "简讯快报" not in cleaned
 
 
+def test_source_specific_boilerplate_rules_are_config_driven():
+    rules = build_boilerplate_rules({
+        "source_rules": [{
+            "domains": ["chinaflashmarket.com"],
+            "cut_markers": ["#### 报价中心"],
+            "line_patterns": [r"^#{2,6}\s*简讯快报\s*$"],
+        }]
+    })
+
+    cfm_text = "正文。\n\n#### 报价中心\n\n模板内容"
+    other_text = "正文。\n\n#### 报价中心\n\n模板内容"
+
+    assert clean_evidence_text(cfm_text, source="chinaflashmarket.com", rules=rules) == "正文。"
+    assert "报价中心" in clean_evidence_text(other_text, source="example.com", rules=rules)
+    assert artifact_boilerplate_violations(cfm_text, rules=rules)
+
+
 def test_run_block_edit_strips_boilerplate_from_generated_paragraphs(monkeypatch, tmp_path):
     articles = [_fake_article(
         "a1",
@@ -283,25 +301,38 @@ def test_run_block_edit_strips_boilerplate_from_generated_paragraphs(monkeypatch
         "output": str(tmp_path / "briefing.md"),
     })()
 
-    briefing, _structured, _artifacts = run_block_edit(
+    briefing, _structured, artifacts = run_block_edit(
         args,
         "存储早报",
         articles,
         clusters,
         {},
         {"api_key": "fake"},
-        {"_budget": {
-            "target_main_items": 1,
-            "target_edge_items": 0,
-            "min_items": 1,
-            "max_items": 1,
-            "main_min_items": 1,
-            "main_max_items": 1,
-            "edge_min_items": 0,
-            "edge_max_items": 0,
-            "block_parallelism": 1,
-            "max_categories": 1,
-        }},
+        {
+            "_domain_cfg": {
+                "pipeline": {
+                    "boilerplate": {
+                        "source_rules": [{
+                            "domains": ["chinaflashmarket.com"],
+                            "cut_markers": ["#### 报价中心", "#### 简讯快报"],
+                            "line_patterns": [r"^#{2,6}\s*标签:?\s*$"],
+                        }]
+                    }
+                }
+            },
+            "_budget": {
+                "target_main_items": 1,
+                "target_edge_items": 0,
+                "min_items": 1,
+                "max_items": 1,
+                "main_min_items": 1,
+                "main_max_items": 1,
+                "edge_min_items": 0,
+                "edge_max_items": 0,
+                "block_parallelism": 1,
+                "max_categories": 1,
+            },
+        },
         {"system": {"template": "daily.md"}},
     )
 
@@ -310,6 +341,7 @@ def test_run_block_edit_strips_boilerplate_from_generated_paragraphs(monkeypatch
     assert "#### 标签" not in briefing
     assert "#### 报价中心" not in briefing
     assert "#### 简讯快报" not in briefing
+    assert artifacts["trace"]["boilerplate_quality"]["briefing_violations"] == 0
 
 
 def test_run_block_edit_can_render_weekly_template(monkeypatch, tmp_path):

@@ -27,6 +27,11 @@ from datetime import datetime, timezone, timedelta
 from jsonschema import validate as json_validate, ValidationError
 from urllib.parse import urlparse
 
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+if PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, PROJECT_ROOT)
+
+from stratum.stages.edit.boilerplate import artifact_boilerplate_violations, build_boilerplate_rules
 from stratum.subsystems.search.models import source_pattern_matches
 
 CST = timezone(timedelta(hours=8))
@@ -47,6 +52,14 @@ def load_articles(path):
             if line.strip():
                 articles.append(json.loads(line))
     return articles
+
+
+def validate_boilerplate(markdown_text: str, pipeline_config: dict) -> list[str]:
+    boilerplate_rules = build_boilerplate_rules(pipeline_config.get("boilerplate", {}))
+    return [
+        f"BOILERPLATE: {violation['text']} ({violation['rule_type']}: {violation['pattern']})"
+        for violation in artifact_boilerplate_violations(markdown_text, boilerplate_rules)
+    ]
 
 
 def _domain_from_url(url: str) -> str:
@@ -528,11 +541,20 @@ def main():
 
     articles = load_articles(args.articles)
     items = parse_markdown(args.md)
+    with open(args.md) as f:
+        markdown_text = f.read()
 
     print(f"\n📋 Validating briefing: {len(items)} news items against {len(articles)} articles",
           file=sys.stderr)
 
     all_violations = []
+    boilerplate_violations = validate_boilerplate(markdown_text, pipeline_config)
+    if boilerplate_violations:
+        all_violations.append((0, "boilerplate", boilerplate_violations))
+        print(f"\n  ❌ Boilerplate leaks: {len(boilerplate_violations)}", file=sys.stderr)
+        for violation in boilerplate_violations[:10]:
+            print(f"     {violation}", file=sys.stderr)
+
     for i, item in enumerate(items, 1):
         violations = validate_item(
             item,

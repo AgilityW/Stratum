@@ -29,6 +29,9 @@
 - Source display aliases under `pipeline.source_aliases`; values may be a
   single domain string or a list of domain patterns when one publisher brand
   spans multiple domains.
+- Source-specific boilerplate cleanup rules under `pipeline.boilerplate`.
+  Raw search data must remain untouched; these rules only shape the evidence
+  text passed into Edit and the final artifact quality gate.
 - Render template assets that are specific to storage.
 
 ### 不包含

@@ -33,7 +33,13 @@ from urllib.parse import urlparse
 _EDIT_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, _EDIT_DIR)
 from llm_client import call_llm
-from planner import build_block_plan, clean_evidence_text
+from boilerplate import (
+    artifact_boilerplate_violations,
+    build_boilerplate_rules,
+    clean_article_evidence,
+    clean_evidence_text,
+)
+from planner import build_block_plan
 
 CST_WEEKDAYS = ["周一", "周二", "周三", "周四", "周五", "周六", "周日"]
 THREAD_ID_RE = re.compile(r"^et-[A-Za-z0-9][A-Za-z0-9_-]*$")
@@ -918,6 +924,10 @@ def run_block_edit(
     timescale_cfg: dict,
 ) -> tuple[str, dict | None, dict]:
     budget = output_cfg.get("_budget", {})
+    boilerplate_rules = build_boilerplate_rules(
+        output_cfg.get("_domain_cfg", {}).get("pipeline", {}).get("boilerplate", {})
+    )
+    articles = [clean_article_evidence(article, boilerplate_rules) for article in articles]
     output_dir = os.path.dirname(args.output) or "."
     os.makedirs(output_dir, exist_ok=True)
     plan = build_block_plan(articles, clusters, context, args.date, budget)
@@ -937,10 +947,25 @@ def run_block_edit(
         edge_markdown=edge_markdown,
     )
     briefing = repair_source_line_dates(strip_source_locale_tags(briefing), articles, args.date)
+    briefing_violations = artifact_boilerplate_violations(briefing, boilerplate_rules)
+    block_violations = artifact_boilerplate_violations(
+        json.dumps(blocks, ensure_ascii=False),
+        boilerplate_rules,
+    )
+    if briefing_violations or block_violations:
+        raise RuntimeError(
+            "boilerplate leaked into edit output: "
+            f"briefing={len(briefing_violations)}, blocks={len(block_violations)}"
+        )
     structured_data = deterministic_structured_data(plan, args.domain, args.date)
     trace = {
         "mode": "block_edit",
         "timescale": args.timescale,
+        "boilerplate_quality": {
+            "rule_source": "domain.pipeline.boilerplate + generic",
+            "briefing_violations": len(briefing_violations),
+            "block_violations": len(block_violations),
+        },
         "plan_counts": plan.get("counts", {}),
         "category_count": len(plan.get("categories", [])),
         "block_count": len(blocks),
@@ -1005,6 +1030,7 @@ def main():
 
     output_cfg = dict(timescale_cfg.get("output", {}))
     output_cfg["_budget"] = timescale_cfg.get("budget", {})
+    output_cfg["_domain_cfg"] = domain_cfg
     edit_mode = str(output_cfg.get("_budget", {}).get("edit_mode", "")).lower()
     if edit_mode != "v3":
         print(

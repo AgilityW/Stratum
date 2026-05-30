@@ -559,6 +559,25 @@ pipeline:
     LOW_SIGNAL: "Domain is low-priority (search engine, aggregator)"
     IMPOSSIBLE: "Value violates physical/mathematical constraints"
 
+  # ── Edit Stage: Evidence Boilerplate Cleanup ──
+  # Raw search data stays untouched. These source-owned rules only clean the
+  # evidence surface passed into Edit and the generated Edit artifacts.
+  boilerplate:
+    source_rules:
+      - domains:
+          - chinaflashmarket.com
+        cut_markers:
+          - "#### 推荐"
+          - "#### 标签"
+          - "#### 报价中心"
+          - "#### 简讯快报"
+          - "#### 资讯推荐"
+          - "#### CFM分析"
+          - "#### 厂商动态"
+          - "深圳市闪存市场资讯有限公司"
+        line_patterns:
+          - "^#{2,6}\\s*(标签:?|报价中心|简讯快报|资讯推荐|CFM分析|厂商动态|闪存市场APP|闪存市场|手机网页版|微信小程序)\\s*$"
+
   # ── Normalize Stage: Source Type Classification ──
   source_classification:
     official:
