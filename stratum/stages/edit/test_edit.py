@@ -81,6 +81,41 @@ def test_build_data_section_falls_back_to_source_domain():
     assert "[en]" not in section
 
 
+def test_build_data_section_respects_prompt_budget():
+    articles = []
+    for index in range(5):
+        articles.append({
+            "id": f"a{index}",
+            "title": f"Samsung HBM4 update {index}",
+            "url": f"https://example.com/{index}",
+            "source": "example.com",
+            "source_type": "media",
+            "published_at": "2026-05-30T00:00:00+08:00",
+            "snippet": f"HBM4 update {index}",
+        })
+    clusters = {
+        "clusters": [{
+            "id": "sc-1",
+            "article_ids": [a["id"] for a in articles],
+            "canonical_title": "Samsung HBM4 update",
+            "confidence": "high",
+        }]
+    }
+
+    section = _build_data_section(
+        articles,
+        clusters,
+        {},
+        "2026-05-30",
+        {"max_articles_per_cluster": 2, "prompt_max_chars": 10000},
+    )
+
+    assert "本 prompt 选入 2 篇" in section
+    assert "省略 3 篇" in section
+    assert "Samsung HBM4 update 0" in section
+    assert "Samsung HBM4 update 2" not in section
+
+
 def test_daily_prompt_requests_threads_and_watch_signals():
     edit_dir = os.path.dirname(__file__)
     prompts_dir = os.path.join(edit_dir, "prompts")
@@ -182,6 +217,40 @@ def test_normalize_structured_data_keeps_existing_thread_id_from_id():
 
     assert normalized["threads"][0]["thread_id"] == "et-storage-0001"
     assert normalized["threads"][0]["id"] == "et-storage-0001"
+
+
+def test_normalize_structured_data_rewrites_cluster_ids_to_thread_ids():
+    data = {
+        "threads": [
+            {"thread_id": "sc-storage-0001", "title": "Samsung HBM4"},
+            {"thread_id": "sc-storage-0002", "title": "DRAM prices"},
+        ],
+        "causal_edges": [
+            {
+                "cause_thread_id": "sc-storage-0001",
+                "effect_thread_id": "sc-storage-0002",
+                "mechanism": "HBM capacity displaces commodity DRAM.",
+                "confidence": "B",
+            }
+        ],
+        "judgments": [
+            {
+                "target_type": "event_pair",
+                "target_thread_ids": ["sc-storage-0001", "sc-storage-0002"],
+                "hypothesis": "HBM capacity pressure keeps DRAM prices elevated.",
+                "confidence": "B",
+                "expected_verification": "2026-12-31",
+            }
+        ],
+    }
+
+    normalized = normalize_structured_data(data, "storage", "2026-05-30")
+
+    rewritten_ids = [thread["thread_id"] for thread in normalized["threads"]]
+    assert all(thread_id.startswith("et-storage-20260530-") for thread_id in rewritten_ids)
+    assert normalized["causal_edges"][0]["cause_thread_id"] == rewritten_ids[0]
+    assert normalized["causal_edges"][0]["effect_thread_id"] == rewritten_ids[1]
+    assert normalized["judgments"][0]["target_thread_ids"] == rewritten_ids
 
 
 def test_normalize_structured_data_coerces_structured_arrays():
@@ -390,3 +459,50 @@ def test_call_llm_sends_payload_via_stdin(monkeypatch):
     assert "user prompt" in captured["input"]
     assert "system prompt" not in captured["cmd"]
     assert "user prompt" not in captured["cmd"]
+    assert "-sS" in captured["cmd"]
+    assert "--max-time" in captured["cmd"]
+
+
+def test_call_llm_reports_curl_failure(monkeypatch):
+    import subprocess
+    import llm_client
+
+    def fake_run(cmd, **kwargs):
+        return subprocess.CompletedProcess(cmd, 56, stdout="", stderr="connection reset")
+
+    monkeypatch.setattr(llm_client.subprocess, "run", fake_run)
+
+    try:
+        llm_client.call_llm("system", "user", {"api_key": "key", "endpoint": "https://example.com"})
+    except RuntimeError as exc:
+        assert "curl exited 56" in str(exc)
+        assert "connection reset" in str(exc)
+    else:
+        raise AssertionError("expected RuntimeError")
+
+
+def test_call_llm_reports_empty_content(monkeypatch):
+    import json
+    import subprocess
+    import llm_client
+
+    def fake_run(cmd, **kwargs):
+        return subprocess.CompletedProcess(
+            cmd,
+            0,
+            stdout=json.dumps({
+                "choices": [{"message": {"content": ""}, "finish_reason": "length"}],
+                "usage": {"prompt_tokens": 1},
+            }) + "\nHTTP_STATUS:200\n",
+            stderr="",
+        )
+
+    monkeypatch.setattr(llm_client.subprocess, "run", fake_run)
+
+    try:
+        llm_client.call_llm("system", "user", {"api_key": "key", "endpoint": "https://example.com"})
+    except RuntimeError as exc:
+        assert "empty content" in str(exc)
+        assert "finish_reason=length" in str(exc)
+    else:
+        raise AssertionError("expected RuntimeError")

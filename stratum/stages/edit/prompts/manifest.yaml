@@ -30,6 +30,10 @@ daily:
   budget:
     max_items: 12
     min_items: 9
+    prompt_max_chars: 90000
+    max_articles_per_cluster: 10
+    max_low_confidence_articles_per_cluster: 3
+    max_unclustered_articles: 16
 
 weekly:
   label: "周报"

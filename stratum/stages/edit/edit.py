@@ -34,6 +34,7 @@ from assembler import assemble, _format_cn_date
 from llm_client import call_llm
 
 CST_WEEKDAYS = ["周一", "周二", "周三", "周四", "周五", "周六", "周日"]
+THREAD_ID_RE = re.compile(r"^et-[A-Za-z0-9][A-Za-z0-9_-]*$")
 
 
 def load_config_with_env(config_path: str) -> dict:
@@ -128,17 +129,33 @@ def normalize_structured_data(
         return data
     for key in ("threads", "causal_edges", "judgments"):
         data[key] = _normalize_structured_list(data.get(key))
+    thread_id_map: dict[str, str] = {}
     for index, thread in enumerate(data.get("threads", []), start=1):
         if not isinstance(thread, dict):
             continue
-        thread_id = str(thread.get("thread_id") or thread.get("id") or "").strip()
-        if not thread_id:
+        original_id = str(thread.get("thread_id") or thread.get("id") or "").strip()
+        thread_id = original_id
+        if not _is_valid_thread_id(thread_id):
             thread_id = _synthetic_thread_id(domain_id, run_date, thread, index)
+        if original_id and original_id != thread_id:
+            thread_id_map[original_id] = thread_id
         thread["thread_id"] = thread_id
-        thread.setdefault("id", thread_id)
+        thread["id"] = thread_id
+    for edge in data.get("causal_edges", []):
+        if not isinstance(edge, dict):
+            continue
+        for key in ("cause_thread_id", "effect_thread_id"):
+            value = str(edge.get(key) or "").strip()
+            if value in thread_id_map:
+                edge[key] = thread_id_map[value]
     for judgment in data.get("judgments", []):
         if isinstance(judgment, dict) and "hypothesis" not in judgment and "mechanism" in judgment:
             judgment["hypothesis"] = judgment.pop("mechanism")
+        if isinstance(judgment, dict) and isinstance(judgment.get("target_thread_ids"), list):
+            judgment["target_thread_ids"] = [
+                thread_id_map.get(str(thread_id), thread_id)
+                for thread_id in judgment.get("target_thread_ids", [])
+            ]
     return data
 
 
@@ -151,6 +168,10 @@ def _normalize_structured_list(value) -> list:
     if isinstance(value, dict):
         return [value]
     return []
+
+
+def _is_valid_thread_id(thread_id: str) -> bool:
+    return bool(thread_id and THREAD_ID_RE.match(thread_id))
 
 
 def _synthetic_thread_id(domain_id: str, run_date: str, thread: dict, index: int) -> str:

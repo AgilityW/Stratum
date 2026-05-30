@@ -82,7 +82,7 @@ def resolve_paths(domain_id: str, run_date: str, output_dir: str) -> dict:
     }
 
 
-def run_stage(stage_name: str, stage_args: list[str], step_label: str) -> bool:
+def run_stage(stage_name: str, stage_args: list[str], step_label: str, timeout: int = 120) -> bool:
     """Run a pipeline stage script, fail hard on error."""
     script = os.path.join(STAGES_DIR, stage_name, f"{stage_name}.py")
     cmd = [sys.executable, script] + stage_args
@@ -99,7 +99,20 @@ def run_stage(stage_name: str, stage_args: list[str], step_label: str) -> bool:
     print(f"  CMD:  {' '.join(cmd)}", file=sys.stderr)
     print(f"{'='*60}", file=sys.stderr)
 
-    result = subprocess.run(cmd, capture_output=True, text=True, timeout=120, env=env)
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, env=env)
+    except subprocess.TimeoutExpired as exc:
+        stderr = exc.stderr or ""
+        stdout = exc.stdout or ""
+        if isinstance(stderr, bytes):
+            stderr = stderr.decode(errors="replace")
+        if isinstance(stdout, bytes):
+            stdout = stdout.decode(errors="replace")
+        sys.stderr.write(stderr)
+        if stdout.strip():
+            sys.stderr.write(stdout[:500])
+        print(f"\n❌ {step_label} TIMED OUT after {timeout}s", file=sys.stderr)
+        return False
     sys.stderr.write(result.stderr)
     if result.stdout.strip():
         sys.stderr.write(result.stdout[:500])
@@ -439,7 +452,7 @@ def main():
             "--config", CONFIG_PATH,
             "--output", paths["briefing_md"],
             "--timescale", "daily",
-        ], "6/8 Agent Edit (LLM)"):
+        ], "6/8 Agent Edit (LLM)", timeout=300):
             print("⚠️  Agent Edit failed — continuing with validate/render anyway", file=sys.stderr)
             record("edit", "failed_nonblocking", paths["briefing_md"])
         else:

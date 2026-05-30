@@ -31,6 +31,18 @@ from urllib.parse import urlparse
 
 
 CST_WEEKDAYS = ["周一", "周二", "周三", "周四", "周五", "周六", "周日"]
+DEFAULT_PROMPT_BUDGET = {
+    "prompt_max_chars": 120000,
+    "max_articles_per_cluster": 12,
+    "max_low_confidence_articles_per_cluster": 4,
+    "max_unclustered_articles": 20,
+}
+SOURCE_TYPE_PRIORITY = {
+    "official": 0,
+    "analyst": 1,
+    "media": 2,
+    "blog": 3,
+}
 
 
 def _deep_get(d: dict, path: str):
@@ -121,8 +133,13 @@ def _build_data_section(
     clusters: dict,
     context: dict,
     run_date: str,
+    prompt_budget: dict | None = None,
 ) -> str:
     """Build the user prompt data section: articles, clusters, story context."""
+    budget = dict(DEFAULT_PROMPT_BUDGET)
+    if prompt_budget:
+        budget.update({k: v for k, v in prompt_budget.items() if v is not None})
+
     # Article snapshot
     def _article_snapshot(a: dict) -> str:
         title = a.get("title", "无标题")
@@ -139,11 +156,91 @@ def _build_data_section(
             f"  摘要: {snippet}\n"
         )
 
+    def _article_rank(a: dict) -> tuple:
+        source_type = a.get("source_type") or a.get("source_type_hint") or "media"
+        source_rank = SOURCE_TYPE_PRIORITY.get(str(source_type), 9)
+        has_claims = bool(a.get("numeric_claims"))
+        snippet = a.get("snippet") or a.get("extracted_summary") or ""
+        return (source_rank, not has_claims, -len(str(snippet)), _source_name(a), a.get("title", ""))
+
+    def _limit_cluster_articles(cluster: dict, cluster_articles: list[dict]) -> tuple[list[dict], int]:
+        confidence = str(cluster.get("confidence", "")).lower()
+        default_limit = int(budget.get("max_articles_per_cluster", 12))
+        low_limit = int(budget.get("max_low_confidence_articles_per_cluster", 4))
+        limit = low_limit if confidence == "low" else default_limit
+        selected = sorted(cluster_articles, key=_article_rank)[:max(0, limit)]
+        return selected, max(0, len(cluster_articles) - len(selected))
+
+    body_parts = []
+    included_articles: list[dict] = []
+    omitted_notes: list[str] = []
+    max_chars = int(budget.get("prompt_max_chars", 120000))
+
+    # Clustered articles
+    clustered_ids = set()
+    article_by_id = {a.get("id"): a for a in articles}
+    for c in clusters.get("clusters", []):
+        article_ids = c.get("article_ids", [])
+        cluster_articles = [article_by_id.get(article_id) for article_id in article_ids]
+        cluster_articles = [a for a in cluster_articles if a]
+        if not cluster_articles:
+            continue
+        clustered_ids.update(article_ids)
+        selected_articles, omitted = _limit_cluster_articles(c, cluster_articles)
+        if not selected_articles:
+            omitted_notes.append(
+                f"- 集群 `{c.get('id', '')}` 未放入正文证据包，原始 {len(cluster_articles)} 篇。"
+            )
+            continue
+        thread_id = c.get("thread_id", "")
+        thread_label = c.get("thread_label", "")
+        continuity = "⟳ 持续追踪" if thread_id else ""
+        if thread_label:
+            continuity = f"⟳ {thread_label}{' · ' + continuity if continuity else ''}"
+        section_parts = [f"## 集群: {c.get('canonical_title', '')[:80]}"]
+        if continuity:
+            section_parts.append(f" ({continuity})")
+        section_parts.append(
+            f"\n(置信度: {c.get('confidence', '?')}, 原始 {len(cluster_articles)} 篇，"
+            f"本 prompt 选入 {len(selected_articles)} 篇)\n\n"
+        )
+        for a in selected_articles:
+            section_parts.append(_article_snapshot(a))
+        section_parts.append("\n")
+        section = "".join(section_parts)
+        if sum(len(part) for part in body_parts) + len(section) <= max_chars:
+            body_parts.append(section)
+            included_articles.extend(selected_articles)
+        else:
+            omitted += len(selected_articles)
+        if omitted:
+            omitted_notes.append(
+                f"- 集群 `{c.get('id', '')}` 因 prompt budget 省略 {omitted} 篇；"
+                f"标题：{c.get('canonical_title', '')[:80]}"
+            )
+
+    # Unclustered articles
+    unclustered = [a for a in articles if a.get("id") not in clustered_ids]
+    if unclustered:
+        limit = int(budget.get("max_unclustered_articles", 20))
+        selected_unclustered = sorted(unclustered, key=_article_rank)[:max(0, limit)]
+        section_parts = [f"## 其他文章 (原始 {len(unclustered)} 篇，本 prompt 选入 {len(selected_unclustered)} 篇)\n\n"]
+        for a in selected_unclustered:
+            section_parts.append(_article_snapshot(a))
+        section_parts.append("\n")
+        section = "".join(section_parts)
+        if selected_unclustered and sum(len(part) for part in body_parts) + len(section) <= max_chars:
+            body_parts.append(section)
+            included_articles.extend(selected_unclustered)
+        omitted = len(unclustered) - len(selected_unclustered)
+        if omitted:
+            omitted_notes.append(f"- 其他未聚类文章因 prompt budget 省略 {omitted} 篇。")
+
     parts = []
 
-    # Source index
+    # Source index for the evidence actually included in the prompt.
     source_index = {}
-    for a in articles:
+    for a in included_articles:
         src = _source_name(a)
         if src and src not in source_index:
             source_index[src] = a
@@ -152,34 +249,17 @@ def _build_data_section(
         parts.append(f"- {src}\n")
     parts.append("\n")
 
-    # Clustered articles
-    clustered_ids = set()
-    for c in clusters.get("clusters", []):
-        article_ids = c.get("article_ids", [])
-        cluster_articles = [a for a in articles if a.get("id") in article_ids]
-        if not cluster_articles:
-            continue
-        clustered_ids.update(article_ids)
-        thread_id = c.get("thread_id", "")
-        thread_label = c.get("thread_label", "")
-        continuity = "⟳ 持续追踪" if thread_id else ""
-        if thread_label:
-            continuity = f"⟳ {thread_label}{' · ' + continuity if continuity else ''}"
-        parts.append(f"## 集群: {c.get('canonical_title', '')[:80]}")
-        if continuity:
-            parts.append(f" ({continuity})")
-        parts.append(f"\n(置信度: {c.get('confidence', '?')}, 共 {len(cluster_articles)} 篇)\n\n")
-        for a in cluster_articles:
-            parts.append(_article_snapshot(a))
+    if omitted_notes:
+        parts.append("## Prompt 预算说明\n")
+        parts.append(
+            f"- verified articles 共 {len(articles)} 篇；本 prompt 选入 "
+            f"{len({a.get('id') for a in included_articles})} 篇代表证据，"
+            "raw/articles 原始文件仍保留全集。\n"
+        )
+        parts.extend(f"{note}\n" for note in omitted_notes)
         parts.append("\n")
 
-    # Unclustered articles
-    unclustered = [a for a in articles if a.get("id") not in clustered_ids]
-    if unclustered:
-        parts.append(f"## 其他文章 ({len(unclustered)} 篇)\n\n")
-        for a in unclustered:
-            parts.append(_article_snapshot(a))
-        parts.append("\n")
+    parts.extend(body_parts)
 
     # Story context
     carried = context.get("carried_forward", [])
@@ -313,7 +393,7 @@ def assemble(
     system_prompt = "\n\n---\n\n".join(system_parts)
 
     # ── Build user prompt: data section ──
-    user_prompt = _build_data_section(articles, clusters, context, run_date)
+    user_prompt = _build_data_section(articles, clusters, context, run_date, cfg.get("budget", {}))
     user_prompt += f"\n## 指令\n请生成 {cn_date} 的{title}。\n"
     user_prompt += f"共 {len(articles)} 篇文章，选出 {budget.get('min_items', 6)}-{budget.get('max_items', 10)} 条最重要的新闻。\n"
 
