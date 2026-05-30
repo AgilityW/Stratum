@@ -1,7 +1,8 @@
 """ingest.py — Database ingestion functions for pipeline post-processing.
 
-All functions take a domain and write to {WORKSPACE}/data/{domain}/{domain}.db.
-None of them touch files — they pure SQLite operations reading from in-memory data.
+All functions take a domain and write through stratum.db.connection.get_db().
+They do not read pipeline artifacts directly; callers pass in-memory data or
+explicit artifact paths for the few import-style helpers.
 """
 
 from __future__ import annotations
@@ -160,13 +161,20 @@ def ingest_daily_events(event_threads_path: str, domain: str, run_date: str) -> 
     return stats
 
 
-def ingest_entity_snapshots(domain: str, scale: str, period: str) -> int:
+def ingest_entity_snapshots(
+    domain: str,
+    scale: str,
+    period: str,
+    entity_article_counts: dict[str, int] | None = None,
+) -> int:
     """Aggregate current entity data into entity_snapshots for this period.
 
+    entity_article_counts maps entity id to article count for this run/period.
     Returns number of snapshots written.
     """
     conn = get_db(domain)
     count = 0
+    entity_article_counts = entity_article_counts or {}
 
     try:
         entities = conn.execute('SELECT id, status FROM entities').fetchall()
@@ -186,13 +194,8 @@ def ingest_entity_snapshots(domain: str, scale: str, period: str) -> int:
             ''', (eid, scale)).fetchall()
             key_events = [ev['title'] for ev in events]
 
-            # Calculate importance delta (simplified: 0 for now, will be filled by source-profiler)
-            prev = conn.execute('''
-                SELECT importance_delta FROM entity_snapshots
-                WHERE entity_id = ? AND scale = ? AND period < ?
-                ORDER BY period DESC LIMIT 1
-            ''', (eid, scale, period)).fetchone()
-            delta = 0.0  # Placeholder — computed by source-profiler later
+            # Future scoring jobs can replace this neutral placeholder.
+            delta = 0.0
 
             conn.execute('''
                 INSERT OR REPLACE INTO entity_snapshots (entity_id, scale, period, status, key_events, article_count,
@@ -201,7 +204,7 @@ def ingest_entity_snapshots(domain: str, scale: str, period: str) -> int:
             ''', (
                 eid, scale, period, e['status'],
                 json.dumps(key_events, ensure_ascii=False),
-                0,  # article_count placeholder
+                int(entity_article_counts.get(eid, 0) or 0),
                 json.dumps(thread_ids, ensure_ascii=False),
                 round(delta, 4),
             ))
@@ -229,11 +232,12 @@ def update_entities_after_run(domain: str, entity_stats: list[dict]) -> int:
 
     try:
         for es in entity_stats:
-            conn.execute('''
+            cur = conn.execute('''
                 UPDATE entities SET last_seen = ?, article_count_7d = article_count_7d + ?
                 WHERE id = ?
             ''', (today, es.get('article_count_today', 0), es['id']))
-            count += 1
+            if cur.rowcount:
+                count += 1
         conn.commit()
     except Exception as e:
         conn.rollback()
@@ -244,23 +248,30 @@ def update_entities_after_run(domain: str, entity_stats: list[dict]) -> int:
     return count
 
 
-def update_query_stats(domain: str, query_stats: list[dict]) -> int:
+def update_query_stats(domain: str, query_stats: list[dict], run_date: str | None = None) -> int:
     """Update query stats after a pipeline run.
 
-    query_stats: [{'id': 'q-detection-001', 'articles_found': 3}, ...]
+    query_stats accepts legacy or Search subsystem shape:
+    [{'id': 'q-detection-001', 'articles_found': 3}, ...]
+    [{'query_id': 'q-detection-001', 'results_count': 3}, ...]
     Returns number of queries updated.
     """
     conn = get_db(domain)
     count = 0
-    today = datetime.now(CST).strftime('%Y-%m-%d')
+    today = run_date or datetime.now(CST).strftime('%Y-%m-%d')
 
     try:
         for qs in query_stats:
-            conn.execute('''
+            query_id = qs.get('id') or qs.get('query_id')
+            if not query_id:
+                continue
+            articles_found = qs.get('articles_found', qs.get('results_count', 0))
+            cur = conn.execute('''
                 UPDATE queries SET last_run = ?, hit_count_7d = hit_count_7d + ?
                 WHERE id = ?
-            ''', (today, qs.get('articles_found', 0), qs['id']))
-            count += 1
+            ''', (today, articles_found or 0, query_id))
+            if cur.rowcount:
+                count += 1
         conn.commit()
     except Exception as e:
         conn.rollback()
@@ -393,7 +404,7 @@ def ingest_coverage(domain: str, coverage_data: dict) -> None:
 
 
 # ═══════════════════════════════════════════════════════════════
-# READ functions — used by Search stage and cascade consumers
+# READ functions — used by Search, monitoring, and higher-scale consumers
 # ═══════════════════════════════════════════════════════════════
 
 def get_queries_for_scale(domain: str, scale: str) -> list[dict]:
@@ -423,11 +434,13 @@ def get_queries_for_scale(domain: str, scale: str) -> list[dict]:
 
     conn = get_db(domain)
     try:
+        query_columns = {row["name"] for row in conn.execute("PRAGMA table_info(queries)").fetchall()}
+        dimension_expr = "q.dimension" if "dimension" in query_columns else "'general'"
         placeholders = ','.join(['?'] * len(intents))
         status_placeholders = ','.join(['?'] * len(thread_statuses))
 
         rows = conn.execute(f'''
-            SELECT q.id, q.text, q.locale, q.intent
+            SELECT q.id, q.text, q.locale, q.intent, {dimension_expr} AS dimension
             FROM queries q
             LEFT JOIN threads t ON q.thread_id = t.id
             WHERE q.status = 'active'
@@ -437,7 +450,16 @@ def get_queries_for_scale(domain: str, scale: str) -> list[dict]:
             ORDER BY q.intent, q.locale
         ''', thread_statuses + intents).fetchall()
 
-        return [{'id': r['id'], 'text': r['text'], 'locale': r['locale'], 'intent': r['intent']} for r in rows]
+        return [
+            {
+                'id': r['id'],
+                'text': r['text'],
+                'locale': r['locale'],
+                'intent': r['intent'],
+                'dimension': r['dimension'] or 'general',
+            }
+            for r in rows
+        ]
     finally:
         conn.close()
 
@@ -514,6 +536,166 @@ def get_thread_timeline(domain: str, thread_id: str) -> list[dict]:
         return [dict(r) for r in rows]
     finally:
         conn.close()
+
+
+def _json_list(value) -> list:
+    """Return a JSON-array column as a Python list."""
+    if value is None:
+        return []
+    if isinstance(value, list):
+        return value
+    try:
+        parsed = json.loads(value)
+    except (TypeError, json.JSONDecodeError):
+        return []
+    return parsed if isinstance(parsed, list) else []
+
+
+def _event_row_to_dict(row) -> dict:
+    event = dict(row)
+    for field in ("article_ids", "entity_ids", "term_ids", "source_domains"):
+        event[field] = _json_list(event.get(field))
+    return event
+
+
+def _events_for_json_member(
+    domain: str,
+    column: str,
+    member_id: str,
+    start_date: str | None = None,
+    end_date: str | None = None,
+    scale: str | None = None,
+    limit: int = 100,
+    order: str = "desc",
+) -> list[dict]:
+    """Fetch events whose JSON-array column contains member_id.
+
+    SQLite JSON1 is not guaranteed to be available in every local Python build,
+    so filtering the denormalized JSON columns in Python keeps these read APIs
+    portable. Date and scale predicates stay in SQL to keep scans bounded.
+    """
+    order_sql = "ASC" if order.lower() == "asc" else "DESC"
+    clauses = []
+    params = []
+    if start_date:
+        clauses.append("date >= ?")
+        params.append(start_date)
+    if end_date:
+        clauses.append("date <= ?")
+        params.append(end_date)
+    if scale:
+        clauses.append("scale = ?")
+        params.append(scale)
+
+    where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+    conn = get_db(domain)
+    try:
+        rows = conn.execute(f'''
+            SELECT * FROM events
+            {where}
+            ORDER BY date {order_sql}, priority ASC
+        ''', params).fetchall()
+        events = []
+        for row in rows:
+            event = _event_row_to_dict(row)
+            if member_id in event.get(column, []):
+                events.append(event)
+                if len(events) >= limit:
+                    break
+        return events
+    finally:
+        conn.close()
+
+
+def get_entity_events(
+    domain: str,
+    entity_id: str,
+    start_date: str | None = None,
+    end_date: str | None = None,
+    scale: str | None = "daily",
+    limit: int = 100,
+    order: str = "desc",
+) -> list[dict]:
+    """Get accumulated events mentioning an entity.
+
+    This is the event-level companion to get_entity_timeline(), which returns
+    periodic snapshots. Use it for questions like "Samsung's important events
+    over the last six months".
+    """
+    return _events_for_json_member(
+        domain,
+        "entity_ids",
+        entity_id,
+        start_date=start_date,
+        end_date=end_date,
+        scale=scale,
+        limit=limit,
+        order=order,
+    )
+
+
+def get_term_events(
+    domain: str,
+    term_id: str,
+    start_date: str | None = None,
+    end_date: str | None = None,
+    scale: str | None = "daily",
+    limit: int = 100,
+    order: str = "desc",
+) -> list[dict]:
+    """Get accumulated events mentioning a domain term.
+
+    Use it for key topics such as HBM, NAND, SSD, advanced packaging, or future
+    robot-domain terms.
+    """
+    return _events_for_json_member(
+        domain,
+        "term_ids",
+        term_id,
+        start_date=start_date,
+        end_date=end_date,
+        scale=scale,
+        limit=limit,
+        order=order,
+    )
+
+
+def get_term_company_progress(
+    domain: str,
+    term_id: str,
+    entity_ids: list[str] | None = None,
+    start_date: str | None = None,
+    end_date: str | None = None,
+    scale: str | None = "daily",
+    limit_per_entity: int = 50,
+    order: str = "desc",
+) -> dict[str, list[dict]]:
+    """Group term-related events by mentioned entity.
+
+    This supports comparisons like "HBM progress across Samsung, SK hynix,
+    Micron, and CXMT" while staying domain-agnostic for future domains.
+    """
+    allowed_entities = set(entity_ids) if entity_ids else None
+    grouped: dict[str, list[dict]] = {}
+    events = get_term_events(
+        domain,
+        term_id,
+        start_date=start_date,
+        end_date=end_date,
+        scale=scale,
+        limit=1000,
+        order=order,
+    )
+
+    for event in events:
+        for entity_id in event.get("entity_ids", []):
+            if allowed_entities is not None and entity_id not in allowed_entities:
+                continue
+            bucket = grouped.setdefault(entity_id, [])
+            if len(bucket) < limit_per_entity:
+                bucket.append(event)
+
+    return grouped
 
 
 def get_keyword_cooccurrence(domain: str, keyword_id: str, min_count: int = 3) -> list[dict]:
