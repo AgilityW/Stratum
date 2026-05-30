@@ -6,8 +6,8 @@
 
 The orchestrator runs these stages in order:
 
-1. `search`
-2. collector merge, via `stratum.collectors`
+1. collector collection, via `stratum.collectors`
+2. `search`
 3. `enrich`
 4. `verify`
 5. `normalize`
@@ -16,14 +16,14 @@ The orchestrator runs these stages in order:
 8. `validate`
 9. `render`
 
-The user-facing pipeline still calls this the "8 stage" flow because collectors are a sidecar merge after search, not a numbered stage script.
+The user-facing pipeline still calls this the "8 stage" flow because collectors are a sidecar seed before search, not a numbered stage script.
 
 ## Stage Contracts
 
 | Stage | Determinism | Primary input | Primary output | Responsibility |
 |:---|:---|:---|:---|:---|
-| `search` | external APIs | `config.yaml` plus DB queries or `queries.yaml` | `raw.json` | Run the configured search subsystem and write raw result objects. |
-| collectors sidecar | network-dependent | `domain.yaml` source registry | merged `raw.json` | Fetch configured RSS/browser/direct sources and append deduped results. |
+| collectors sidecar | network-dependent | `domain.yaml` source registry | seeded `raw.json` | Fetch configured RSS/browser/direct sources first. |
+| `search` | external APIs | `config.yaml` plus DB queries or `queries.yaml` plus existing `raw.json` | `raw.json` | Run the configured search subsystem, skip covered domain-scoped queries, and merge supplemental raw result objects. |
 | `enrich` | deterministic unless `--web-extract` | `raw.json` | `enriched.json` | Fill missing publication dates from API metadata, snippets, URLs, or optional page fetches. |
 | `verify` | deterministic | `enriched.json` plus `domain.yaml` | `verified.jsonl` | Apply freshness, URL, duplication, blocklist, and source quality gates. |
 | `normalize` | deterministic | `verified.jsonl` plus `domain.yaml` | `articles.jsonl` | Convert verified records into ArticleRecord-like rows with entities, terms, source metadata, and optional event-thread matches. |
@@ -44,7 +44,7 @@ Inputs:
 - `--date YYYY-MM-DD` for date-aware engine calls and freshness scoring.
 
 Output:
-- JSON array of search result dictionaries in `raw.json`.
+- JSON array of merged collector/search result dictionaries in `raw.json`.
 - Search quality and execution sidecar in `raw.stats.json`.
 
 Important boundary:
@@ -65,10 +65,13 @@ Important boundary:
 - Search results preserve original `url` but add `canonical_url` for dedupe.
   Canonicalization strips tracking query parameters/fragments and normalizes
   common `www.`/`m.` host variants.
+- `raw.json` is the only raw dataset for a domain/date run. Curated counts and
+  quality diagnostics live in sidecars or downstream artifacts, not in extra raw
+  JSON copies.
 
 ### 2. collectors sidecar
 
-Collectors are not a separate numbered stage script. The orchestrator calls them immediately after search and merges their results into `raw.json`.
+Collectors are not a separate numbered stage script. The orchestrator calls them before Search and seeds `raw.json`; Search then uses that higher-priority evidence to avoid repeat domain-scoped API calls.
 
 Inputs:
 - `domain.yaml` `source_registry.sources`
@@ -81,7 +84,7 @@ Supported collectors:
 - browser-backed sources when Playwright is installed
 
 Output:
-- More search-shaped records appended to the same raw result set.
+- Search-shaped records written into the same single raw result set.
 
 Important boundary:
 - Collector failures should degrade a source, not invalidate the whole briefing run.

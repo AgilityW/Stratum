@@ -15,7 +15,8 @@
 - 将解析后的 `db_dir` 写入 `STRATUM_DB_DIR`，确保 DB helper 与本次
   pipeline 使用同一个 SQLite 根目录。
 - 调用 8 个 stage：search、enrich、verify、normalize、cluster、edit、validate、render。
-- 在 search 之后调用 `stratum.collectors.collect()`，把 collector 结果 merge 回 `raw.json`。
+- 在 search 之前调用 `stratum.collectors.collect()`，用 RSS/URL/browser 结果
+  seed `raw.json`，再让 Search 只补充未覆盖的部分。
 - 在 normalize 前消费上一轮 `thread_keywords.json`。
 - 在 edit 前从 SQLite 生成 `story_context.json`。
 - 生成 story context 时把 `domain.yaml` 的 `companies[].id` 传给
@@ -39,10 +40,10 @@
 config.yaml + domains/{id}/
         |
         v
-search -> raw.json
+collectors -> raw.json
         |
         v
-collectors -> raw.json merge
+search supplement -> raw.json
         |
         v
 enrich -> verify -> normalize -> cluster
@@ -77,6 +78,10 @@ SQLite ingest
 | feedback keywords | `{reports_dir}/{domain}/data/story-tracking/thread_keywords.json` |
 | source health records | `{health_data_dir}/{domain}/source-daily.ndjson` |
 | SQLite DB | `{db_dir}/{domain}/{domain}.db` |
+
+`raw.json` is the only raw dataset for a domain/date run. Sidecars such as
+`raw.stats.json` and `collector_stats.json` record diagnostics, not alternate
+raw copies.
 
 After Search completes, the orchestrator ingests `raw.stats.json` into the
 SQLite `queries` table so query hit counters and `last_run` stay current.

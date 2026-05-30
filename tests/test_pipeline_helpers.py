@@ -757,6 +757,43 @@ def test_remove_legacy_briefing_artifacts_keeps_canonical(tmp_path):
     assert canonical_pdf.exists()
 
 
+def test_remove_legacy_raw_artifacts_keeps_single_canonical_raw(tmp_path):
+    from stratum.orchestrator.pipeline import _remove_legacy_raw_artifacts
+
+    raw_path = tmp_path / "raw.json"
+    stats_path = tmp_path / "raw.stats.json"
+    raw_path.write_text("[]")
+    stats_path.write_text("{}")
+    for name in (
+        "raw.full.json",
+        "raw_full.json",
+        "raw.curated.json",
+        "raw.search.json",
+        "search_raw.json",
+        "collector_raw.json",
+    ):
+        (tmp_path / name).write_text("[]")
+
+    _remove_legacy_raw_artifacts({
+        "data_dir": str(tmp_path),
+        "raw": str(raw_path),
+    })
+
+    assert raw_path.exists()
+    assert stats_path.exists()
+    assert not any(
+        (tmp_path / name).exists()
+        for name in (
+            "raw.full.json",
+            "raw_full.json",
+            "raw.curated.json",
+            "raw.search.json",
+            "search_raw.json",
+            "collector_raw.json",
+        )
+    )
+
+
 def test_try_ingest_search_stats_reads_sidecar(tmp_path, monkeypatch):
     from stratum.orchestrator import pipeline
     import stratum.db.ingest as ingest

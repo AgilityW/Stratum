@@ -106,14 +106,17 @@ job (`detection`, `verification`) from the briefing coverage surface
   `semiconductor.samsung.com`.
 - Canonicalize URLs for dedupe by stripping tracking query parameters,
   fragments, common mobile host prefixes, and cosmetic trailing slashes.
-- Score and prune results before writing `raw.json`.
+- Score and prune results for diagnostics/coverage, while stage output keeps
+  the full raw search result set for the orchestrator to merge into the single
+  `raw.json`.
 - Preserve a configured minimum source-type mix when candidates exist, so available official/analyst/media evidence is not removed only because one source type has more high-scoring results.
 - Limit single-entity dominance after source-type evidence is reserved, so one company/topic cannot consume the curated pool by volume alone.
 
 ### 不做什么
 
 - Does not read query YAML or SQLite directly. Stage `stratum/stages/search/search.py` owns query loading.
-- Does not run collectors. Orchestrator runs collectors after Search stage.
+- Does not run collectors. Orchestrator runs collectors before Search and
+  passes that existing raw pool into the Search stage.
 - Does not verify freshness beyond curation scoring. Verify stage is the gate.
 - Does not enrich missing dates from web pages. Enrich stage owns that.
 

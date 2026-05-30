@@ -3,7 +3,8 @@
 
 Reads engine settings from config.yaml and queries from either SQLite or
 domains/{domain}/queries.yaml. Executes the shared search subsystem, then writes
-curated results to raw.json plus a sidecar stats file.
+the full raw search supplement merged with any higher-priority existing raw
+results to raw.json plus a sidecar stats file.
 
 Usage:
     python3 search.py --domain storage --date 2026-05-30 \

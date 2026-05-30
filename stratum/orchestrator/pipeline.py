@@ -5,7 +5,7 @@ Domain-agnostic. Injects domain config into each stage.
 Agent stages (search, edit) are clearly marked — they require LLM calls.
 
 Stages:
-  1. Agent Search → raw.json       (LLM — external)
+  1. Collect + Search → raw.json   (network/API — external)
   2. enrich      → enriched.json   (deterministic)
   3. verify      → verified.jsonl  (deterministic)
   4. normalize   → articles.jsonl  (deterministic)
@@ -263,6 +263,7 @@ def main():
     os.makedirs(os.path.dirname(paths["verified"]), exist_ok=True)
     os.makedirs(os.path.dirname(paths["clusters"]), exist_ok=True)
     _remove_legacy_briefing_artifacts(paths)
+    _remove_legacy_raw_artifacts(paths)
 
     pipeline_status = []
 
@@ -602,6 +603,32 @@ def _remove_legacy_briefing_artifacts(paths: dict) -> None:
             os.remove(legacy_path)
         except OSError as exc:
             print(f"⚠️  Could not remove legacy artifact {legacy_path}: {exc}", file=sys.stderr)
+
+
+def _remove_legacy_raw_artifacts(paths: dict) -> None:
+    """Remove stale raw-data aliases so raw.json remains the only raw dataset."""
+    data_dir = paths.get("data_dir", "")
+    if not data_dir:
+        return
+    canonical_raw = os.path.abspath(paths.get("raw", ""))
+    legacy_names = (
+        "raw.full.json",
+        "raw_full.json",
+        "raw.curated.json",
+        "raw_curated.json",
+        "raw.search.json",
+        "raw.collectors.json",
+        "search_raw.json",
+        "collector_raw.json",
+    )
+    for legacy_name in legacy_names:
+        legacy_path = os.path.abspath(os.path.join(data_dir, legacy_name))
+        if legacy_path == canonical_raw or not os.path.exists(legacy_path):
+            continue
+        try:
+            os.remove(legacy_path)
+        except OSError as exc:
+            print(f"⚠️  Could not remove legacy raw artifact {legacy_path}: {exc}", file=sys.stderr)
 
 
 def _coverage_entities_from_domain_config(domain_config_path: str) -> list[str]:
