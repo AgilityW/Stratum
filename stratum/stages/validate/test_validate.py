@@ -73,6 +73,24 @@ class TestParseMarkdown:
         assert "关注" not in titles
         assert "反向信号" not in titles
 
+    def test_keeps_news_titles_that_contain_section_words(self):
+        content = """# 存储早报
+
+### HBM 供应受关注
+HBM supply is a valid news item.
+
+*Trendforce · 2026年5月28日*
+
+### 关注
+- Follow price checks
+
+### 反向信号
+- Watch demand risk
+"""
+        items = parse_markdown_from_str(content)
+        assert len(items) == 1
+        assert items[0]["title"] == "HBM 供应受关注"
+
     def test_source_line_keeps_full_date_with_weekday(self):
         parsed = _parse_source_line("*news.qq.com [zh-CN] · 2026年5月30日 · 周六*")
         assert parsed == (["news.qq.com"], "2026年5月30日 · 周六")
@@ -590,27 +608,7 @@ class TestStructuredOutputValidation:
 
 def parse_markdown_from_str(content: str):
     """Helper: parse markdown from string instead of file."""
-    items = []
-    current_item = None
-
-    for line in content.split('\n'):
-        line = line.strip()
-        if line.startswith('### ') and '今日要点' not in line and '关注' not in line and '反向信号' not in line:
-            if current_item:
-                items.append(current_item)
-            current_item = {
-                'title': line.replace('### ', '').strip(),
-                'body': [], 'sources': [], 'date': None,
-            }
-        elif current_item and line.startswith('*') and '·' in line:
-            parsed = _parse_source_line(line)
-            if parsed:
-                sources, date = parsed
-                current_item['sources'] = sources
-                current_item['date'] = date
-        elif current_item and line and not line.startswith('#'):
-            current_item['body'].append(line)
-
-    if current_item:
-        items.append(current_item)
-    return items
+    with tempfile.NamedTemporaryFile("w+", encoding="utf-8", suffix=".md") as tmp:
+        tmp.write(content)
+        tmp.flush()
+        return parse_markdown(tmp.name)

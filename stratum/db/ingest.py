@@ -40,13 +40,19 @@ def _sync_thread_entities(conn, thread_id: str) -> None:
             if entity_id:
                 entity_ids.add(entity_id)
 
-    known_entities = {
-        row["id"]
-        for row in conn.execute(
-            f"SELECT id FROM entities WHERE id IN ({','.join(['?'] * len(entity_ids))})",
-            tuple(sorted(entity_ids)),
-        ).fetchall()
-    } if entity_ids else set()
+    has_entities_table = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'entities'"
+    ).fetchone()
+    if entity_ids and has_entities_table:
+        known_entities = {
+            row["id"]
+            for row in conn.execute(
+                f"SELECT id FROM entities WHERE id IN ({','.join(['?'] * len(entity_ids))})",
+                tuple(sorted(entity_ids)),
+            ).fetchall()
+        }
+    else:
+        known_entities = entity_ids
 
     conn.execute(
         "DELETE FROM thread_entities WHERE thread_id = ? AND role = 'subject'",

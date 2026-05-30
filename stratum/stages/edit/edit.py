@@ -1,8 +1,11 @@
 #!/usr/bin/env python3
 """edit.py — Agent Edit: LLM generates validated briefing.md from articles + clusters.
 
-Thin orchestration layer. Prompt assembly delegated to assembler.py.
-LLM call delegated to llm_client.py.
+The v3 path is a timescale-aware block editor: deterministic planning creates
+dynamic categories, category-sized LLM calls edit those blocks, and the final
+Markdown is rendered through the configured timescale template. The legacy
+monolithic prompt path remains available when a manifest profile does not set
+``budget.edit_mode: v3``.
 
 Input:  verified articles (JSONL), clusters (JSON), story context (JSON),
         domain.yaml, config.yaml, manifest + prompt fragments.
@@ -880,7 +883,7 @@ def render_template(template_name: str, values: dict) -> str:
 
 
 def polish_sections(plan: dict, item_markdown: str, llm_cfg: dict) -> dict:
-    prompt_text = _load_prompt("daily_polish.md")
+    prompt_text = _load_prompt("profile_polish.md")
     titles = markdown_news_titles(item_markdown)
     user_payload = {
         "titles": titles,

@@ -28,7 +28,7 @@ The user-facing pipeline still calls this the "8 stage" flow because collectors 
 | `verify` | deterministic | `enriched.json` plus `domain.yaml` | `verified.jsonl` | Apply freshness, URL, duplication, blocklist, and source quality gates. |
 | `normalize` | deterministic | `verified.jsonl` plus `domain.yaml` | `articles.jsonl` | Convert verified records into ArticleRecord-like rows with entities, terms, source metadata, and optional event-thread matches. |
 | `cluster` | deterministic | `articles.jsonl` | `clusters.json` | Group related articles by event-thread anchor and entity/term overlap. |
-| `edit` | LLM-dependent | `articles.jsonl`, `clusters.json`, story context | `briefing.md`, optional `event-threads.json` | Assemble prompts and ask the LLM to produce the editorial briefing plus structured thread data. |
+| `edit` | LLM-dependent | `articles.jsonl`, `clusters.json`, story context | `briefing.md`, `briefing_plan.json`, `briefing_chunks.json`, `edit_trace.json`, optional `event-threads.json` | Build dynamic evidence categories, edit category blocks with the LLM, render through the timescale template, and produce structured thread data. |
 | `validate` | deterministic | `briefing.md`, `articles.jsonl`, optional schemas | exit status and JSON report | Check cited sources, cited dates, and structured event-thread schema validity. |
 | `render` | deterministic, PDF shell-out optional | `briefing.md`, template | `briefing.html`, optional `briefing.pdf` | Convert Markdown to template-backed HTML, then use local Chrome for PDF when available. |
 
@@ -238,24 +238,39 @@ splits or resolves the thread.
 
 ### 7. edit
 
-`edit/edit.py` is the LLM editorial boundary.
+`edit/edit.py` is the LLM editorial boundary. The active v3 path is a
+timescale-aware block editor: deterministic planning builds dynamic categories
+from the normalized evidence, category-sized LLM calls edit those blocks, and
+the final Markdown is assembled through the configured timescale template.
 
 Inputs:
 - `articles.jsonl`
 - `clusters.json`
 - generated story context
 - prompt manifest and prompt fragments from `stratum/stages/edit/prompts/`
+- timescale Markdown template from `stratum/stages/edit/templates/`
 - `config.yaml` LLM settings
 - `domain.yaml` policy and title values injected into the prompt
 
 Output:
 - `briefing.md`
+- `briefing_plan.json` with dynamic categories, selected items, and dropped
+  candidates
+- `briefing_chunks.json` with category block edit outputs; the filename is
+  retained for compatibility with previous chunk artifacts
+- `edit_trace.json` with mode, timescale, category/block status, and counts
 - optional `event-threads.json` when the LLM emits `threads`, `causal_edges`,
   or `judgments`
 
 Important boundary:
-- Prompt assembly lives in `assembler.py`.
+- Legacy monolithic prompt assembly lives in `assembler.py`; v3 block editing
+  uses `planner.py`, `category_block.md`, `profile_polish.md`, and the
+  timescale templates.
 - LLM transport lives in `llm_client.py`.
+- The orchestrator currently invokes Edit with `--timescale daily`; other
+  timescale profiles are present for direct Edit use and future orchestrator
+  entrypoints, but weekly/monthly/quarterly/yearly pipeline runners are not
+  first-class yet.
 - Daily structured output asks for `threads` with concrete `watch_signals`,
   `close_conditions`, status, priority, and entity/term ids so DB ingest can
   seed next-run Search follow-up queries.

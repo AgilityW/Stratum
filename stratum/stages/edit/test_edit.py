@@ -384,6 +384,93 @@ def test_run_block_edit_uses_template_and_category_blocks(monkeypatch, tmp_path)
     assert structured["threads"]
 
 
+def test_run_block_edit_can_render_weekly_template(monkeypatch, tmp_path):
+    articles = [
+        _fake_article("a1", "DRAM price shortage extends into 2027", "market.example", "analyst"),
+        _fake_article("a2", "Samsung HBM4 sample shipment with customer certification", "samsung.com", "official"),
+    ]
+    articles[0]["query_dimension"] = "market_pricing"
+    articles[1]["query_dimension"] = "technology"
+    clusters = {
+        "clusters": [
+            {
+                "id": "c1",
+                "canonical_title": "DRAM price shortage extends into 2027",
+                "confidence": "high",
+                "article_ids": ["a1"],
+                "article_count": 1,
+                "source_types": ["analyst"],
+            },
+            {
+                "id": "c2",
+                "canonical_title": "Samsung HBM4 sample shipment with customer certification",
+                "confidence": "high",
+                "article_ids": ["a2"],
+                "article_count": 1,
+                "source_types": ["official"],
+            },
+        ]
+    }
+
+    def fake_call_llm(system_prompt, user_prompt, llm_cfg):
+        if "summary" in system_prompt:
+            return json.dumps({
+                "summary": ["Weekly trend summary."],
+                "focus": ["Next week price checks", "HBM certification", "Supply gap"],
+                "contrarian": ["Demand risk", "Certification risk", "Supply response"],
+            })
+        payload = json.loads(user_prompt)
+        return json.dumps({
+            "category_id": payload["category_id"],
+            "label": payload["label"],
+            "items": [
+                {
+                    "item_id": item["item_id"],
+                    "title": item["title_hint"],
+                    "paragraphs": [item["evidence"][0]["snippet"], "This changes the weekly trend read."],
+                }
+                for item in payload["items"]
+            ],
+            "dropped": [],
+        })
+
+    monkeypatch.setattr("edit.call_llm", fake_call_llm)
+    args = type("Args", (), {
+        "date": "2026-05-30",
+        "domain": "storage",
+        "timescale": "weekly",
+        "output": str(tmp_path / "weekly.md"),
+    })()
+
+    briefing, _structured, artifacts = run_block_edit(
+        args,
+        "存储周报",
+        articles,
+        clusters,
+        {},
+        {"api_key": "fake"},
+        {"_budget": {
+            "target_main_items": 2,
+            "target_edge_items": 0,
+            "min_items": 2,
+            "max_items": 2,
+            "main_min_items": 2,
+            "main_max_items": 2,
+            "edge_min_items": 0,
+            "edge_max_items": 0,
+            "block_parallelism": 1,
+            "max_categories": 4,
+        }},
+        {"system": {"template": "weekly.md"}},
+    )
+
+    assert "### 本周结论" in briefing
+    assert "## 趋势变化" in briefing
+    assert "## 下周关注" in briefing
+    assert "每日 7:30" not in briefing
+    assert artifacts["trace"]["timescale"] == "weekly"
+
+
 def test_run_daily_v2_writes_plan_driven_report(monkeypatch, tmp_path):
     articles = [
         _fake_article("a1", "Samsung HBM4 sample shipment", "samsung.com", "official"),

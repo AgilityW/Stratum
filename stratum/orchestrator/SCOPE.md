@@ -73,6 +73,7 @@ SQLite ingest
 | normalized articles | `articles.jsonl` |
 | clusters | `clusters.json` |
 | briefing | `briefing.md`, `briefing.html`, `briefing.pdf` |
+| edit plan/debug | `briefing_plan.json`, `briefing_chunks.json`, `edit_trace.json` |
 | edit context | `story_context.json` |
 | run manifest | `run_manifest.json` |
 | feedback keywords | `{reports_dir}/{domain}/data/story-tracking/thread_keywords.json` |
@@ -96,7 +97,7 @@ runtime capability or unsupported configuration, not an upstream source scan.
 ## Failure Policy
 
 - Core deterministic stages fail hard through `run_stage()`.
-- Edit failure is reported but validate/render may continue if a prior `briefing.md` exists.
+- Edit failure is hard-blocking before validate/render so stale briefing artifacts are not republished.
 - Collector, story context generation, thread keyword export, and DB ingest are best-effort helpers. They log warnings and do not block the main pipeline.
 - `run_manifest.json` records stage-level `success`, `skipped`, `provided`,
   `empty`, `failed`, and `failed_nonblocking` statuses. On hard stage failure,
@@ -156,6 +157,9 @@ omits optional watch signals.
 - `domains/{id}/queries.yaml`
 - `domains/{id}/templates/daily.html`
 
-Edit prompts are loaded from `stratum/stages/edit/prompts/manifest.yaml` and
-its fragments. Domain prompt files under `domains/{id}/prompts/` are reserved
-assets for future override support; the current pipeline does not read them.
+Edit profiles are loaded from `stratum/stages/edit/prompts/manifest.yaml`.
+The active daily path uses Edit v3 dynamic category blocks and Markdown
+templates from `stratum/stages/edit/templates/`; legacy prompt fragments remain
+available for profiles that do not opt into v3. Domain prompt files under
+`domains/{id}/prompts/` are reserved assets for future override support; the
+current pipeline does not read them.

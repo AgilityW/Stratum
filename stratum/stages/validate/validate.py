@@ -275,6 +275,9 @@ def _parse_source_line(line: str) -> tuple[list[str], str | None] | None:
     return sources, date_part
 
 
+NON_NEWS_SECTION_TITLES = {"今日要点", "关注", "反向信号"}
+
+
 def parse_markdown(path):
     """Parse briefing .md into structured sections."""
     with open(path) as f:
@@ -286,11 +289,14 @@ def parse_markdown(path):
     for line in content.split('\n'):
         line = line.strip()
 
-        if line.startswith('### ') and '今日要点' not in line and '关注' not in line and '反向信号' not in line:
+        if line.startswith('### '):
+            title = line.replace('### ', '').strip()
+            if title in NON_NEWS_SECTION_TITLES:
+                continue
             if current_item:
                 items.append(current_item)
             current_item = {
-                'title': line.replace('### ', '').strip(),
+                'title': title,
                 'body': [],
                 'sources': [],
                 'date': None,

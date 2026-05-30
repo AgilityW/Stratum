@@ -67,6 +67,18 @@ weekly:
       schema: null
   budget:
     max_items: 15
+    min_items: 8
+    main_max_items: 12
+    main_min_items: 6
+    edge_max_items: 4
+    edge_min_items: 1
+    target_main_items: 10
+    target_edge_items: 3
+    block_parallelism: 4
+    evidence_articles_per_item: 3
+    max_categories: 10
+    max_main_per_category: 3
+    edit_mode: v3
 
 monthly:
   label: "月报"
@@ -83,6 +95,20 @@ monthly:
     judgments:
       enabled: false
       schema: null
+  budget:
+    max_items: 12
+    min_items: 6
+    main_max_items: 10
+    main_min_items: 5
+    edge_max_items: 3
+    edge_min_items: 0
+    target_main_items: 8
+    target_edge_items: 2
+    block_parallelism: 4
+    evidence_articles_per_item: 4
+    max_categories: 8
+    max_main_per_category: 3
+    edit_mode: v3
 
 quarterly:
   label: "季报"
@@ -99,6 +125,20 @@ quarterly:
     judgments:
       enabled: true
       schema: _schemas/judgment.schema.json
+  budget:
+    max_items: 12
+    min_items: 6
+    main_max_items: 10
+    main_min_items: 5
+    edge_max_items: 3
+    edge_min_items: 0
+    target_main_items: 8
+    target_edge_items: 2
+    block_parallelism: 4
+    evidence_articles_per_item: 5
+    max_categories: 8
+    max_main_per_category: 3
+    edit_mode: v3
 
 yearly:
   label: "年报"
@@ -113,3 +153,17 @@ yearly:
     judgments:
       enabled: true
       schema: _schemas/judgment.schema.json
+  budget:
+    max_items: 14
+    min_items: 6
+    main_max_items: 12
+    main_min_items: 5
+    edge_max_items: 3
+    edge_min_items: 0
+    target_main_items: 9
+    target_edge_items: 2
+    block_parallelism: 4
+    evidence_articles_per_item: 6
+    max_categories: 9
+    max_main_per_category: 3
+    edit_mode: v3

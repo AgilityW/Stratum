@@ -1,4 +1,9 @@
-"""Deterministic planning helpers for daily edit V2."""
+"""Deterministic planning helpers for Edit.
+
+The legacy ``build_plan`` function supports the previous daily V2 item plan.
+The active V3 path uses ``build_block_plan`` to create dynamic categories that
+can be rendered through different timescale templates.
+"""
 
 from __future__ import annotations
 
@@ -309,8 +314,14 @@ def build_plan(
 ) -> dict:
     """Build deterministic item plan from normalized articles and clusters."""
     article_by_id = {str(article.get("id")): article for article in articles if article.get("id")}
-    main_target = int(budget.get("target_main_items") or budget.get("main_max_items") or 18)
-    edge_target = int(budget.get("target_edge_items") or max(5, budget.get("edge_min_items", 5)))
+    main_target = int(
+        budget["target_main_items"] if "target_main_items" in budget
+        else budget.get("main_max_items", 18)
+    )
+    edge_target = int(
+        budget["target_edge_items"] if "target_edge_items" in budget
+        else max(5, budget.get("edge_min_items", 5))
+    )
     evidence_limit = int(budget.get("evidence_articles_per_item") or 4)
 
     selected_article_ids: set[str] = set()
@@ -478,8 +489,14 @@ def build_block_plan(
     content-derived labels, not fixed domain topic buckets.
     """
     article_by_id = {str(article.get("id")): article for article in articles if article.get("id")}
-    main_target = int(budget.get("target_main_items") or budget.get("main_max_items") or 18)
-    edge_target = int(budget.get("target_edge_items") or max(5, budget.get("edge_min_items", 5)))
+    main_target = int(
+        budget["target_main_items"] if "target_main_items" in budget
+        else budget.get("main_max_items", 18)
+    )
+    edge_target = int(
+        budget["target_edge_items"] if "target_edge_items" in budget
+        else max(5, budget.get("edge_min_items", 5))
+    )
     evidence_limit = int(budget.get("evidence_articles_per_item") or 4)
     max_categories = int(budget.get("max_categories") or max(12, main_target))
     max_main_per_category = int(budget.get("max_main_per_category") or 4)

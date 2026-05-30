@@ -21,7 +21,7 @@ Stratum/
 │   │   ├── verify/              #     Blocklist, date window, magnitude sanity
 │   │   ├── normalize/           #     Entity/term extraction, source classification
 │   │   ├── cluster/             #     Jaccard + Union-Find story clustering
-│   │   ├── edit/                #     LLM-powered briefing assembly
+│   │   ├── edit/                #     LLM-powered dynamic block editing + template assembly
 │   │   ├── validate/            #     Content gate (claims vs verified articles)
 │   │   └── render/              #     MD → HTML → PDF (template-driven)
 │   ├── subsystems/
@@ -55,7 +55,7 @@ Stage 2:    Enrich     → enriched.json    (date extraction)
 Stage 3:    Verify     → verified.jsonl   (blocklist, freshness, magnitude)
 Stage 4:    Normalize  → articles.jsonl   (entities, terms, classification)
 Stage 5:    Cluster    → clusters.json    (Jaccard story grouping)
-Stage 6:    Edit       → briefing.md      (LLM assembly)
+Stage 6:    Edit       → briefing.md      (dynamic block editing + template assembly)
 Stage 7:    Validate   → gate pass/fail   (claims vs verified articles)
 Stage 8:    Render     → HTML + PDF       (template-driven)
 ```
@@ -70,7 +70,18 @@ Stage 8:    Render     → HTML + PDF       (template-driven)
 | `site:` queries | Tavily search | Digitimes, TrendForce, Tom's Hardware, etc. |
 | `broad` queries | Tavily search | New source discovery |
 
-**Iron law**: `stratum/` has **zero** hardcoded domain data. Domain-owned knowledge lives under `domains/{id}/`: `domain.yaml` for entities, sources, validation/editorial rules; `queries.yaml` for search templates; HTML template files for rendering. The active Edit prompt engine currently lives in `stratum/stages/edit/prompts/` and injects domain policy from `domain.yaml`; `domains/{id}/prompts/` is reserved for future domain prompt overrides.
+**Iron law**: `stratum/` has **zero** hardcoded domain data. Domain-owned knowledge lives under `domains/{id}/`: `domain.yaml` for entities, sources, validation/editorial rules; `queries.yaml` for search templates; HTML template files for rendering. The active Edit engine lives in `stratum/stages/edit/`: it builds dynamic categories from normalized evidence, edits those blocks with LLM calls, and renders Markdown through timescale templates in `stratum/stages/edit/templates/`. Domain prompt files under `domains/{id}/prompts/` are reserved for future override support.
+
+**Edit artifacts**: Stage 6 writes `briefing.md` plus debugging sidecars:
+
+| Artifact | Meaning |
+|---|---|
+| `briefing_plan.json` | Dynamic category plan, selected items, omitted/dropped candidates |
+| `briefing_chunks.json` | Category block edit outputs. The filename is kept for compatibility; the content is block-oriented in Edit v3. |
+| `edit_trace.json` | Block status, timescale, category counts, and plan counts |
+| `event-threads.json` | Optional structured thread/edge/judgment data for DB ingest |
+
+The orchestrator is currently daily-first (`make weekly/monthly/quarterly/yearly` intentionally exits), but the Edit engine has manifest profiles and Markdown templates for `daily`, `weekly`, `monthly`, `quarterly`, and `yearly`.
 
 ## Quick Start
 
