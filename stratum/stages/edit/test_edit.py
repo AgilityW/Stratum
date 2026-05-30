@@ -6,7 +6,7 @@ import sys
 sys.path.insert(0, os.path.dirname(__file__))
 
 from assembler import _build_data_section, _source_name, assemble
-from planner import build_plan
+from planner import build_block_plan, build_plan
 from edit import (
     _article_source_label,
     item_count_within_budget,
@@ -16,6 +16,7 @@ from edit import (
     repair_source_line_dates,
     repair_missing_source_lines,
     resolve_domain_title,
+    run_block_edit,
     run_daily_v2,
     should_write_event_threads,
     split_llm_output,
@@ -244,6 +245,143 @@ def test_build_plan_selects_main_and_edge_items():
     assert [item["kind"] for item in plan["items"]] == ["main", "main", "edge", "edge"]
     assert plan["items"][0]["article_ids"] == ["a1"]
     assert plan["items"][2]["sources"] == ["westerndigital.com"]
+
+
+def test_build_block_plan_creates_dynamic_categories():
+    articles = [
+        _fake_article("a1", "Samsung HBM4 sample shipment with customer certification", "samsung.com", "official"),
+        _fake_article("a2", "DRAM price shortage extends into 2027", "market.example", "analyst"),
+        _fake_article("a3", "WD appoints Manuvir Das to board", "westerndigital.com", "official"),
+    ]
+    articles[0]["query_dimension"] = "technology"
+    articles[1]["query_dimension"] = "market_pricing"
+    articles[2]["query_dimension"] = "company_strategy"
+    clusters = {
+        "clusters": [
+            {
+                "id": "c1",
+                "canonical_title": "Samsung HBM4 sample shipment with customer certification",
+                "confidence": "high",
+                "article_ids": ["a1"],
+                "article_count": 1,
+                "source_types": ["official"],
+            },
+            {
+                "id": "c2",
+                "canonical_title": "DRAM price shortage extends into 2027",
+                "confidence": "high",
+                "article_ids": ["a2"],
+                "article_count": 1,
+                "source_types": ["analyst"],
+            },
+        ]
+    }
+
+    plan = build_block_plan(
+        articles,
+        clusters,
+        {},
+        "2026-05-30",
+        {"target_main_items": 2, "target_edge_items": 1, "evidence_articles_per_item": 2, "max_categories": 4},
+    )
+
+    assert plan["mode"] == "block_edit"
+    assert plan["counts"]["categories"] >= 2
+    assert all(category["role"] == "dynamic_content_category" for category in plan["categories"])
+    assert plan["counts"]["main_items"] == 2
+    assert plan["counts"]["edge_items"] == 1
+    assert plan["items"][0]["category_id"].startswith("cat-")
+
+
+def test_run_block_edit_uses_template_and_category_blocks(monkeypatch, tmp_path):
+    articles = [
+        _fake_article("a1", "Samsung HBM4 sample shipment with customer certification", "samsung.com", "official"),
+        _fake_article("a2", "DRAM price shortage extends into 2027", "market.example", "analyst"),
+        _fake_article("a3", "WD appoints Manuvir Das to board", "westerndigital.com", "official"),
+    ]
+    articles[0]["query_dimension"] = "technology"
+    articles[1]["query_dimension"] = "market_pricing"
+    articles[2]["query_dimension"] = "company_strategy"
+    clusters = {
+        "clusters": [
+            {
+                "id": "c1",
+                "canonical_title": "Samsung HBM4 sample shipment with customer certification",
+                "confidence": "high",
+                "article_ids": ["a1"],
+                "article_count": 1,
+                "source_types": ["official"],
+            },
+            {
+                "id": "c2",
+                "canonical_title": "DRAM price shortage extends into 2027",
+                "confidence": "high",
+                "article_ids": ["a2"],
+                "article_count": 1,
+                "source_types": ["analyst"],
+            },
+        ]
+    }
+
+    def fake_call_llm(system_prompt, user_prompt, llm_cfg):
+        if "summary" in system_prompt:
+            return json.dumps({
+                "summary": ["HBM and pricing are both active."],
+                "focus": ["HBM certification", "DRAM supply", "Edge validation"],
+                "contrarian": ["Demand may weaken", "Certification may slip", "Evidence may be early"],
+            })
+        payload = json.loads(user_prompt)
+        return json.dumps({
+            "category_id": payload["category_id"],
+            "label": payload["label"],
+            "items": [
+                {
+                    "item_id": item["item_id"],
+                    "title": item["title_hint"],
+                    "paragraphs": [item["evidence"][0]["snippet"], "This matters for storage market structure."],
+                }
+                for item in payload["items"]
+            ],
+            "dropped": [],
+        })
+
+    monkeypatch.setattr("edit.call_llm", fake_call_llm)
+    args = type("Args", (), {
+        "date": "2026-05-30",
+        "domain": "storage",
+        "timescale": "daily",
+        "output": str(tmp_path / "briefing.md"),
+    })()
+
+    briefing, structured, artifacts = run_block_edit(
+        args,
+        "存储早报",
+        articles,
+        clusters,
+        {},
+        {"api_key": "fake"},
+        {"_budget": {
+            "target_main_items": 2,
+            "target_edge_items": 1,
+            "min_items": 3,
+            "max_items": 3,
+            "main_min_items": 2,
+            "main_max_items": 2,
+            "edge_min_items": 1,
+            "edge_max_items": 1,
+            "block_parallelism": 1,
+            "max_categories": 4,
+        }},
+        {"system": {"template": "daily.md"}},
+    )
+
+    assert "## 主线" in briefing
+    assert "## 边缘信号" in briefing
+    assert "### Samsung HBM4 sample shipment" in briefing
+    assert "### 【边缘信号】WD appoints Manuvir Das to board" in briefing
+    assert artifacts["plan"]["version"] == 3
+    assert artifacts["trace"]["mode"] == "block_edit"
+    assert structured["threads"]
 
 
 def test_run_daily_v2_writes_plan_driven_report(monkeypatch, tmp_path):

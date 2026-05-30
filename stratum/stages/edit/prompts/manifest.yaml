@@ -37,8 +37,11 @@ daily:
     target_main_items: 18
     target_edge_items: 6
     chunk_size: 6
+    block_parallelism: 4
     evidence_articles_per_item: 2
-    edit_mode: v2
+    max_categories: 18
+    max_main_per_category: 3
+    edit_mode: v3
     retry_attempts: 2
     prompt_max_chars: 150000
     max_articles_per_cluster: 18

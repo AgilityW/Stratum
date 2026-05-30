@@ -33,7 +33,7 @@ _EDIT_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, _EDIT_DIR)
 from assembler import assemble, _format_cn_date
 from llm_client import call_llm
-from planner import build_plan
+from planner import build_block_plan, build_plan
 
 CST_WEEKDAYS = ["周一", "周二", "周三", "周四", "周五", "周六", "周日"]
 THREAD_ID_RE = re.compile(r"^et-[A-Za-z0-9][A-Za-z0-9_-]*$")
@@ -559,7 +559,10 @@ def fallback_paragraphs(item: dict) -> list[str]:
     evidence = item.get("evidence") or []
     first = evidence[0] if evidence else {}
     snippet = str(first.get("snippet") or first.get("title") or item.get("title_hint") or "").strip()
-    if len(snippet) > 260:
+    title = str(item.get("title_hint") or first.get("title") or "").strip()
+    if not re.search(r"[\u4e00-\u9fff]", snippet):
+        snippet = f"该来源围绕“{title[:80]}”提供了当日增量信息。"
+    elif len(snippet) > 260:
         snippet = snippet[:260] + "..."
     if item.get("kind") == "edge":
         return [
@@ -642,6 +645,130 @@ def run_chunk_writing(plan: dict, llm_cfg: dict, budget: dict) -> list[dict]:
     return sorted(results, key=lambda chunk: chunk["chunk_index"])
 
 
+def _category_payload(category: dict, selected_ids: set[str]) -> dict:
+    items = [
+        item for item in category.get("items", [])
+        if item.get("item_id") in selected_ids
+    ]
+    return {
+        "category_id": category["category_id"],
+        "label": category.get("label", ""),
+        "why_created": category.get("why_created", ""),
+        "items": [
+            {
+                "item_id": item["item_id"],
+                "kind": item["kind"],
+                "title_hint": item["title_hint"],
+                "reason": item.get("reason", ""),
+                "evidence": item.get("evidence", []),
+            }
+            for item in items
+        ],
+        "dropped": category.get("dropped", []),
+    }
+
+
+def _fallback_block(category: dict, items: list[dict], detail: str) -> dict:
+    return {
+        "category_id": category["category_id"],
+        "label": category.get("label", ""),
+        "status": "fallback",
+        "detail": detail,
+        "items": [
+            {
+                "item_id": item["item_id"],
+                "title": item["title_hint"],
+                "paragraphs": fallback_paragraphs(item),
+                "_fallback": detail,
+            }
+            for item in items
+        ],
+        "dropped": category.get("dropped", []),
+    }
+
+
+def write_category_block(
+    block_index: int,
+    category: dict,
+    selected_ids: set[str],
+    llm_cfg: dict,
+    prompt_text: str,
+) -> dict:
+    items = [item for item in category.get("items", []) if item.get("item_id") in selected_ids]
+    if not items:
+        return {
+            "block_index": block_index,
+            "category_id": category["category_id"],
+            "label": category.get("label", ""),
+            "status": "skipped",
+            "detail": "no selected items",
+            "items": [],
+            "dropped": category.get("dropped", []),
+        }
+    payload = _category_payload(category, selected_ids)
+    try:
+        response = call_llm(prompt_text, json.dumps(payload, ensure_ascii=False, indent=2), llm_cfg)
+    except Exception as exc:
+        fallback = _fallback_block(category, items, f"llm_error: {exc}")
+        fallback["block_index"] = block_index
+        return fallback
+    parsed = _extract_json_object(response)
+    if not isinstance(parsed, dict) or not isinstance(parsed.get("items"), list):
+        fallback = _fallback_block(category, items, "invalid_json")
+        fallback["block_index"] = block_index
+        return fallback
+    by_id = {item["item_id"]: item for item in items}
+    normalized = []
+    for generated in parsed.get("items", []):
+        if not isinstance(generated, dict):
+            continue
+        item_id = str(generated.get("item_id") or "").strip()
+        planned = by_id.get(item_id)
+        if not planned:
+            continue
+        paragraphs = generated.get("paragraphs")
+        if isinstance(paragraphs, str):
+            paragraphs = [paragraphs]
+        if not isinstance(paragraphs, list) or not paragraphs:
+            paragraphs = fallback_paragraphs(planned)
+        normalized.append({
+            "item_id": item_id,
+            "title": str(generated.get("title") or planned["title_hint"]).strip()[:140],
+            "paragraphs": [str(p).strip() for p in paragraphs if str(p).strip()][:2] or fallback_paragraphs(planned),
+        })
+    missing = [item for item in items if item["item_id"] not in {entry["item_id"] for entry in normalized}]
+    normalized.extend(_fallback_block(category, missing, "missing_from_llm")["items"])
+    dropped = parsed.get("dropped") if isinstance(parsed.get("dropped"), list) else category.get("dropped", [])
+    return {
+        "block_index": block_index,
+        "category_id": category["category_id"],
+        "label": str(parsed.get("label") or category.get("label", "")).strip()[:90],
+        "status": "ok",
+        "detail": "",
+        "items": normalized,
+        "dropped": dropped,
+    }
+
+
+def run_block_writing(plan: dict, llm_cfg: dict, budget: dict) -> list[dict]:
+    max_workers = int(budget.get("block_parallelism") or budget.get("chunk_parallelism", 4) or 4)
+    prompt_text = _load_prompt("category_block.md")
+    selected_ids = {item["item_id"] for item in plan.get("items", [])}
+    categories = [
+        category for category in plan.get("categories", [])
+        if any(item.get("item_id") in selected_ids for item in category.get("items", []))
+    ]
+    results: list[dict] = []
+    with ThreadPoolExecutor(max_workers=max(1, max_workers)) as pool:
+        futures = {
+            pool.submit(write_category_block, idx, category, selected_ids, llm_cfg, prompt_text): idx
+            for idx, category in enumerate(categories, start=1)
+        }
+        for future in as_completed(futures):
+            results.append(future.result())
+    return sorted(results, key=lambda block: block["block_index"])
+
+
 def _date_cn(date_text: str, fallback: str) -> str:
     try:
         dt = datetime.fromisoformat((date_text or fallback)[:10])
@@ -689,6 +816,67 @@ def assemble_items_markdown(plan: dict, chunks: list[dict], run_date: str) -> st
         parts.append(f"\n{_source_line(item, run_date, title, paragraphs)}\n")
         parts.append("\n---\n\n")
     return "".join(parts).rstrip("-\n ") + "\n"
+
+
+def _block_item_map(blocks: list[dict]) -> dict[str, dict]:
+    mapped = {}
+    for block in blocks:
+        for item in block.get("items", []):
+            mapped[item.get("item_id")] = item
+    return mapped
+
+
+def assemble_block_markdown(plan: dict, blocks: list[dict], run_date: str) -> tuple[str, str]:
+    generated = _block_item_map(blocks)
+    block_by_category = {block.get("category_id"): block for block in blocks}
+    item_by_id = {item["item_id"]: item for item in plan.get("items", [])}
+    main_parts = []
+    edge_parts = []
+
+    for category in plan.get("categories", []):
+        selected = [
+            item_by_id[item["item_id"]]
+            for item in category.get("items", [])
+            if item.get("item_id") in item_by_id and item_by_id[item["item_id"]].get("kind") == "main"
+        ]
+        if not selected:
+            continue
+        label = (block_by_category.get(category["category_id"], {}) or {}).get("label") or category.get("label", "")
+        main_parts.append(f"## {label}\n\n")
+        for item in selected:
+            written = generated.get(item["item_id"], {})
+            title = str(written.get("title") or item["title_hint"]).strip()
+            paragraphs = written.get("paragraphs") or fallback_paragraphs(item)
+            main_parts.append(f"### {title}\n")
+            for paragraph in paragraphs[:2]:
+                main_parts.append(f"\n{paragraph.strip()}\n")
+            main_parts.append(f"\n{_source_line(item, run_date, title, paragraphs)}\n\n")
+
+    for item in plan.get("items", []):
+        if item.get("kind") != "edge":
+            continue
+        written = generated.get(item["item_id"], {})
+        title = str(written.get("title") or item["title_hint"]).strip()
+        if not title.startswith("【边缘信号】"):
+            title = f"【边缘信号】{title}"
+        paragraphs = written.get("paragraphs") or fallback_paragraphs(item)
+        edge_parts.append(f"### {title}\n")
+        for paragraph in paragraphs[:2]:
+            edge_parts.append(f"\n{paragraph.strip()}\n")
+        edge_parts.append(f"\n{_source_line(item, run_date, title, paragraphs)}\n\n")
+
+    return "".join(main_parts).strip(), "".join(edge_parts).strip()
+
+
+def render_template(template_name: str, values: dict) -> str:
+    template_path = os.path.join(_EDIT_DIR, "templates", template_name)
+    if not os.path.exists(template_path):
+        template_path = os.path.join(_EDIT_DIR, "templates", "daily.md")
+    with open(template_path) as f:
+        text = f.read()
+    for key, value in values.items():
+        text = text.replace("{{ " + key + " }}", str(value))
+    return text
 
 
 def polish_sections(plan: dict, item_markdown: str, llm_cfg: dict) -> dict:
@@ -766,6 +954,35 @@ def assemble_full_markdown(title: str, run_date: str, sections: dict, item_markd
     return "".join(parts)
 
 
+def _paragraph_block(items: list[str]) -> str:
+    return "\n".join(str(item).strip() for item in items if str(item).strip())
+
+
+def _bullet_block(items: list[str]) -> str:
+    return "\n".join(f"- {str(item).strip()}" for item in items if str(item).strip())
+
+
+def assemble_profile_markdown(
+    title: str,
+    run_date: str,
+    timescale: str,
+    template_name: str,
+    sections: dict,
+    main_markdown: str,
+    edge_markdown: str,
+) -> str:
+    briefing = render_template(template_name, {
+        "title": title,
+        "date_label": _format_cn_date(run_date),
+        "summary": _paragraph_block(sections["summary"]),
+        "main_categories": main_markdown,
+        "edge_items": edge_markdown,
+        "focus": _bullet_block(sections["focus"]),
+        "contrarian": _bullet_block(sections["contrarian"]),
+    })
+    return briefing.strip() + "\n"
+
+
 def deterministic_structured_data(plan: dict, domain_id: str, run_date: str) -> dict:
     threads = []
     seen = set()
@@ -815,6 +1032,57 @@ def deterministic_structured_data(plan: dict, domain_id: str, run_date: str) -> 
             "expected_verification": run_date[:4] + "-12-31",
         })
     return normalize_structured_data({"threads": threads, "causal_edges": causal_edges, "judgments": judgments}, domain_id, run_date)
+
+
+def run_block_edit(
+    args: argparse.Namespace,
+    title: str,
+    articles: list[dict],
+    clusters: dict,
+    context: dict,
+    llm_cfg: dict,
+    output_cfg: dict,
+    timescale_cfg: dict,
+) -> tuple[str, dict | None, dict]:
+    budget = output_cfg.get("_budget", {})
+    output_dir = os.path.dirname(args.output) or "."
+    os.makedirs(output_dir, exist_ok=True)
+    plan = build_block_plan(articles, clusters, context, args.date, budget)
+    blocks = run_block_writing(plan, llm_cfg, budget)
+    main_markdown, edge_markdown = assemble_block_markdown(plan, blocks, args.date)
+    item_markdown = "\n\n".join(part for part in (main_markdown, edge_markdown) if part)
+    item_markdown = repair_source_line_dates(normalize_edge_signal_headings(item_markdown), articles, args.date)
+    sections = polish_sections(plan, item_markdown, llm_cfg)
+    template_name = timescale_cfg.get("template") or timescale_cfg.get("system", {}).get("template") or f"{args.timescale}.md"
+    briefing = assemble_profile_markdown(
+        title=title,
+        run_date=args.date,
+        timescale=args.timescale,
+        template_name=template_name,
+        sections=sections,
+        main_markdown=main_markdown,
+        edge_markdown=edge_markdown,
+    )
+    briefing = repair_source_line_dates(strip_source_locale_tags(briefing), articles, args.date)
+    structured_data = deterministic_structured_data(plan, args.domain, args.date)
+    trace = {
+        "mode": "block_edit",
+        "timescale": args.timescale,
+        "plan_counts": plan.get("counts", {}),
+        "category_count": len(plan.get("categories", [])),
+        "block_count": len(blocks),
+        "block_status": [
+            {
+                "block_index": block["block_index"],
+                "category_id": block.get("category_id"),
+                "label": block.get("label"),
+                "status": block["status"],
+                "detail": block.get("detail", ""),
+            }
+            for block in blocks
+        ],
+    }
+    return briefing, structured_data, {"plan": plan, "chunks": blocks, "trace": trace}
 
 
 def run_daily_v2(
@@ -897,12 +1165,12 @@ def main():
     output_cfg = dict(timescale_cfg.get("output", {}))
     output_cfg["_budget"] = timescale_cfg.get("budget", {})
     edit_mode = str(output_cfg.get("_budget", {}).get("edit_mode", "v1")).lower()
-    if args.timescale == "daily" and edit_mode == "v2":
-        print(f"\n📝 Edit V2 planning + chunk writing (timescale={args.timescale})...", file=sys.stderr)
+    if edit_mode == "v3":
+        print(f"\n📝 Edit V3 dynamic block editing (timescale={args.timescale})...", file=sys.stderr)
         print(f"   Articles: {len(articles)}", file=sys.stderr)
         print(f"   Clusters: {len(clusters.get('clusters', []))}", file=sys.stderr)
         print(f"   Model: {llm_cfg.get('model', 'deepseek-v4-pro')}", file=sys.stderr)
-        briefing, structured_data, artifacts = run_daily_v2(
+        briefing, structured_data, artifacts = run_block_edit(
             args=args,
             title=title,
             articles=articles,
@@ -910,10 +1178,11 @@ def main():
             context=context,
             llm_cfg=llm_cfg,
             output_cfg=output_cfg,
+            timescale_cfg=timescale_cfg,
         )
         in_budget, budget_detail = item_count_within_budget(briefing, output_cfg)
         if not in_budget:
-            print(f"❌ Edit V2 output outside item budget: {budget_detail}", file=sys.stderr)
+            print(f"❌ Edit V3 output outside item budget: {budget_detail}", file=sys.stderr)
             sys.exit(1)
         print(f"   Item budget: {budget_detail}", file=sys.stderr)
 
@@ -932,7 +1201,7 @@ def main():
             f.write(briefing)
         print(f"✅ Briefing written: {args.output} ({len(briefing)} chars)", file=sys.stderr)
         print(f"✅ Briefing plan written: {plan_path}", file=sys.stderr)
-        print(f"✅ Briefing chunks written: {chunks_path}", file=sys.stderr)
+        print(f"✅ Briefing blocks written: {chunks_path}", file=sys.stderr)
         print(f"✅ Edit trace written: {trace_path}", file=sys.stderr)
         if should_write_event_threads(structured_data):
             event_threads_path = os.path.join(output_dir, "event-threads.json")
