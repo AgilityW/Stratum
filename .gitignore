@@ -22,6 +22,7 @@ config.yaml
 *.pdf
 *.html
 !skills/render-engine/templates/*.html
+deployments/
 
 # Runtime data files (outputs from daily pipeline — under output_dir)
 # Do NOT block domains/storage/ — that's domain config, not runtime output.

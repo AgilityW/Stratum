@@ -1,4 +1,5 @@
 .PHONY: pipeline daily weekly monthly quarterly yearly
+.PHONY: release deploy deploy-health rollback run-deployed-daily
 .PHONY: test test-unit test-schema test-data test-cov test-cov-html clean
 
 PYTHON ?= $(shell if [ -x .venv/bin/python ]; then echo .venv/bin/python; else echo python3; fi)
@@ -6,6 +7,10 @@ DOMAIN ?= storage
 DATE ?= $(shell date +%F)
 OUTPUT_DIR ?=
 PIPELINE_ARGS ?=
+ENV ?= production
+VERSION ?=
+DEPLOY_ROOT ?= $(HOME)/WorkSpace/Stratum/deployments
+DEPLOY_CONFIG ?= config.yaml
 
 PIPELINE_CMD = $(PYTHON) stratum/orchestrator/pipeline.py --domain $(DOMAIN) --date $(DATE)
 ifneq ($(strip $(OUTPUT_DIR)),)
@@ -17,6 +22,27 @@ endif
 # Full daily pipeline. Override with DOMAIN=robot DATE=YYYY-MM-DD OUTPUT_DIR=/tmp/out.
 pipeline daily:
 	$(PIPELINE_CMD) $(PIPELINE_ARGS)
+
+# ── Deployment ─────────────────────────────────────────────
+
+release:
+	@test -n "$(VERSION)" || (echo "VERSION is required, e.g. make release VERSION=v0.7.0" && exit 2)
+	scripts/release.sh $(VERSION)
+
+deploy:
+	@test -n "$(VERSION)" || (echo "VERSION is required, e.g. make deploy VERSION=v0.7.0" && exit 2)
+	@test -n "$(OUTPUT_DIR)" || (echo "OUTPUT_DIR is required for deployment" && exit 2)
+	scripts/deploy.sh --version $(VERSION) --env $(ENV) --domain $(DOMAIN) --root $(DEPLOY_ROOT) --config $(DEPLOY_CONFIG) --output-dir $(OUTPUT_DIR)
+
+deploy-health:
+	scripts/healthcheck.sh --root $(DEPLOY_ROOT) --env $(ENV)
+
+rollback:
+	@test -n "$(VERSION)" || (echo "VERSION is required, e.g. make rollback VERSION=v0.6.0" && exit 2)
+	scripts/rollback.sh --root $(DEPLOY_ROOT) --env $(ENV) --version $(VERSION)
+
+run-deployed-daily:
+	scripts/run_deployed_daily.sh --root $(DEPLOY_ROOT) --env $(ENV) --domain $(DOMAIN) --date $(DATE) $(PIPELINE_ARGS)
 
 # Higher-scale runners are not first-class in the current orchestrator.
 weekly:

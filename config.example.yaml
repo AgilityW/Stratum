@@ -105,3 +105,10 @@ llm:
 output_dir: "$HOME/WorkSpace/Stratum"
 health_data_dir: "$HOME/WorkSpace/Stratum/health-data"
 chrome_path: "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+
+# ── Deployment defaults ──
+# Deployment is separate from development. Production runs should be launched
+# through scripts/run_deployed_daily.sh from a tag-locked release directory.
+deployment:
+  root: "$HOME/WorkSpace/Stratum/deployments"
+  environment: "production"

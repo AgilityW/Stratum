@@ -32,6 +32,7 @@ import sys
 import yaml
 from datetime import datetime, timezone, timedelta
 
+from stratum.deployment import runtime_identity
 from stratum.stages.render.render import artifact_basename
 
 CST = timezone(timedelta(hours=8))
@@ -172,6 +173,7 @@ def write_run_manifest(
     stages: list[dict],
     paths: dict,
     summary: dict | None = None,
+    runtime: dict | None = None,
 ) -> dict:
     """Write the structured pipeline manifest and return its payload."""
     payload = {
@@ -179,6 +181,7 @@ def write_run_manifest(
         "domain": domain,
         "date": run_date,
         "generated_at": datetime.now(CST).isoformat(),
+        "runtime": runtime or runtime_identity(),
         "stages": stages,
         "summary": summary or {},
         "paths": {k: v for k, v in paths.items()},
@@ -228,6 +231,8 @@ def main():
     parser.add_argument("--skip-agent", action="store_true",
                         help="Skip agent-driven stages (search & edit)")
     parser.add_argument("--output-dir", help="Override output directory")
+    parser.add_argument("--config", default=CONFIG_PATH,
+                        help="Path to config.yaml (default: project config.yaml)")
     parser.add_argument("--from-stage", choices=["enrich", "verify", "normalize", "cluster", "edit", "validate", "render"],
                         help="Start from a specific stage (requires previous output files)")
     parser.add_argument("--web-extract", action="store_true",
@@ -241,9 +246,16 @@ def main():
         print(f"   Available domains: {os.listdir(DOMAINS_DIR)}", file=sys.stderr)
         sys.exit(1)
 
+    config_path = os.path.abspath(os.path.expanduser(os.path.expandvars(args.config)))
+    os.environ["STRATUM_CONFIG_PATH"] = config_path
+    runtime = runtime_identity()
+    if runtime.get("mode") == "deployment" and not runtime.get("locked"):
+        print("❌ Deployment runtime is not locked to version + commit + deployment id", file=sys.stderr)
+        sys.exit(1)
+
     # Load config for output_dir and optional overrides
-    if os.path.exists(CONFIG_PATH):
-        with open(CONFIG_PATH) as f:
+    if os.path.exists(config_path):
+        with open(config_path) as f:
             config = yaml.safe_load(f) or {}
     else:
         config = {}
@@ -275,6 +287,11 @@ def main():
         health_data_dir = os.path.join(output_dir, "health-data")
 
     paths = resolve_paths(args.domain, args.date, reports_dir)
+    paths["config"] = config_path
+    paths["output_dir"] = output_dir
+    paths["reports_dir"] = reports_dir
+    paths["db_dir"] = db_dir
+    paths["health_data_dir"] = health_data_dir
     os.makedirs(paths["data_dir"], exist_ok=True)
     os.makedirs(os.path.dirname(paths["verified"]), exist_ok=True)
     os.makedirs(os.path.dirname(paths["clusters"]), exist_ok=True)
@@ -289,7 +306,7 @@ def main():
     def fail(stage: str, output: str | None = None, detail: str | None = None):
         record(stage, "failed", output, detail)
         write_run_manifest(paths["run_manifest"], args.domain, args.date, "failed",
-                           pipeline_status, paths, {"failed_stage": stage})
+                           pipeline_status, paths, {"failed_stage": stage}, runtime)
         sys.exit(1)
 
     # ── Stage 1: Search (deterministic — calls engine APIs directly) ──
@@ -333,7 +350,7 @@ def main():
                 if not run_stage("search", [
                     "--domain", args.domain,
                     "--date", args.date,
-                    "--config", CONFIG_PATH,
+                    "--config", config_path,
                     "--db", db_path,
                     "--queries", queries_path,
                     "--output", paths["raw"],
@@ -349,7 +366,7 @@ def main():
                 if not run_stage("search", [
                     "--domain", args.domain,
                     "--date", args.date,
-                    "--config", CONFIG_PATH,
+                    "--config", config_path,
                     "--queries", queries_path,
                     "--output", paths["raw"],
                     "--stats", paths["search_stats"],
@@ -452,7 +469,7 @@ def main():
             "--articles", paths["articles"],
             "--clusters", paths["clusters"],
             "--context", story_ctx_path,
-            "--config", CONFIG_PATH,
+            "--config", config_path,
             "--output", paths["briefing_md"],
             "--plan-output", paths["briefing_plan"],
             "--chunks-output", paths["briefing_chunks"],
@@ -563,7 +580,7 @@ def main():
 
     summary = {"articles": article_count, "clusters": cluster_count}
     write_run_manifest(paths["run_manifest"], args.domain, args.date, "ok",
-                       pipeline_status, paths, summary)
+                       pipeline_status, paths, summary, runtime)
 
     print(f"\n{'='*60}", file=sys.stderr)
     print(f"  PIPELINE COMPLETE", file=sys.stderr)
@@ -580,6 +597,7 @@ def main():
         "date": args.date,
         "articles": article_count,
         "clusters": cluster_count,
+        "runtime": runtime,
         "paths": {k: v for k, v in paths.items()},
     }))
 
@@ -1144,8 +1162,9 @@ def _update_post_collect_search_stats(raw_path: str, merged_results: list[dict])
 
     minimums = {}
     try:
-        if os.path.exists(CONFIG_PATH):
-            with open(CONFIG_PATH) as f:
+        config_path = os.environ.get("STRATUM_CONFIG_PATH") or CONFIG_PATH
+        if os.path.exists(config_path):
+            with open(config_path) as f:
                 cfg = yaml.safe_load(f) or {}
             minimums = cfg.get("curation", {}).get("min_per_source_type", {}) or {}
     except Exception:

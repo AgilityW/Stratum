@@ -452,9 +452,59 @@ def test_write_run_manifest_records_stage_status(tmp_path):
     assert on_disk["status"] == "ok"
     assert on_disk["domain"] == "storage"
     assert on_disk["summary"] == {"articles": 3, "clusters": 2}
+    assert on_disk["runtime"]["mode"] == "development"
+    assert "commit" in on_disk["runtime"]
     assert on_disk["stages"][0]["stage"] == "search"
     assert on_disk["stages"][0]["status"] == "success"
     assert on_disk["stages"][1]["status"] == "empty"
+
+
+def test_write_run_manifest_accepts_locked_deployment_runtime(tmp_path):
+    from stratum.orchestrator.pipeline import write_run_manifest
+
+    manifest_path = tmp_path / "run_manifest.json"
+    runtime = {
+        "mode": "deployment",
+        "version": "v0.7.0",
+        "commit": "abc123",
+        "git_tag": "v0.7.0",
+        "locked": True,
+        "deployment_id": "production-v0.7.0-abc123",
+        "deployment_env": "production",
+        "deployment_manifest": "/deploy/production/deployment_manifest.json",
+    }
+
+    payload = write_run_manifest(
+        str(manifest_path),
+        "storage",
+        "2026-05-30",
+        "ok",
+        [],
+        {"run_manifest": str(manifest_path)},
+        runtime=runtime,
+    )
+
+    assert payload["runtime"] == runtime
+    assert json.loads(manifest_path.read_text())["runtime"]["locked"] is True
+
+
+def test_runtime_identity_uses_deployment_environment():
+    from stratum.deployment import runtime_identity
+
+    identity = runtime_identity({
+        "STRATUM_RUNTIME_MODE": "deployment",
+        "STRATUM_RELEASE_VERSION": "v0.7.0",
+        "STRATUM_RELEASE_TAG": "v0.7.0",
+        "STRATUM_RELEASE_COMMIT": "abc123",
+        "STRATUM_DEPLOYMENT_ID": "production-v0.7.0-abc123",
+        "STRATUM_DEPLOYMENT_ENV": "production",
+        "STRATUM_DEPLOYMENT_MANIFEST": "/deploy/production/deployment_manifest.json",
+    })
+
+    assert identity["mode"] == "deployment"
+    assert identity["version"] == "v0.7.0"
+    assert identity["commit"] == "abc123"
+    assert identity["locked"] is True
 
 
 def test_run_collector_writes_stats_and_health(tmp_path, monkeypatch):

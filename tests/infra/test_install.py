@@ -15,6 +15,13 @@ import yaml
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 SKILLS_DIR = PROJECT_ROOT / "skills"
+DEPLOYMENT_SCRIPTS = [
+    "scripts/release.sh",
+    "scripts/deploy.sh",
+    "scripts/run_deployed_daily.sh",
+    "scripts/healthcheck.sh",
+    "scripts/rollback.sh",
+]
 
 
 # ── config.example.yaml ────────────────────────────────────
@@ -57,6 +64,10 @@ class TestConfigExample:
     def test_has_chrome_path(self, config):
         assert "chrome_path" in config, "config.example.yaml must define chrome_path"
 
+    def test_has_deployment_defaults(self, config):
+        assert config["deployment"]["root"]
+        assert config["deployment"]["environment"] == "production"
+
     def test_no_real_secrets_leaked(self, config):
         """config.example.yaml uses ${ENV_VAR} placeholders, not real keys."""
         yaml_str = (PROJECT_ROOT / "config.example.yaml").read_text()
@@ -91,6 +102,27 @@ class TestInstallSh:
         path = PROJECT_ROOT / "install.sh"
         result = subprocess.run(["bash", "-n", str(path)], capture_output=True, text=True)
         assert result.returncode == 0, f"bash -n install.sh failed:\n{result.stderr}"
+
+
+class TestDeploymentScripts:
+    """Deployment scripts are first-class executable entrypoints."""
+
+    def test_scripts_exist_and_are_executable(self):
+        for rel_path in DEPLOYMENT_SCRIPTS:
+            path = PROJECT_ROOT / rel_path
+            assert path.exists(), rel_path
+            assert path.stat().st_mode & 0o111, f"{rel_path} is not executable"
+
+    def test_scripts_are_valid_bash(self):
+        for rel_path in DEPLOYMENT_SCRIPTS:
+            path = PROJECT_ROOT / rel_path
+            result = subprocess.run(["bash", "-n", str(path)], capture_output=True, text=True)
+            assert result.returncode == 0, f"bash -n {rel_path} failed:\n{result.stderr}"
+
+    def test_deploy_script_requires_tag_version(self):
+        text = (PROJECT_ROOT / "scripts" / "deploy.sh").read_text()
+        assert "refs/tags/$VERSION" in text
+        assert "git archive \"$VERSION\"" in text
 
 
 # ── Project structure ──────────────────────────────────────

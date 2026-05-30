@@ -10,8 +10,11 @@
 
 ### 做什么
 
-- 解析运行参数：domain、date、output-dir、raw-input、from-stage、skip-agent。
+- 解析运行参数：domain、date、config、output-dir、raw-input、from-stage、skip-agent。
 - 解析 `config.yaml` 中的 `output_dir`、`reports_dir`、`db_dir`。
+- 将当前 runtime identity 写入 `run_manifest.json`：开发态标记为
+  `mode=development`，部署态由 `STRATUM_RELEASE_VERSION`、
+  `STRATUM_RELEASE_COMMIT` 和 `STRATUM_DEPLOYMENT_ID` 锁定。
 - 将解析后的 `db_dir` 写入 `STRATUM_DB_DIR`，确保 DB helper 与本次
   pipeline 使用同一个 SQLite 根目录。
 - 调用 8 个 stage：search、enrich、verify、normalize、cluster、edit、validate、render。
@@ -102,6 +105,10 @@ runtime capability or unsupported configuration, not an upstream source scan.
 - `run_manifest.json` records stage-level `success`, `skipped`, `provided`,
   `empty`, `failed`, and `failed_nonblocking` statuses. On hard stage failure,
   the manifest is written before the process exits.
+- Every run manifest includes `runtime`. Development runs may be dirty and are
+  marked as such; deployment runs must be launched by the deployment wrapper so
+  the manifest carries locked release version, commit, environment, deployment
+  id, and deployment manifest path.
 - DB ingest is gated by fresh artifact surfaces: event/thread ingestion runs
   only when Edit may have produced new `event-threads.json`, while entity
   counts and snapshots run only when Normalize produced fresh `articles.jsonl`.
@@ -135,6 +142,24 @@ calls or future entrypoints cannot silently mutate earlier artifacts.
 DB ingest follows the same resume contract: `--from-stage validate` and
 `--from-stage render` do not re-ingest prior articles/events, preventing
 re-validation or re-rendering from changing SQLite counters.
+
+## Development vs Deployment
+
+Development entrypoints (`make daily`, direct `pipeline.py`) run from the
+working tree and are allowed to change with ongoing edits. Deployment entrypoints
+live under `scripts/` and are deliberately separate:
+
+- `scripts/release.sh VERSION` creates an annotated Git tag only from a clean,
+  tested worktree.
+- `scripts/deploy.sh --version <tag> ...` rejects branches/commits, exports the
+  tag into `{deploy_root}/{env}/releases/{version}`, creates a release-local
+  virtualenv, copies instance config, writes `deployment_manifest.json`, and
+  moves `{deploy_root}/{env}/current`.
+- `scripts/run_deployed_daily.sh` runs only through the active `current`
+  symlink and injects deployment identity into the pipeline process.
+- `scripts/healthcheck.sh` validates the active deployment without network/API
+  calls.
+- `scripts/rollback.sh` reactivates an already deployed release directory.
 
 After fresh event DB ingest, the orchestrator also turns event-thread watch
 targets into active SQLite Search queries. Explicit `watch_signals` are used

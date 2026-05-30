@@ -94,6 +94,30 @@ QR follow blocks, tags, quote centers, or fast-news modules are configured in
 `domain.yaml` under `pipeline.boilerplate`. Validate reuses the same rule set
 and fails the report if generated Markdown still contains those markers.
 
+## Development vs Deployment
+
+Development runs use the working tree:
+
+```bash
+make daily DOMAIN=storage DATE=2026-05-30
+```
+
+Deployment runs are tag-locked and isolated from the development checkout:
+
+```bash
+make release VERSION=v0.7.0
+make deploy VERSION=v0.7.0 ENV=production DOMAIN=storage \
+    DEPLOY_ROOT="$HOME/WorkSpace/Stratum/deployments" \
+    DEPLOY_CONFIG=/secure/stratum/config.yaml \
+    OUTPUT_DIR="$HOME/WorkSpace/Stratum/Reports"
+make run-deployed-daily ENV=production DOMAIN=storage DATE=2026-05-30 \
+    DEPLOY_ROOT="$HOME/WorkSpace/Stratum/deployments"
+```
+
+Deployment accepts Git tags only, writes `deployment_manifest.json`, and every
+pipeline `run_manifest.json` records runtime mode, release version, commit, and
+deployment id. See [Deployment](docs/DEPLOYMENT.md).
+
 ## Quick Start
 
 ```bash
