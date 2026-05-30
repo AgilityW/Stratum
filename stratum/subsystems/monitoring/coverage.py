@@ -13,6 +13,26 @@ CST = timezone(timedelta(hours=8))
 
 IDEAL_TYPES = {"official", "analyst", "media"}
 CORE_LOCALES = {"zh-CN", "en"}
+LOCALE_CANONICAL = {
+    "zh-cn": "zh-CN",
+    "zh-hans": "zh-CN",
+    "zh-hans-cn": "zh-CN",
+    "zh-tw": "zh-TW",
+    "zh-hant": "zh-TW",
+    "zh-hant-tw": "zh-TW",
+}
+
+
+def _confidence_rank(confidence: str) -> str:
+    """Normalize historical and current cluster confidence labels."""
+    value = str(confidence or "").strip().lower()
+    if value in {"high", "a"}:
+        return "high"
+    if value in {"medium", "b"}:
+        return "medium"
+    if value in {"low", "c", "d"}:
+        return "low"
+    return "unknown"
 
 
 def detect_gaps(clusters: list[dict], source_records: list[dict]) -> list[dict]:
@@ -25,13 +45,34 @@ def detect_gaps(clusters: list[dict], source_records: list[dict]) -> list[dict]:
     Returns:
         List of gap objects with severity and followup queries
     """
-    # Build cluster → {types, locales, sources} map
+    # Build cluster → {types, locales, sources} map. Cluster objects already
+    # carry source_types/locales; source_records add concrete source names.
     cluster_info = defaultdict(lambda: {"types": set(), "locales": set(), "sources": []})
+    for cluster in clusters:
+        cid = cluster.get("id")
+        if not cid:
+            continue
+        cluster_info[cid]["types"].update(
+            source_type
+            for source_type in (_normalize_source_type(t) for t in cluster.get("source_types", []))
+            if source_type
+        )
+        cluster_info[cid]["locales"].update(
+            locale
+            for locale in (_normalize_locale(loc) for loc in cluster.get("locales", []))
+            if locale
+        )
+        cluster_info[cid]["sources"].extend(cluster.get("source_domains", []))
+
     for r in source_records:
         cid = r.get("cluster_id")
         if cid:
-            cluster_info[cid]["types"].add(r.get("source_type", "unknown"))
-            cluster_info[cid]["locales"].add(r.get("source_locale", "en"))
+            source_type = _normalize_source_type(r.get("source_type"))
+            locale = _normalize_locale(r.get("source_locale"))
+            if source_type:
+                cluster_info[cid]["types"].add(source_type)
+            if locale:
+                cluster_info[cid]["locales"].add(locale)
             cluster_info[cid]["sources"].append(r.get("source", ""))
 
     gaps = []
@@ -46,6 +87,8 @@ def detect_gaps(clusters: list[dict], source_records: list[dict]) -> list[dict]:
             "current_types": sorted(info["types"]),
             "current_locales": sorted(info["locales"]),
             "current_sources": info["sources"],
+            "entities": cluster.get("entities", []),
+            "terms": cluster.get("terms", []),
         }
 
         missing_types = IDEAL_TYPES - info["types"]
@@ -57,8 +100,10 @@ def detect_gaps(clusters: list[dict], source_records: list[dict]) -> list[dict]:
             gap["missing_locales"] = sorted(missing_locales)
 
         if "missing_types" in gap or "missing_locales" in gap:
-            confidence = cluster.get("confidence", "C")
-            is_high = confidence in ("C", "D") and len(info["sources"]) <= 2
+            confidence_rank = _confidence_rank(cluster.get("confidence", "unknown"))
+            gap["confidence_rank"] = confidence_rank
+            source_count = len(set(s for s in info["sources"] if s))
+            is_high = confidence_rank == "low" and source_count <= 2
             gap["severity"] = "high" if is_high else "medium"
         else:
             continue  # No gap — skip
@@ -100,6 +145,28 @@ def generate_followup_queries(gaps: list[dict], max_per_gap: int = 3) -> list[di
             })
 
     return queries
+
+
+def _normalize_source_type(value) -> str:
+    """Normalize source type labels before comparing against ideal coverage."""
+    source_type = str(value or "").strip().lower()
+    if not source_type or source_type == "unknown":
+        return ""
+    return source_type
+
+
+def _normalize_locale(value) -> str:
+    """Normalize locale tags without inventing coverage from missing metadata."""
+    locale = str(value or "").strip()
+    if not locale or locale.lower() == "unknown":
+        return ""
+    lower = locale.lower()
+    if lower in LOCALE_CANONICAL:
+        return LOCALE_CANONICAL[lower]
+    if "-" not in locale:
+        return lower
+    parts = lower.split("-")
+    return "-".join([parts[0], *[part.upper() if len(part) == 2 else part for part in parts[1:]]])
 
 
 def run_coverage_check(

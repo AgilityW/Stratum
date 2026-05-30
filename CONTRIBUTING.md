@@ -1,17 +1,19 @@
 # Contributing
 
-## Adding a Channel (new industry / market)
+## Adding a Domain (new industry / market)
 
-1. Create `skills/stratum-{channel}/` directory with:
-   - `SKILL.md` — editorial rules, output format, channel metadata (no queries!)
-   - `data/domain.yaml` — companies, terms, seed_queries, gap_searches, channels, **value_chain**
-   - `references/editorial-standards.md` — market-specific editorial rules
+1. Create `domains/{channel}/` directory with:
+   - `domain.yaml` — domain metadata, companies, terms, source registry, validation rules, editorial policy, and optional value-chain taxonomy
+   - `queries.yaml` — structured Search query templates by intent, dimension, and locale
+   - `templates/daily.html` — domain render template
+   - `prompts/daily.md` — reserved future domain prompt override asset
 2. Run `./install.sh --dev`
-3. Test: ask Hermes "Run the daily briefing for {channel}"
+3. Test with the pipeline:
+   `python3 stratum/orchestrator/pipeline.py --domain {channel} --date YYYY-MM-DD`
 
-### Value Chain Configuration
+### Value-Chain Taxonomy
 
-Each channel defines its industry-specific value chain in `data/domain.yaml → value_chain`. The 11-layer model from storage is a template:
+Domains may define an industry-specific `value_chain` section in `domains/{channel}/domain.yaml`. Treat it as domain taxonomy and coverage metadata for queries, editorial policy, and future monitoring surfaces. The storage model is an example to adapt, not a framework-level runtime module:
 
 ```yaml
 value_chain:
@@ -31,11 +33,10 @@ value_chain:
 **Rules:**
 - Adapt the layers to YOUR industry — storage's 11 layers won't fit a different sector.
 - Define `probe_templates` with `{company}`, `{year}`, `{quarter}`, `{month}`, `{date}` placeholders.
-- `criticality` determines: auto-archive behavior (critical=never), demotion policy, alert priority.
-- `value-chain-monitor` (v2.0) manages source discovery and dynamic evolution across layers.
-- Promoted sources feed back into `runtime-config.json` (not domain.yaml — domain is the baseline).
+- `criticality` is descriptive today; use it to guide query/editorial coverage and future alert priority.
+- Promoted sources should become explicit `source_registry.sources` entries once trusted; `domain.yaml` is the baseline configuration.
 
-Example `data/domain.yaml`:
+Example `domains/{channel}/domain.yaml`:
 ```yaml
 domain:
   id: semicon-fr
@@ -46,16 +47,21 @@ companies:
   - id: stm
     type: COMPANY
     aliases: {en: "STMicroelectronics", fr: "STMicroelectronics"}
-
-seed_queries:
-  fr:
-    - "STMicroelectronics dernière actualité"
-    - "Soitec semi-conducteur"
-  en:
-    - "European semiconductor news"
 ```
 
-**Queries and data live in `data/domain.yaml`, not in SKILL.md.** SKILL.md only contains editorial rules and output format.
+Example `domains/{channel}/queries.yaml`:
+```yaml
+queries:
+  detection:
+    supply_chain:
+      fr:
+        - "STMicroelectronics dernière actualité"
+        - "Soitec semi-conducteur"
+      en:
+        - "European semiconductor supply chain news"
+```
+
+Domain assets live under `domains/{channel}/`. Keep Search templates in `queries.yaml` so reviewers and runtime code edit the same source of truth.
 
 ## Adding a Search Engine
 
@@ -91,7 +97,7 @@ engines:
 # config.example.yaml
 source_languages: [zh, en, ja, ko, fr]  # add your language
 
-# Add seed_queries.{locale} to domain.yaml
+# Add queries.{intent}.{dimension}.{locale} to domains/{channel}/queries.yaml
 # Add locale expansion rule if umbrella→subtags (e.g., zh→zh-CN+zh-TW)
 ```
 
@@ -107,11 +113,11 @@ contract:
   role: "pure function description"
 ```
 
-Modules are channel-agnostic and language-agnostic. All domain logic lives in channel `data/domain.yaml`.
+Modules are domain-agnostic and language-agnostic. Domain configuration lives in `domains/{channel}/`.
 
 ## Pull Requests
 
-1. New channels: `skills/stratum-{channel}/` directory with `SKILL.md` + `data/domain.yaml`
+1. New domains: `domains/{channel}/` directory with `domain.yaml`, `queries.yaml`, template assets, and tests
 2. New engines: update `config.example.yaml` engine block
 3. Bug fixes: patch the relevant module
 4. Run `./install.sh --dev` and test before submitting
@@ -119,7 +125,7 @@ Modules are channel-agnostic and language-agnostic. All domain logic lives in ch
 ## Style
 
 - Framework code: English
-- Channel descriptions: English
-- Channel queries in domain.yaml: native language of the market
+- Domain descriptions: English
+- Domain queries in `queries.yaml`: native language of the market
 - Commit messages: English, conventional commits (`feat:`, `fix:`, `docs:`)
 - `config.yaml` is `.gitignore`'d — only `config.example.yaml` is committed

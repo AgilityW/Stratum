@@ -10,9 +10,11 @@ Interface: fetch_source(source, run_date) → list[SearchResult].
 
 import re
 import sys
+from importlib.util import find_spec
 from typing import Optional
-from urllib.parse import urljoin, urlparse
+from urllib.parse import urljoin
 
+from stratum.collectors.common import extract_domain, normalize_source_type
 from stratum.collectors.direct_fetch import (
     _ArticleExtractor,
     _extract_date,
@@ -25,8 +27,22 @@ from stratum.subsystems.search.models import SearchResult
 _playwright = None
 
 
+class BrowserCollectorUnavailable(RuntimeError):
+    """Raised when browser collection is configured but Playwright is unavailable."""
+
+
+def ensure_browser_available() -> None:
+    """Fail with an actionable message before browser sources are silently skipped."""
+    if find_spec("playwright") is None:
+        raise BrowserCollectorUnavailable(
+            "Playwright is required for access=browser sources. "
+            "Install the browser extra and browsers: pip install -e '.[browser]' && playwright install chromium"
+        )
+
+
 def _get_playwright():
     global _playwright
+    ensure_browser_available()
     if _playwright is None:
         from playwright.sync_api import sync_playwright
         _playwright = sync_playwright().start()
@@ -83,8 +99,8 @@ def _convert_links(links: list[dict], source_id: str, source_domain: str,
             snippet=title,
             locale=locale,
             published_at=published_at,
-            source_domain=source_domain,
-            source_type_hint=category,
+            source_domain=extract_domain(link_url),
+            source_type_hint=normalize_source_type(category),
             engine=f"browser:{source_id}",
             query_id=f"b-{source_id}",
         ))
@@ -106,7 +122,7 @@ def _extract_list_links(page, base_url: str, source_domain: str,
     2. For each, finds parent <li> and extracts <time> date
     3. Returns [{url, title, date}]
     """
-    js_code = """
+    js_code = r"""
     () => {
         const results = [];
         const seen = new Set();
@@ -190,6 +206,7 @@ def fetch_source(source: dict, run_date: str, timeout: int = 30) -> list[SearchR
     Returns:
         List of SearchResult (may be empty on failure)
     """
+    ensure_browser_available()
     results = []
     source_id = source.get("id", "unknown")
     locale = source.get("locale", "en")
@@ -215,7 +232,7 @@ def fetch_source(source: dict, run_date: str, timeout: int = 30) -> list[SearchR
                 page.wait_for_timeout(1000)  # extra grace for late JS
 
                 # Parse
-                domain = urlparse(url).netloc.lower().lstrip("www.")
+                domain = extract_domain(url)
                 html = page.content()
                 links = _extract_from_snapshot(page, url, max_articles * 2)
 
@@ -257,8 +274,8 @@ def fetch_source(source: dict, run_date: str, timeout: int = 30) -> list[SearchR
                             snippet=item['title'],
                             locale=locale,
                             published_at=published_at,
-                            source_domain=domain,
-                            source_type_hint=category,
+                            source_domain=extract_domain(item['url']),
+                            source_type_hint=normalize_source_type(category),
                             engine=f"browser:{source_id}",
                             query_id=f"b-{source_id}-list",
                         ))

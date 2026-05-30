@@ -8,7 +8,10 @@ from pathlib import Path
 # Import render functions
 import sys
 sys.path.insert(0, str(Path(__file__).parent.parent))
-from render import esc, detect_tags, load_render_tags, load_template, render_html, convert
+from render import (
+    esc, detect_tags, load_render_tags, load_template, render_html, convert,
+    render_pdf, artifact_basename,
+)
 
 
 class TestEsc:
@@ -145,6 +148,75 @@ class TestConvert:
         assert '<p>' in html
         assert 'Key point one' in html
 
+    def test_convert_applies_configured_tags(self):
+        md = """# Title
+
+---
+
+### Samsung announces HBM4
+
+- Point one
+
+*Source: test.com · 2026年5月29日*"""
+        html = convert(md, {
+            "new": {
+                "label": "new",
+                "class": "tag-new",
+                "keywords": ["announce"],
+            }
+        })
+        assert '<span class="tag tag-new">new</span>' in html
+
+    def test_convert_applies_tags_from_item_body(self):
+        md = """# Title
+
+---
+
+### Routine market note
+
+Samsung and Micron supply constraints pushed contract price expectations higher.
+
+*Source: test.com · 2026年5月29日*"""
+        html = convert(md, {
+            "price": {
+                "label": "price",
+                "class": "tag-price",
+                "keywords": ["contract price"],
+            }
+        })
+        assert '<span class="tag tag-price">price</span>' in html
+
+    def test_convert_strips_source_locale_tags(self):
+        md = """# Title
+
+---
+
+### Item Title
+
+Detail text.
+
+*Digitimes [en], cnstock.com [zh-CN] · 2026年5月30日*"""
+        html = convert(md)
+        assert "Digitimes, cnstock.com · 2026年5月30日" in html
+        assert "[en]" not in html
+        assert "[zh-CN]" not in html
+
+    def test_convert_strips_case_variant_source_locale_tags(self):
+        md = """# Title
+
+---
+
+### Item Title
+
+Detail text.
+
+*Digitimes [EN], cnstock.com [zh-cn], example.jp [zh-Hans-CN] · 2026年5月30日*"""
+        html = convert(md)
+        assert "Digitimes, cnstock.com, example.jp · 2026年5月30日" in html
+        assert "[EN]" not in html
+        assert "[zh-cn]" not in html
+        assert "[zh-Hans-CN]" not in html
+
     def test_convert_summary(self):
         md = """# Title
 
@@ -260,6 +332,14 @@ class TestLoadTemplate:
         assert "{footer}" in tmpl
 
 
+class TestArtifactName:
+    """Stable report artifact naming."""
+
+    def test_artifact_basename(self):
+        assert artifact_basename("storage", "daily", "2026-05-30") == \
+            "Storage_Daily_Briefing_2026-05-30"
+
+
 class TestRenderHtml:
     """render_html() with template string."""
 
@@ -280,14 +360,26 @@ class TestRenderHtml:
             tmpl = load_template(None)
             html_path = render_html(md_path, tmpdir, "Test Briefing",
                                     "2026年5月29日", "周四",
-                                    "Test footer", tmpl)
+                                    "Test footer", tmpl,
+                                    artifact_name="Storage_Daily_Briefing_2026-05-29",
+                                    write_legacy=True,
+                                    tag_config={
+                                        "new": {
+                                            "label": "new",
+                                            "class": "tag-new",
+                                            "keywords": ["Test Item"],
+                                        }
+                                    })
             assert os.path.exists(html_path)
+            assert html_path.endswith("Storage_Daily_Briefing_2026-05-29.html")
+            assert os.path.exists(os.path.join(tmpdir, "briefing.html"))
             with open(html_path) as f:
                 content = f.read()
             assert "<!DOCTYPE html>" in content
             assert "Test Briefing" in content
             assert "Test footer" in content
             assert "Point one" in content
+            assert 'class="tag tag-new"' in content
 
     def test_renders_with_domain_template(self):
         template_path = Path(__file__).parent.parent.parent.parent.parent / \
@@ -311,10 +403,26 @@ class TestRenderHtml:
             tmpl = load_template(str(template_path))
             html_path = render_html(md_path, tmpdir, "早报",
                                     "2026年5月29日", "周四",
-                                    "Auto-generated", tmpl)
+                                    "Auto-generated", tmpl,
+                                    artifact_name="Storage_Daily_Briefing_2026-05-29")
             assert os.path.exists(html_path)
             with open(html_path) as f:
                 content = f.read()
             assert "<!DOCTYPE html>" in content
             assert "早报" in content
             assert "An Item" in content
+            assert "Storage_Daily_Briefing_2026-05-29" not in content
+
+
+class TestRenderPdf:
+    """PDF rendering shell-out behavior."""
+
+    def test_skips_when_chrome_missing(self, monkeypatch):
+        import render
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            html_path = os.path.join(tmpdir, "briefing.html")
+            Path(html_path).write_text("<html><body>ok</body></html>")
+
+            monkeypatch.setattr(render, "CHROME", "/definitely/missing/chrome")
+            assert render_pdf(html_path, tmpdir, "Storage_Daily_Briefing_2026-05-29") is None

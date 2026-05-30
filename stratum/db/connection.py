@@ -15,6 +15,10 @@ import yaml
 
 def _resolve_workspace() -> str:
     """Resolve workspace path from config.yaml."""
+    env_db_dir = os.environ.get('STRATUM_DB_DIR')
+    if env_db_dir:
+        return os.path.expandvars(os.path.expanduser(env_db_dir))
+
     # Find project root
     current = os.path.dirname(os.path.abspath(__file__))
     # stratum/db/ → stratum/ → project root
@@ -65,4 +69,14 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
     with open(schema_path) as f:
         schema_sql = f.read()
     conn.executescript(schema_sql)
+    _ensure_migrations(conn)
     conn.commit()
+
+
+def _ensure_migrations(conn: sqlite3.Connection) -> None:
+    """Apply lightweight additive migrations for existing domain DBs."""
+    query_columns = {row["name"] for row in conn.execute("PRAGMA table_info(queries)").fetchall()}
+    if "dimension" not in query_columns:
+        conn.execute("ALTER TABLE queries ADD COLUMN dimension TEXT DEFAULT 'general'")
+    if "include_domains" not in query_columns:
+        conn.execute("ALTER TABLE queries ADD COLUMN include_domains TEXT")

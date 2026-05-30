@@ -4,9 +4,9 @@
   "description": "Normalized article. The canonical article format for clustering and briefing.",
   "type": "object",
   "required": [
-    "id", "url", "title", "source", "source_type", "source_locale",
-    "published_at", "fetched_at", "content_hash",
-    "entities", "terms", "verification_status", "artifact_type"
+    "id", "url", "canonical_url", "title", "source", "source_type", "source_locale",
+    "published_at", "date_source", "fetched_at", "content_hash",
+    "entities", "terms", "verification_status", "discovery_mode", "query_dimension", "artifact_type"
   ],
   "properties": {
     "id": {"type": "string", "description": "SHA-256 prefix (16 hex chars)"},
@@ -15,8 +15,19 @@
     "title": {"type": "string"},
     "source": {"type": "string"},
     "source_type": {"type": "string", "enum": ["official", "analyst", "media", "blog", "social", "unknown"]},
-    "source_locale": {"type": "string", "pattern": "^[a-z]{2,3}(-[A-Z]{2,4})?$"},
+    "source_locale": {
+      "type": "string",
+      "pattern": "^[A-Za-z]{2,3}(-[A-Za-z0-9]{2,8})*$"
+    },
     "published_at": {"type": "string"},
+    "date_source": {
+      "type": "string",
+      "enum": ["search_api", "web_extract", "snippet_regex", "url_path", "freshness_window", "none", ""]
+    },
+    "date_confidence": {
+      "type": "string",
+      "enum": ["high", "medium", "low", "none", ""]
+    },
     "fetched_at": {"type": "string"},
     "snippet": {"type": "string"},
     "extracted_summary": {"type": "string"},
@@ -24,9 +35,14 @@
     "entities": {"type": "array", "items": {"type": "string"}},
     "terms": {"type": "array", "items": {"type": "string"}},
     "numeric_claims": {"type": "array", "items": {"type": "string"}},
+    "quality_flags": {"type": "array", "items": {"type": "string"}},
     "verification_status": {"type": "string", "enum": ["verified"]},
     "rejection_reason": {"type": "null"},
     "discovery_mode": {"type": "string"},
+    "engine": {"type": "string"},
+    "query_id": {"type": "string"},
+    "query_used": {"type": "string"},
+    "query_dimension": {"type": "string"},
     "artifact_type": {"type": "string"},
     "cluster_id": {"type": ["string", "null"]},
     "event_thread_id": {"type": ["string", "null"]}

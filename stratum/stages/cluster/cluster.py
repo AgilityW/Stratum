@@ -15,12 +15,17 @@ Usage:
     python3 cluster.py --input articles.jsonl --output clusters.json \
         --domain domains/storage/domain.yaml --date 2026-05-28
 """
+from __future__ import annotations
+
 import argparse
 import json
 import os
 import sys
 from collections import defaultdict
 from datetime import datetime, timezone, timedelta
+from typing import Optional
+
+from stratum.subsystems.search.models import canonicalize_url
 
 CST = timezone(timedelta(hours=8))
 
@@ -34,8 +39,38 @@ def jaccard_similarity(set_a: set, set_b: set) -> float:
     return len(intersection) / len(union) if union else 0.0
 
 
+def weighted_overlap_similarity(article_a: dict, article_b: dict) -> float:
+    """Weighted entity/term overlap for story clustering.
+
+    Entities are more specific than terms, and the first entity is treated as
+    the article's best available subject hint. This reduces over-merging on
+    broad terms like HBM/NAND while still clustering cross-source reports about
+    the same entity + topic.
+    """
+    entities_a = set(article_a.get("entities", []))
+    entities_b = set(article_b.get("entities", []))
+    terms_a = set(article_a.get("terms", []))
+    terms_b = set(article_b.get("terms", []))
+    primary_a = _primary_entity(article_a)
+    primary_b = _primary_entity(article_b)
+
+    entity_sim = jaccard_similarity(entities_a, entities_b)
+    term_sim = jaccard_similarity(terms_a, terms_b)
+    primary_sim = 1.0 if primary_a and primary_a == primary_b else 0.0
+
+    if not entities_a and not entities_b:
+        return round(term_sim * 0.7, 3)
+    if not terms_a and not terms_b:
+        return round(entity_sim * 0.45 + primary_sim * 0.25, 3)
+
+    score = entity_sim * 0.35 + primary_sim * 0.2 + term_sim * 0.3
+    if entities_a & entities_b and not primary_sim:
+        score -= 0.08
+    return round(max(0.0, score), 3)
+
+
 def _cluster_by_jaccard(articles: list[dict], threshold: float) -> list[list[int]]:
-    """Pure Union-Find Jaccard clustering. No thread anchoring, no max_size split.
+    """Union-Find clustering by weighted entity/term overlap.
 
     Internal helper — called by cluster_articles for Phase 1 (orphans)
     and Phase 2 (oversized split). Always returns only groups with ≥2 articles.
@@ -44,16 +79,10 @@ def _cluster_by_jaccard(articles: list[dict], threshold: float) -> list[list[int
     if n < 2:
         return []
 
-    article_sets = []
-    for a in articles:
-        entities = set(a.get("entities", []))
-        terms = set(a.get("terms", []))
-        article_sets.append(entities | terms)
-
     pairs = []
     for i in range(n):
         for j in range(i + 1, n):
-            sim = jaccard_similarity(article_sets[i], article_sets[j])
+            sim = weighted_overlap_similarity(articles[i], articles[j])
             if sim >= threshold:
                 pairs.append((sim, i, j))
 
@@ -82,6 +111,51 @@ def _cluster_by_jaccard(articles: list[dict], threshold: float) -> list[list[int
 
     return [sorted(indices) for indices in clusters_map.values()
             if len(indices) >= 2]
+
+
+def _primary_entity(article: dict) -> str | None:
+    entities = article.get("entities") or []
+    return str(entities[0]) if entities else None
+
+
+def _shared_entities(articles: list[dict]) -> set:
+    entity_sets = [set(a.get("entities") or []) for a in articles if a.get("entities")]
+    if not entity_sets:
+        return set()
+    common = set(entity_sets[0])
+    for entity_set in entity_sets[1:]:
+        common &= entity_set
+    return common
+
+
+def _split_bridge_cluster(cluster_indices: list[int], articles: list[dict]) -> list[list[int]]:
+    """Split orphan clusters that only exist through bridge articles.
+
+    Union-Find is intentionally good at recall, but it can connect A-B-C when
+    B overlaps both A and C while A and C are actually different subjects. If
+    a cluster has no entity shared by every article, primary-entity groups keep
+    adjacent topics from collapsing into one story.
+    """
+    if len(cluster_indices) <= 2:
+        return [cluster_indices]
+
+    cluster_articles = [articles[i] for i in cluster_indices]
+    if _shared_entities(cluster_articles):
+        return [cluster_indices]
+
+    groups: dict[str, list[int]] = defaultdict(list)
+    ungrouped: list[int] = []
+    for idx in cluster_indices:
+        primary = _primary_entity(articles[idx])
+        if primary:
+            groups[primary].append(idx)
+        else:
+            ungrouped.append(idx)
+
+    split = [sorted(indices) for indices in groups.values() if len(indices) >= 2]
+    if len(ungrouped) >= 2:
+        split.append(sorted(ungrouped))
+    return split or [cluster_indices]
 
 
 def cluster_articles(articles: list[dict], threshold: float = 0.35,
@@ -128,23 +202,29 @@ def cluster_articles(articles: list[dict], threshold: float = 0.35,
     else:
         remaining_singletons = list(orphan_indices)
 
-    # Combine: thread_groups + orphan_clusters
+    # Combine: thread_groups + orphan_clusters. Thread-anchored clusters are a
+    # continuity contract with Story Tracking, so they stay intact even when
+    # they exceed the generic orphan-cluster display size.
     clusters = []
+    anchored_clusters = set()
     for tid, indices in thread_groups.items():
         if len(indices) >= 2:
             clusters.append(sorted(indices))
+            anchored_clusters.add(len(clusters) - 1)
         else:
             remaining_singletons.extend(indices)
-    clusters.extend(orphan_clusters)
+    for cluster in orphan_clusters:
+        clusters.extend(_split_bridge_cluster(cluster, articles))
     # Singletons (1-article) are NOT clusters — silently excluded
 
     # Phase 2: Split oversized clusters recursively
     if max_size > 0:
         final_clusters = []
-        for cluster_indices in clusters:
-            if len(cluster_indices) > max_size:
+        for cluster_pos, cluster_indices in enumerate(clusters):
+            if len(cluster_indices) > max_size and cluster_pos not in anchored_clusters:
                 sub_articles = [articles[i] for i in cluster_indices]
-                sub_clusters = _cluster_by_jaccard(sub_articles, threshold + 0.1)
+                split_threshold = max(threshold + 0.1, 0.35)
+                sub_clusters = _cluster_by_jaccard(sub_articles, split_threshold)
                 if sub_clusters:
                     for sub in sub_clusters:
                         final_clusters.append([cluster_indices[i] for i in sub])
@@ -158,7 +238,8 @@ def cluster_articles(articles: list[dict], threshold: float = 0.35,
 
 
 def build_cluster_object(cluster_indices: list[int], articles: list[dict],
-                         domain_id: str, seq: int) -> dict:
+                         domain_id: str, seq: int,
+                         created_date: Optional[str] = None) -> dict:
     """Build a StoryCluster object from article indices.
 
     Derives thread_id (most common event_thread_id in cluster) and
@@ -171,6 +252,8 @@ def build_cluster_object(cluster_indices: list[int], articles: list[dict],
     terms = set()
     source_types = set()
     locales = set()
+    source_domains = set()
+    canonical_urls = []
     article_ids = []
     thread_ids = []
 
@@ -179,6 +262,12 @@ def build_cluster_object(cluster_indices: list[int], articles: list[dict],
         terms.update(a.get("terms", []))
         source_types.add(a.get("source_type", "unknown"))
         locales.add(a.get("source_locale", "unknown"))
+        source_domain = a.get("source") or a.get("source_domain")
+        if source_domain:
+            source_domains.add(source_domain)
+        canonical_url = a.get("canonical_url") or canonicalize_url(a.get("url", ""))
+        if canonical_url and canonical_url not in canonical_urls:
+            canonical_urls.append(canonical_url)
         article_ids.append(a["id"])
         tid = a.get("event_thread_id")
         if tid:
@@ -229,9 +318,11 @@ def build_cluster_object(cluster_indices: list[int], articles: list[dict],
         "article_count": num_articles,
         "source_types": sorted(source_types),
         "locales": sorted(locales),
+        "source_domains": sorted(source_domains),
+        "canonical_urls": canonical_urls,
         "entities": sorted(entities),
         "terms": sorted(terms),
-        "created": datetime.now(CST).strftime("%Y-%m-%d"),
+        "created": created_date or datetime.now(CST).strftime("%Y-%m-%d"),
     }
     if thread_id:
         result["thread_id"] = thread_id
@@ -239,6 +330,14 @@ def build_cluster_object(cluster_indices: list[int], articles: list[dict],
         result["is_continuation"] = True
 
     return result
+
+
+def extract_domain_id(domain_path: str) -> str:
+    """Extract domain id from a domain.yaml path or return the value unchanged."""
+    normalized = os.path.normpath(domain_path)
+    if os.path.basename(normalized) == "domain.yaml":
+        return os.path.basename(os.path.dirname(normalized))
+    return os.path.basename(normalized)
 
 
 def main():
@@ -253,8 +352,7 @@ def main():
                         help="Max articles per cluster, oversized re-split (default: 10, 0=unlimited)")
     args = parser.parse_args()
 
-    # Extract domain_id from domain path: domains/storage/domain.yaml → storage
-    domain_id = os.path.basename(os.path.dirname(os.path.dirname(args.domain)))
+    domain_id = extract_domain_id(args.domain)
 
     articles = []
     with open(args.input) as f:
@@ -276,7 +374,7 @@ def main():
         clusters = []
         clustered_ids = set()
         for seq, indices in enumerate(clusters_indices, 1):
-            cluster_obj = build_cluster_object(indices, articles, domain_id, seq)
+            cluster_obj = build_cluster_object(indices, articles, domain_id, seq, args.date)
             clusters.append(cluster_obj)
             clustered_ids.update(cluster_obj["article_ids"])
 

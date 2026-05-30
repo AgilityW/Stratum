@@ -30,6 +30,7 @@ def generate_context(
     lookback_days: int = 7,
     coverage_gap_days: int = 14,
     due_within_days: int = 7,
+    coverage_entities: Optional[list[str]] = None,
 ) -> BriefingContext:
     """Generate the full briefing context for an agent.
 
@@ -43,6 +44,8 @@ def generate_context(
         lookback_days: how far back to look for carried-forward events
         coverage_gap_days: entities not mentioned for this many days count as gaps
         due_within_days: judgments due within this many days
+        coverage_entities: optional domain coverage universe; entities that
+            have never appeared are reported as gaps too
     """
     # Carried-forward: events from last briefing at same or lower scale
     carried_forward = _carried_forward(events, scale, target_date, lookback_days)
@@ -51,13 +54,18 @@ def generate_context(
     due_judgments = _due_judgments(judgments, target_date, due_within_days)
 
     # Coverage gaps
-    coverage_gaps = _coverage_gaps(events, target_date, coverage_gap_days)
+    coverage_gaps = _coverage_gaps(
+        events,
+        target_date,
+        coverage_gap_days,
+        coverage_entities=coverage_entities,
+    )
 
     # Active causal chains
-    active_causal_chains = _active_chains(edges, events)
+    active_causal_chains = _active_chains(edges, events, target_date)
 
     # Unassigned events
-    unassigned = _unassigned(events)
+    unassigned = _unassigned(events, target_date)
 
     return BriefingContext(
         scale=scale,
@@ -92,7 +100,7 @@ def _carried_forward(
     seen = set()
 
     for event in events:
-        if event.status not in ("emerging", "active"):
+        if event.status not in ("emerging", "active", "cooling"):
             continue
         if event.id in seen:
             continue
@@ -101,7 +109,7 @@ def _carried_forward(
         for ref in event.scale_refs:
             ref_scale = ref.scale if hasattr(ref, "scale") else ref.get("scale", "")
             ref_date = ref.date if hasattr(ref, "date") else ref.get("date", "")
-            if ref_scale in lower_scales and ref_date >= cutoff:
+            if ref_scale in lower_scales and cutoff <= ref_date <= target_date:
                 carried.append({
                     "event_id": event.id,
                     "title": event.title,
@@ -114,8 +122,9 @@ def _carried_forward(
                 seen.add(event.id)
                 break
 
-    # Sort by priority (ascending = higher priority first), then by date
-    carried.sort(key=lambda e: (e["priority"], e["last_date"]))
+    # Sort by priority (ascending = higher priority first), then recency.
+    carried.sort(key=lambda e: e["last_date"], reverse=True)
+    carried.sort(key=lambda e: e["priority"])
     return carried
 
 
@@ -130,6 +139,9 @@ def _due_judgments(
 
     for j in judgments:
         if j.verdict not in ("pending", "deferred"):
+            continue
+        made_at = str(getattr(j, "made_at", "") or "")[:10]
+        if made_at and made_at > as_of:
             continue
         try:
             expected = date.fromisoformat(j.expected_verification[:10])
@@ -156,19 +168,40 @@ def _coverage_gaps(
     events: list[EventRecord],
     as_of: str,
     gap_days: int,
+    coverage_entities: Optional[list[str]] = None,
 ) -> list[dict]:
     """Entities that haven't appeared in any event for gap_days or more."""
     today = date.fromisoformat(as_of) if as_of else date.today()
     cutoff = (today - timedelta(days=gap_days)).isoformat()
 
-    # Build entity → last_mentioned map
+    # Build entity -> last_mentioned map
     entity_last = {}
     for event in events:
+        event_date = str(event.last_updated or "")[:10]
+        if event_date and event_date > as_of:
+            continue
         for entity in event.entity_tags:
             if entity not in entity_last or event.last_updated > entity_last[entity]:
                 entity_last[entity] = event.last_updated
 
     gaps = []
+    coverage_universe = []
+    seen_entities = set()
+    for entity in coverage_entities or []:
+        entity = str(entity or "").strip()
+        if entity and entity not in seen_entities:
+            seen_entities.add(entity)
+            coverage_universe.append(entity)
+
+    for entity in coverage_universe:
+        if entity not in entity_last:
+            gaps.append({
+                "entity": entity,
+                "last_mentioned": None,
+                "days_since": None,
+                "status": "never_seen",
+            })
+
     for entity, last_date in entity_last.items():
         try:
             last = date.fromisoformat(last_date[:10])
@@ -180,22 +213,38 @@ def _coverage_gaps(
                 "entity": entity,
                 "last_mentioned": last_date,
                 "days_since": days_since,
+                "status": "stale",
             })
 
-    gaps.sort(key=lambda g: g["days_since"], reverse=True)
+    gaps.sort(key=lambda g: (g["days_since"] is not None, g["days_since"] or 0), reverse=True)
     return gaps
 
 
 def _active_chains(
     edges: list[CausalEdge],
     events: list[EventRecord],
+    as_of: Optional[str] = None,
 ) -> list[dict]:
     """Causal chains that have one or more unverified edges."""
-    event_status = {e.id: e.status for e in events}
+    as_of_date = str(as_of or "")[:10]
+    event_status = {}
+    for event in events:
+        event_date = str(getattr(event, "last_updated", "") or "")[:10]
+        if as_of_date and event_date and event_date > as_of_date:
+            continue
+        event_status[event.id] = event.status
+    active_statuses = {"emerging", "active", "cooling", "unknown"}
     unverified = [e for e in edges if not e.verified]
 
     chains = {}
     for edge in unverified:
+        edge_date = str(getattr(edge, "created", "") or "")[:10]
+        if as_of_date and edge_date and edge_date > as_of_date:
+            continue
+        cause_status = event_status.get(edge.cause_id, "unknown")
+        effect_status = event_status.get(edge.effect_id, "unknown")
+        if cause_status not in active_statuses and effect_status not in active_statuses:
+            continue
         chain_key = f"{edge.cause_id}-{edge.effect_id}"
         chains[chain_key] = {
             "cause_id": edge.cause_id,
@@ -203,16 +252,24 @@ def _active_chains(
             "mechanism": edge.mechanism[:200],
             "confidence": edge.confidence,
             "created": edge.created,
-            "cause_status": event_status.get(edge.cause_id, "unknown"),
-            "effect_status": event_status.get(edge.effect_id, "unknown"),
+            "cause_status": cause_status,
+            "effect_status": effect_status,
         }
 
     return list(chains.values())
 
 
-def _unassigned(events: list[EventRecord]) -> list[str]:
+def _unassigned(events: list[EventRecord], as_of: Optional[str] = None) -> list[str]:
     """Event IDs that have not appeared in any briefing yet."""
-    return [e.id for e in events if len(e.scale_refs) == 0 and e.status in ("emerging", "active")]
+    as_of_date = str(as_of or "")[:10]
+    unassigned = []
+    for event in events:
+        event_date = str(getattr(event, "last_updated", "") or "")[:10]
+        if as_of_date and event_date and event_date > as_of_date:
+            continue
+        if len(event.scale_refs) == 0 and event.status in ("emerging", "active"):
+            unassigned.append(event.id)
+    return unassigned
 
 
 # ── Context Formatter (for agent prompt injection) ──
@@ -248,7 +305,10 @@ def format_context_for_prompt(ctx: BriefingContext, max_items: int = 10) -> str:
     if ctx.coverage_gaps:
         lines.append("### Coverage Gaps")
         for item in ctx.coverage_gaps[:max_items]:
-            lines.append(f"- **{item['entity']}**: last mentioned {item['days_since']} days ago")
+            if item.get("last_mentioned"):
+                lines.append(f"- **{item['entity']}**: last mentioned {item['days_since']} days ago")
+            else:
+                lines.append(f"- **{item['entity']}**: no prior coverage found")
         lines.append("")
 
     # Active causal chains
@@ -261,6 +321,8 @@ def format_context_for_prompt(ctx: BriefingContext, max_items: int = 10) -> str:
     # Unassigned events
     if ctx.unassigned_events:
         lines.append(f"### Unassigned Events: {len(ctx.unassigned_events)}")
+        for event_id in ctx.unassigned_events[:max_items]:
+            lines.append(f"- {event_id}")
         lines.append("")
 
     return "\n".join(lines)

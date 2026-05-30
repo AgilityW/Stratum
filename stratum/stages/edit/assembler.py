@@ -27,6 +27,7 @@ import os
 import re
 import yaml
 from datetime import datetime
+from urllib.parse import urlparse
 
 
 CST_WEEKDAYS = ["周一", "周二", "周三", "周四", "周五", "周六", "周日"]
@@ -72,6 +73,23 @@ def _format_cn_date(run_date: str) -> str:
     return f"{dt.year}年{dt.month}月{dt.day}日 · {weekday}"
 
 
+def _source_name(article: dict) -> str:
+    """Return the best source label across normalized and search result shapes."""
+    if article.get("source"):
+        return article["source"]
+    if article.get("source_domain"):
+        return article["source_domain"]
+    url = article.get("url", "")
+    if url:
+        host = urlparse(url).netloc.lower()
+        if host.startswith("www."):
+            host = host[4:]
+        if host.startswith("m."):
+            host = host[2:]
+        return host or "未知来源"
+    return "未知来源"
+
+
 def _inject_domain_values(fragment_text: str, domain_cfg: dict, inject_paths: list[str]) -> tuple[str, dict]:
     """Inject domain.yaml values into fragment placeholders.
 
@@ -108,9 +126,7 @@ def _build_data_section(
     # Article snapshot
     def _article_snapshot(a: dict) -> str:
         title = a.get("title", "无标题")
-        source = a.get("source", "未知来源")
-        locale = a.get("source_locale", a.get("locale", ""))
-        locale_tag = f" [{locale}]" if locale else ""
+        source = _source_name(a)
         date = a.get("published_at", "")
         date_match = re.match(r"(\d{4}-\d{2}-\d{2})", date or "")
         date_str = date_match.group(1) if date_match else date[:10] if date else ""
@@ -118,7 +134,7 @@ def _build_data_section(
         if len(snippet) > 200:
             snippet = snippet[:200] + "..."
         return (
-            f"- **[{title}]({a.get('url', '')})**{locale_tag}\n"
+            f"- **[{title}]({a.get('url', '')})**\n"
             f"  来源: {source} | 日期: {date_str}\n"
             f"  摘要: {snippet}\n"
         )
@@ -128,7 +144,7 @@ def _build_data_section(
     # Source index
     source_index = {}
     for a in articles:
-        src = a.get("source", "")
+        src = _source_name(a)
         if src and src not in source_index:
             source_index[src] = a
     parts.append("## 来源索引\n")
@@ -204,6 +220,32 @@ def _schema_to_instructions(schema_path: str) -> str:
     return "\n".join(lines)
 
 
+def _structured_output_keys(output_cfg: dict) -> list[str]:
+    """Return enabled structured output keys in stable prompt order."""
+    keys = []
+    for key in ("threads", "causal_edges", "judgments"):
+        if output_cfg.get(key, {}).get("enabled"):
+            keys.append(key)
+    return keys
+
+
+def _thread_output_instructions() -> str:
+    """Return concise instructions for event-thread structured output."""
+    return (
+        "\n## 事件线程输出格式\n"
+        "请生成 threads 数组，用于后续跨天追踪和下一轮 Search follow-up。"
+        "每个重要延续故事或新故事输出一个对象，字段如下：\n"
+        "- **thread_id**: 已有 thread 使用上下文中的 thread_id；新故事可留空或使用稳定临时 id\n"
+        "- **title**: 事件线程标题\n"
+        "- **status**: emerging / active / cooling\n"
+        "- **priority**: high / medium / low\n"
+        "- **entity_ids**: 相关公司/实体 id 数组\n"
+        "- **term_ids**: 相关技术/主题 id 数组\n"
+        "- **watch_signals**: 2-5 条后续搜索短语，必须具体到公司、产品、验证/量产/价格/客户等信号\n"
+        "- **close_conditions**: 该线程可视为结束的条件数组\n"
+    )
+
+
 def assemble(
     manifest_path: str,
     prompts_dir: str,
@@ -277,6 +319,8 @@ def assemble(
 
     # ── Structured output instructions ──
     output_cfg = cfg["output"]
+    if output_cfg.get("threads", {}).get("enabled"):
+        user_prompt += _thread_output_instructions()
     if output_cfg.get("causal_edges", {}).get("enabled"):
         schema_path = os.path.join(prompts_dir, output_cfg["causal_edges"]["schema"])
         user_prompt += "\n## 因果链输出格式\n"
@@ -289,11 +333,13 @@ def assemble(
         user_prompt += "\n请生成 judgments 数组（1-3 个判断）。\n"
 
     # Append structured output marker instruction
-    if output_cfg.get("causal_edges", {}).get("enabled") or output_cfg.get("judgments", {}).get("enabled"):
+    structured_keys = _structured_output_keys(output_cfg)
+    if structured_keys:
+        json_keys = ",\n  ".join(f'"{key}": [...]' for key in structured_keys)
         user_prompt += (
             "\n## 最终输出格式\n"
             "请在简报 markdown 结束后，另起一行 `---DATA---`，然后输出一个 JSON 对象：\n"
-            '```json\n{\n  "causal_edges": [...],\n  "judgments": [...]\n}\n```\n'
+            f"```json\n{{\n  {json_keys}\n}}\n```\n"
         )
 
     return system_prompt, user_prompt, output_cfg

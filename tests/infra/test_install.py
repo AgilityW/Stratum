@@ -1,13 +1,12 @@
-"""Layer 3: Install flow verification — config, SKILL.md frontmatter, install.sh.
+"""Layer 3: Install flow verification — config, install.sh, current project shape.
 
 Validates that the project is in a deployable state:
   - config.example.yaml is valid YAML with required sections
-  - All SKILL.md files have valid frontmatter (name, version, contract)
   - install.sh exists and is executable
 """
 
-import os
 import subprocess
+import sqlite3
 from pathlib import Path
 
 import pytest
@@ -16,49 +15,6 @@ import yaml
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 SKILLS_DIR = PROJECT_ROOT / "skills"
-SUBSYSTEMS_DIR = PROJECT_ROOT / "stratum" / "subsystems"
-
-
-# ── Helpers ─────────────────────────────────────────────────
-
-def _find_skill_md():
-    """Return list of (skill_dir_name, SKILL.md path) from skills/ and subsystems/."""
-    skills = []
-    for base_dir in (SKILLS_DIR, SUBSYSTEMS_DIR):
-        if not base_dir.is_dir():
-            continue
-        for root, dirs, files in os.walk(str(base_dir)):
-            dirs[:] = [d for d in dirs if d != "__pycache__"]
-            if "SKILL.md" in files:
-                md = Path(root) / "SKILL.md"
-                name = str(Path(root).relative_to(base_dir)).replace("/", "/")
-                if name == ".":
-                    name = Path(root).name
-                skills.append((name, md))
-    return skills
-
-
-def _parse_frontmatter(path):
-    """Parse YAML frontmatter from a SKILL.md file."""
-    with open(path) as f:
-        content = f.read()
-
-    if not content.startswith("---"):
-        return None, "Missing opening '---'"
-
-    # Find second ---
-    end = content.find("---", 3)
-    if end == -1:
-        return None, "Missing closing '---'"
-
-    yaml_str = content[3:end].strip()
-    if not yaml_str:
-        return None, "Empty frontmatter"
-
-    try:
-        return yaml.safe_load(yaml_str), None
-    except yaml.YAMLError as e:
-        return None, str(e)
 
 
 # ── config.example.yaml ────────────────────────────────────
@@ -109,55 +65,6 @@ class TestConfigExample:
         assert "${TAVILY_API_KEY}" in yaml_str or "TAVILY_API_KEY" in yaml_str
 
 
-# ── SKILL.md frontmatter ───────────────────────────────────
-
-class TestSkillFrontmatter:
-    """All SKILL.md files have valid frontmatter with required fields."""
-
-    REQUIRED_TOP = {"name", "description", "version"}
-    REQUIRED_CONTRACT = {"input", "output"}
-
-    @pytest.mark.parametrize("skill_name,skill_path", _find_skill_md())
-    def test_has_valid_frontmatter(self, skill_name, skill_path):
-        fm, error = _parse_frontmatter(skill_path)
-        assert fm is not None, f"SKILL.md frontmatter parse error: {error}"
-
-    @pytest.mark.parametrize("skill_name,skill_path", _find_skill_md())
-    def test_has_required_top_fields(self, skill_name, skill_path):
-        fm, _ = _parse_frontmatter(skill_path)
-        missing = self.REQUIRED_TOP - set(fm.keys())
-        assert not missing, f"Missing required fields: {missing}"
-
-    @pytest.mark.parametrize("skill_name,skill_path", _find_skill_md())
-    def test_contract_has_input_output(self, skill_name, skill_path):
-        # stratum-deployment is a reference doc, not a pipeline skill
-        if skill_name == "stratum-deployment":
-            pytest.skip("stratum-deployment is a reference doc, not a pipeline skill")
-        
-        fm, _ = _parse_frontmatter(skill_path)
-        contract = fm.get("contract", {})
-        missing = self.REQUIRED_CONTRACT - set(contract.keys())
-        assert not missing, f"Contract missing required fields: {missing}"
-
-    @pytest.mark.parametrize("skill_name,skill_path", _find_skill_md())
-    def test_version_is_string(self, skill_name, skill_path):
-        fm, _ = _parse_frontmatter(skill_path)
-        assert isinstance(fm["version"], str), f"version should be string, got {type(fm['version'])}"
-
-    @pytest.mark.parametrize("skill_name,skill_path", _find_skill_md())
-    def test_no_duplicate_version(self, skill_name, skill_path):
-        """version field appears exactly once in frontmatter."""
-        with open(skill_path) as f:
-            content = f.read()
-        end = content.find("---", 3)
-        yaml_str = content[3:end]
-        occurrences = [i for i in range(len(yaml_str)) if yaml_str.startswith("version:", i)]
-        assert len(occurrences) == 1, (
-            f"version appears {len(occurrences)} times in frontmatter — YAML parser "
-            f"will only keep the last one, causing metadata drift"
-        )
-
-
 # ── install.sh ─────────────────────────────────────────────
 
 class TestInstallSh:
@@ -197,6 +104,61 @@ class TestProjectStructure:
     def test_contracts_dir_exists(self):
         assert (PROJECT_ROOT / "stratum" / "contracts").is_dir()
 
-    @pytest.mark.skip(reason="Project uses pipeline code, not Hermes skills — skills/ was intentionally cleaned")
-    def test_at_least_one_skill(self):
-        pass
+    def test_db_schema_executes_on_empty_sqlite(self):
+        schema = (PROJECT_ROOT / "stratum" / "db" / "schema.sql").read_text()
+        conn = sqlite3.connect(":memory:")
+        try:
+            conn.executescript(schema)
+            columns = {
+                row[1]
+                for row in conn.execute("PRAGMA table_info(queries)").fetchall()
+            }
+        finally:
+            conn.close()
+        assert "dimension" in columns
+
+    def test_legacy_skills_dir_absent_or_empty(self):
+        """The current project is pipeline-code based, not Hermes-skill based."""
+        if not SKILLS_DIR.exists():
+            return
+        visible_entries = [
+            p for p in SKILLS_DIR.iterdir()
+            if not p.name.startswith(".") and p.name != "__pycache__"
+        ]
+        assert visible_entries == []
+
+    def test_makefile_pytest_paths_exist(self):
+        """Makefile focused test targets should not point at removed test files."""
+        makefile = (PROJECT_ROOT / "Makefile").read_text()
+        known_options = {
+            "-m", "-v", "--cov", "--cov-report=term-missing", "--cov-report=html",
+            "$(PYTHON)", "pytest", "$(FILE)",
+        }
+
+        for line in makefile.splitlines():
+            stripped = line.strip()
+            if not stripped.startswith("$(PYTHON) -m pytest "):
+                continue
+            for token in stripped.split()[3:]:
+                if token in known_options or token.startswith("--"):
+                    continue
+                if token.endswith("/") or token.endswith(".py"):
+                    assert (PROJECT_ROOT / token).exists(), token
+
+    def test_makefile_pipeline_targets_are_repo_local(self):
+        """Pipeline shortcuts should not depend on private external cron ids."""
+        makefile = (PROJECT_ROOT / "Makefile").read_text()
+        assert "hermes cron run" not in makefile
+        assert "stratum/orchestrator/pipeline.py" in makefile
+
+    def test_project_metadata_matches_readme_major_version(self):
+        pyproject = (PROJECT_ROOT / "pyproject.toml").read_text()
+        version_line = next(
+            line for line in pyproject.splitlines()
+            if line.startswith("version = ")
+        )
+        version = version_line.split("=", 1)[1].strip().strip('"')
+        readme = (PROJECT_ROOT / "README.md").read_text()
+
+        assert readme.startswith("# Stratum")
+        assert f"v{version.split('.')[0]}." in readme

@@ -1,58 +1,100 @@
-# event-thread — 跨日事件线程（Agent 驱动）
+# event-thread - event lifecycle and cross-temporal linking
 
 ## Purpose
-日频管线的 Agent Edit 阶段产出的事件线程层。Agent 从每日 articles + clusters 中识别跨日延续的事件，生成 EventThread（标题、状态、时间线、观察信号）。
 
-与 story-tracking 的关系：event-thread 是**内容生产层**，story-tracking 是**数据管理层**。Agent 产出 EventThread → story_bridge 转换 → EventStore 入库。
+`stratum/subsystems/event-thread` provides deterministic event-thread mechanics: lifecycle status, cluster-to-thread matching, watch query generation, archive rules, and cross-scale linking.
+
+It is a computational subsystem. Long-lived persistence currently belongs to `stratum/db`.
+
+## Modules
+
+| File | Role |
+|:---|:---|
+| `event_thread.py` | daily thread lifecycle, matching, updates, watch queries |
+| `cross_temporal.py` | daily/weekly/monthly/quarterly/yearly appearance registration and rollup tracing |
+| `__init__.py` | package marker |
 
 ## Boundaries
 
-### ✅ 做什么
-- EventThread 数据模型（id, title, timeline, status, watch_signals 等）
-- 生命周期状态机（emerging → active → cooling → resolved → archived）
-- Jaccard 确定性匹配（cluster ↔ thread 实体重叠度）
-- Watch query 生成（从活跃线程提取搜索信号）
-- 跨时间尺度链路（daily→weekly→...追溯，见 cross_temporal.py）
+### 做什么
 
-### ❌ 不做什么
-- **不管理持久化查询** — 查询能力在 story-tracking/query.py
-- **不做因果推理** — 因果图在 story-tracking/causal_graph.py
-- **不验证判断** — 判断日志在 story-tracking/judgment_log.py
-- **不归一化标签** — 标签词表在 story-tracking/taxonomy.py
+- Define `EventThread` and timeline entry dataclasses for deterministic operations.
+- Compute lifecycle: `emerging -> active -> cooling -> resolved -> archived`.
+- Match new clusters to existing event threads by watch signals and entity overlap.
+- Generate watch queries from emerging, active, and cooling threads.
+- Register appearances across time scales.
+- Roll up lower-scale threads into higher-scale parent threads.
+- Trace a thread's scale chain.
+
+### 不做什么
+
+- Does not call LLMs.
+- Does not own SQLite persistence.
+- Does not validate briefing claims.
+- Does not extract entities/terms from articles.
+- Does not define domain-specific taxonomy.
 
 ## Data Contracts
 
-### 输入
-| 数据 | 来源 | 格式 |
-|:---|:---|:---|
-| 新 clusters | pipeline Stage 5 产出 | clusters.json |
-| 已有 threads | {workspace}/{domain}/data/event-threads/event-threads.json | JSON array |
+Cross-temporal contracts live in `stratum/contracts/event_thread.py` and are re-exported by `stratum.contracts`.
 
-### 输出
-| 数据 | 存储 | 格式 |
-|:---|:---|:---|
-| EventThread | {workspace}/{domain}/data/event-threads/event-threads.json | JSON array |
-| CrossTemporalLink | 内存中（cross_temporal.py）| Python dict |
+Daily thread mechanics use local dataclasses in `event_thread.py` because they are implementation details of this subsystem.
 
-## Design Principles
+## Lifecycle and Matching Notes
 
-### 铁律
-1. **Agent 是内容作者** — 线程的主体内容（title, assessment, questions）由 LLM 生成
-2. **确定性 fallback** — Jaccard 匹配用于不需要 LLM 的场景（如事件量少时的日间匹配）
-3. **ID 不与 story-tracking 共享** — EventThread 的 `et-{year}-{seq}` 和 EventRecord 的 `event-{domain}-{seq}` 是独立命名空间
+- A newly created thread stays `emerging` on its first disclosure day. A later
+  confirmation/update makes it `active`.
+- Lifecycle status is computed from timeline entries visible at the target
+  `run_date`; future timeline entries are ignored for historical backfills, and
+  timeline entries are sorted by date before choosing the latest observed
+  update.
+- `add_update()` keeps `last_updated`, lifecycle `status`, current
+  `confidence`, and `confidence_history` aligned with the new timeline entry.
+- `cooling` threads still generate watch queries, because they need explicit
+  follow-up before becoming resolved.
+- Search DB query loading must preserve the same lifecycle policy:
+  thread-bound queries for `emerging`, `active`, and `cooling` threads are
+  eligible for daily Search; resolved/archived/dormant threads are not.
+- Cluster matching ignores `resolved` and `archived` threads; inactive stories
+  should not be accidentally revived by lexical overlap.
+- Cluster matching uses watch signals first, but also falls back to stable
+  thread descriptors such as title, canonical question, open/close conditions,
+  and timeline summaries. This keeps threads matchable when upstream structured
+  output omitted explicit watch signals.
+- Watch query generation prioritizes high-priority threads before medium/low
+  threads when the daily query cap is reached. Within the same priority, more
+  recently updated threads win the cap, because they are usually the stories
+  most likely to produce fresh follow-up Search results.
+- Watch query generation accepts a locale list for domain-aware follow-up and
+  deduplicates repeated `query + locale` pairs before they consume the daily cap.
+- If a still-active thread has no explicit watch signals, watch-query
+  generation falls back to the canonical question or title rather than dropping
+  the story from next-run Search entirely.
+- The daily orchestrator persists generated watch queries into SQLite as
+  thread-bound `verification` queries with `dimension = thread_watch`, using
+  the configured source locales. This keeps Event Thread follow-up connected to
+  the next Search run without making this subsystem own persistence.
+- Automatic thread creation respects `MAX_THREADS` so a noisy day cannot grow
+  the active thread set without bound.
+- New thread IDs are allocated from the highest existing `et-{domain}-NNNN`
+  suffix plus one, not from `len(threads)`, so sparse/deleted histories do not
+  collide with existing story identities.
+
+## Cross-Temporal Notes
+
+- `CrossTemporalLink.add_appearance()` is idempotent by `scale + briefing_id`.
+  Re-running the same briefing replaces that appearance instead of appending a
+  duplicate, so traces and scale summaries remain stable under reruns.
+- Cross-scale traces follow `merged_into` parent links upward and report which
+  expected higher scales are still missing from the chain.
 
 ## Dependencies
 
-### 依赖
-- pipeline Stage 5 (Cluster) 产出
-- Hermes Agent (LLM)
+- `stratum/contracts/event_thread.py`
+- Stage 5 cluster output shape
+- Story-tracking context generation may consume compatible thread/event data from SQLite.
 
-### 被依赖
-- pipeline Stage 6 (Edit) — Agent 读 clusters 产出 EventThread
-- story_bridge.py — 转换 EventThread → EventRecord
+## Testing
 
-## Evolution Notes
-
-### 已知局限
-- 两个 contracts.py 命名冲突 — event-thread/contracts.py 与 story-tracking/story_contracts.py 同名，pytest 统一收集时会冲突
-- 跨时间尺度链路（cross_temporal.py）功能与 story-tracking/timeline.py 部分重叠，待收敛
+- `test_event_thread.py` covers lifecycle, matching, creation/update, watch query generation, and evolution.
+- `test_cross_temporal.py` covers appearance registration, rollup, trace, resolution, and summaries.

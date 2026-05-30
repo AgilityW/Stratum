@@ -1,84 +1,156 @@
-# orchestrator — 管线编排 + 闭环反馈 + 桥接层
+# orchestrator - pipeline 编排层
 
 ## Purpose
-Stratum 的中央调度器。串联 8 个 pipeline stage，维护 Story Bridge → normalize 的闭环反馈，桥接 Agent 产出到故事追踪系统。
+
+`stratum/orchestrator` 是 Stratum 的日频运行入口。它负责把配置、领域、stage 脚本、collector、SQLite story-tracking 串成一次完整 pipeline run。
+
+当前唯一代码入口是 `pipeline.py`。
 
 ## Boundaries
 
-### ✅ 做什么
-- pipeline.py — 8 阶段日频简报管线编排（search → enrich → verify → normalize → cluster → edit → validate → render）
-- edit.py — Agent Edit 阶段（LLM 生成简报），由 pipeline.py 调用
-- story_bridge.py — Agent EventThread → EventRecord 转换 + Gate 验证 + EventStore 入库
-- BriefingContext 注入 — Stage 5→6 之间生成 story_context.json 供 edit.py 读取
-- **thread_keywords 导出** — Stage 5→6 之间从 Story Bridge 导出活跃事件关键词，供 normalize 消费
-- Story Bridge 写入 — Stage 8 之后将 Agent 产出的事件线程和因果判断写入 story-tracking
+### 做什么
 
-### ❌ 不做什么
-- **不执行确定性计算** — enrich/verify/normalize/cluster/validate/render 由各 stage 独立脚本完成
-- **不管理存储** — 存储归各 subsystem 的 Repository
-- **不定义业务规则** — Gate 和 tag 归一化归 story-tracking
-- **不手动介入** — 所有 8 个 stage 全部代码驱动，零人工步骤
+- 解析运行参数：domain、date、output-dir、raw-input、from-stage、skip-agent。
+- 解析 `config.yaml` 中的 `output_dir`、`reports_dir`、`db_dir`。
+- 将解析后的 `db_dir` 写入 `STRATUM_DB_DIR`，确保 DB helper 与本次
+  pipeline 使用同一个 SQLite 根目录。
+- 调用 8 个 stage：search、enrich、verify、normalize、cluster、edit、validate、render。
+- 在 search 之后调用 `stratum.collectors.collect()`，把 collector 结果 merge 回 `raw.json`。
+- 在 normalize 前消费上一轮 `thread_keywords.json`。
+- 在 edit 前从 SQLite 生成 `story_context.json`。
+- 生成 story context 时把 `domain.yaml` 的 `companies[].id` 传给
+  Story Tracking 作为 coverage entity universe，使冷启动/未覆盖实体也能
+  出现在 coverage gaps 中。
+- 在 pipeline 末尾把结构化事件、实体统计、快照写入 SQLite。
+- 在成功写入结构化事件后从 SQLite 导出 `thread_keywords.json`，供下一轮
+  normalize 使用。
 
-## Data Contracts
+### 不做什么
 
-### 输入
-| 数据 | 来源 | 格式 |
-|:---|:---|:---|
-| config.yaml | project root | YAML |
-| domain.yaml | domains/{id}/domain.yaml | YAML |
-| queries.yaml | domains/{id}/queries.yaml | YAML |
+- 不承载 stage 内部算法。每个 stage 仍由自己的 CLI 脚本负责。
+- 不直接调用搜索 API。Search stage 委托 `stratum.subsystems.search`。
+- 不直接调用 collector strategy。Collector dispatch 由 `stratum.collectors` 负责。
+- 不包含领域知识。领域数据只能来自 `domains/{id}/`。
+- 不把 SQLite 数据模型复制成文件层 JSONL 逻辑。
 
-### 输出
-| 数据 | 路径 | 格式 |
-|:---|:---|:---|
-| briefing.md/html/pdf | {output_dir}/{domain}/data/{date}/ | MD/HTML/PDF |
-| story_context.json | {output_dir}/{domain}/data/{date}/story_context.json | JSON |
-| **thread_keywords.json** | {output_dir}/{domain}/data/story-tracking/thread_keywords.json | JSON |
-| EventRecords | {output_dir}/{domain}/data/story-tracking/events.jsonl | JSONL |
-| CausalEdges | {output_dir}/{domain}/data/story-tracking/causal.jsonl | JSONL |
-| Judgments | {output_dir}/{domain}/data/story-tracking/judgments.jsonl | JSONL |
+## Data Flow
 
-### 中间产物（pipeline 内部）
-- raw.json → enriched.json → verified.jsonl → articles.jsonl → clusters.json → briefing.md → HTML/PDF
-
-### 闭环数据流 (新增)
+```text
+config.yaml + domains/{id}/
+        |
+        v
+search -> raw.json
+        |
+        v
+collectors -> raw.json merge
+        |
+        v
+enrich -> verify -> normalize -> cluster
+        |
+        v
+story_context.json -> edit -> briefing.md
+        |
+        v
+validate -> render -> briefing.html/pdf
+        |
+        v
+SQLite ingest
+        |
+        +--> export thread_keywords.json from SQLite for next run
 ```
-Story Bridge (events.jsonl)
-        │
-        ▼ export_thread_keywords()
-thread_keywords.json
-        │
-        ▼ normalize.py --thread-keywords
-articles.jsonl (带 event_thread_id)
-        │
-        ▼ cluster.py (thread锚定)
-clusters.json (事件线 + 新信号分离)
-```
 
-## Design Principles
+## Runtime Outputs
 
-### 铁律
-1. **全部代码驱动** — 8 个 stage 全部由代码执行，search.py 调搜索引擎 API，edit.py 调 LLM API
-2. **stage 脚本独立可运行** — 每个 stage 可以单独调用和测试
-3. **桥接层零侵入** — Story Bridge 用 try/except 包裹，story-tracking 未初始化时静默跳过
-4. **Domain-agnostic** — orchestrator 不包含任何领域特定逻辑
-5. **路径从 config 读取** — output_dir 等路径从 config.yaml 加载，无硬编码
+| Output | Path |
+|:---|:---|
+| stage data | `{reports_dir}/{domain}/data/{date}/` |
+| raw search/collector pool | `raw.json` |
+| search query stats sidecar | `raw.stats.json` |
+| collector health sidecar | `collector_stats.json` |
+| verified articles | `verified.jsonl` |
+| verification stats sidecar | `verified.stats.json` |
+| normalized articles | `articles.jsonl` |
+| clusters | `clusters.json` |
+| briefing | `briefing.md`, `briefing.html`, `briefing.pdf` |
+| edit context | `story_context.json` |
+| run manifest | `run_manifest.json` |
+| feedback keywords | `{reports_dir}/{domain}/data/story-tracking/thread_keywords.json` |
+| source health records | `{health_data_dir}/{domain}/source-daily.ndjson` |
+| SQLite DB | `{db_dir}/{domain}/{domain}.db` |
+
+After Search completes, the orchestrator ingests `raw.stats.json` into the
+SQLite `queries` table so query hit counters and `last_run` stay current.
+When a domain DB exists, the orchestrator still passes
+`domains/{id}/queries.yaml` into Search as the baseline fallback. The Search
+stage decides whether to use active DB queries or fall back to YAML, preventing
+an empty DB from suppressing the run's query set.
+Collector health records preserve source status in tags and metadata. Status
+`unsupported` is written as `scanned: false` because it represents missing
+runtime capability or unsupported configuration, not an upstream source scan.
+
+## Failure Policy
+
+- Core deterministic stages fail hard through `run_stage()`.
+- Edit failure is reported but validate/render may continue if a prior `briefing.md` exists.
+- Collector, story context generation, thread keyword export, and DB ingest are best-effort helpers. They log warnings and do not block the main pipeline.
+- `run_manifest.json` records stage-level `success`, `skipped`, `provided`,
+  `empty`, `failed`, and `failed_nonblocking` statuses. On hard stage failure,
+  the manifest is written before the process exits.
+- DB ingest is gated by fresh artifact surfaces: event/thread ingestion runs
+  only when Edit may have produced new `event-threads.json`, while entity
+  counts and snapshots run only when Normalize produced fresh `articles.jsonl`.
+  Validate/render-only resumes record DB ingest as skipped.
+- `thread_keywords.json` is exported only after successful event DB ingest. This
+  keeps the next run's normalize feedback file aligned with newly persisted
+  events instead of the previous SQLite state.
+- `thread_keywords.json` is aggregated by `thread_id`. Multiple events in the
+  same continuing story contribute a single keyword profile, preventing
+  Normalize from treating one thread as several competing candidates.
+
+## Resume Policy
+
+`--from-stage` starts execution at the named stage and skips earlier stages:
+
+- `--from-stage enrich` expects an existing `raw.json`.
+- `--from-stage verify` expects an existing `enriched.json`.
+- `--from-stage normalize` expects an existing `verified.jsonl`.
+- `--from-stage cluster` expects an existing `articles.jsonl`.
+- `--from-stage edit` expects existing `articles.jsonl` and `clusters.json`.
+- `--from-stage validate` expects existing `briefing.md` and `articles.jsonl`.
+- `--from-stage render` expects existing `briefing.md`.
+
+Search-side collectors only run when Search runs, so resume runs do not mutate
+an existing `raw.json`.
+
+Resume stage names are validated against the canonical pipeline order. Unknown
+stage names fail loudly instead of defaulting to a full run, so typoed internal
+calls or future entrypoints cannot silently mutate earlier artifacts.
+
+DB ingest follows the same resume contract: `--from-stage validate` and
+`--from-stage render` do not re-ingest prior articles/events, preventing
+re-validation or re-rendering from changing SQLite counters.
+
+After fresh event DB ingest, the orchestrator also turns event-thread watch
+targets into active SQLite Search queries. Explicit `watch_signals` are used
+when present; otherwise the event-thread engine falls back to the thread's
+canonical question or title. The orchestrator expands `config.yaml
+source_languages` through `locales`, then writes one thread-bound
+`verification` query per watch target and locale with `dimension =
+thread_watch`. The next Search run can therefore follow emerging, active, and
+cooling stories through the normal DB-backed query path even when Agent output
+omits optional watch signals.
 
 ## Dependencies
 
-### 依赖
-- `stratum/stages/` — 8 个 stage 脚本（search, enrich, verify, normalize, cluster, edit, validate, render）
-- `stratum/subsystems/story-tracking/` — EventStore, BriefingContext, Gate, Taxonomy
-- `domains/{id}/` — domain.yaml, queries.yaml, taxonomy.yaml, prompts/, templates/
-- `config.yaml` — output_dir, engines, llm 配置
+- `stratum/stages/*/*.py`
+- `stratum/collectors`
+- `stratum/subsystems/search`
+- `stratum/subsystems/story-tracking/briefing_context.py`
+- `stratum/db`
+- `domains/{id}/domain.yaml`
+- `domains/{id}/queries.yaml`
+- `domains/{id}/templates/daily.html`
 
-### 被依赖
-- Cron — 定时触发
-
-## Evolution Notes
-
-### v2.0 (2026-05-29)
-- Agent Edit 从手动 placeholder 改为 edit.py 自动调用 DeepSeek
-- 新增 thread_keywords 导出 + normalize 消费闭环
-- 路径全部改为从 config.yaml 读取
-- 删除 print_agent_placeholder 死代码
+Edit prompts are loaded from `stratum/stages/edit/prompts/manifest.yaml` and
+its fragments. Domain prompt files under `domains/{id}/prompts/` are reserved
+assets for future override support; the current pipeline does not read them.

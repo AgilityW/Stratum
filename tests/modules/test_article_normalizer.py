@@ -94,8 +94,8 @@ class TestArticleRecordConstraints:
     def test_source_locale_is_bcp47(self):
         """source_locale must be BCP 47 format (e.g., 'zh-CN', 'en')."""
         import re
-        bcp47 = re.compile(r'^[a-z]{2,3}(-[A-Z]{2,4})?$')
-        for locale in ["zh-CN", "zh-TW", "en", "ja", "ko"]:
+        bcp47 = re.compile(r'^[A-Za-z]{2,3}(-[A-Za-z0-9]{2,8})*$')
+        for locale in ["zh-CN", "zh-TW", "en", "ja", "ko", "en-US", "zh-Hans-CN", "zh-cn"]:
             assert bcp47.match(locale), f"'{locale}' not valid BCP 47"
 
     def test_published_at_is_iso8601(self):

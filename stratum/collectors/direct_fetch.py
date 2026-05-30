@@ -10,13 +10,16 @@ No external dependencies required.
 
 import re
 import sys
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
+from html import unescape
 from html.parser import HTMLParser
 from typing import Optional
 from urllib.parse import urljoin, urlparse
 
 import requests
 
+from stratum.collectors.common import extract_domain, normalize_source_type
 from stratum.subsystems.search.models import SearchResult
 
 
@@ -109,6 +112,107 @@ def _extract_date(url: str, text: str) -> Optional[str]:
     return None
 
 
+def _is_future_date(date_str: Optional[str], run_date: str, grace_days: int = 1) -> bool:
+    """Return True when a candidate publication date is implausibly after run_date."""
+    if not date_str:
+        return False
+    try:
+        candidate = datetime.fromisoformat(date_str).date()
+        current = datetime.fromisoformat(run_date).date()
+    except ValueError:
+        return False
+    return (candidate - current).days > grace_days
+
+
+def _clean_text(text: str) -> str:
+    """Normalize extracted HTML text."""
+    text = re.sub(r'<[^>]+>', '', text)
+    return re.sub(r'\s+', ' ', unescape(text)).strip()
+
+
+_ARTICLE_DATE_PATTERNS = [
+    r'<meta[^>]+property=["\']article:published_time["\'][^>]+content=["\']([^"\']+)["\']',
+    r'<meta[^>]+name=["\']date["\'][^>]+content=["\']([^"\']+)["\']',
+    r'<meta[^>]+name=["\']pubdate["\'][^>]+content=["\']([^"\']+)["\']',
+    r'<meta[^>]+name=["\']publish_date["\'][^>]+content=["\']([^"\']+)["\']',
+    r'<meta[^>]+itemprop=["\']datePublished["\'][^>]+content=["\']([^"\']+)["\']',
+    r'<time[^>]+datetime=["\']([^"\']+)["\']',
+    r'"datePublished"\s*:\s*"([^"]+)"',
+]
+
+
+def _normalise_date_candidate(value: str) -> Optional[str]:
+    """Normalize common article-page date strings to YYYY-MM-DD."""
+    value = unescape(value or "").strip()
+    if not value:
+        return None
+    iso = value[:10]
+    if re.match(r'\d{4}-\d{2}-\d{2}', iso):
+        return iso
+    return _extract_date("", value)
+
+
+def _extract_article_page_date(html: str) -> Optional[str]:
+    """Extract publication date from article detail HTML."""
+    for pattern in _ARTICLE_DATE_PATTERNS:
+        match = re.search(pattern, html, re.IGNORECASE)
+        if match:
+            parsed = _normalise_date_candidate(match.group(1))
+            if parsed:
+                return parsed
+    return _extract_date("", html)
+
+
+def _fetch_article_date(url: str, headers: dict, timeout: int) -> Optional[str]:
+    """Fetch an article detail page and extract its publication date."""
+    resp = requests.get(url, headers=headers, timeout=min(timeout, 3), allow_redirects=True)
+    resp.raise_for_status()
+    return _extract_article_page_date(resp.text)
+
+
+def _resolve_published_at(url: str, run_date: str, headers: dict, timeout: int,
+                          fallback_text: str = "") -> Optional[str]:
+    """Resolve publication date without using unrelated list-page dates."""
+    date = _extract_date(url, "")
+    if date and not _is_future_date(date, run_date):
+        return date
+
+    try:
+        date = _fetch_article_date(url, headers, timeout)
+        if date and not _is_future_date(date, run_date):
+            return date
+    except requests.RequestException:
+        pass
+
+    date = _extract_date("", fallback_text)
+    if date and not _is_future_date(date, run_date):
+        return date
+    return None
+
+
+def _resolve_published_dates(urls: list[str], run_date: str, headers: dict,
+                             timeout: int) -> dict[str, Optional[str]]:
+    """Resolve article dates concurrently so direct_fetch stays responsive."""
+    unique_urls = list(dict.fromkeys(urls))
+    if not unique_urls:
+        return {}
+
+    date_map: dict[str, Optional[str]] = {}
+    max_workers = min(5, len(unique_urls))
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        futures = {
+            executor.submit(_resolve_published_at, url, run_date, headers, timeout): url
+            for url in unique_urls
+        }
+        for future in as_completed(futures):
+            url = futures[future]
+            try:
+                date_map[url] = future.result()
+            except Exception:
+                date_map[url] = None
+    return date_map
+
+
 class _ArticleExtractor(HTMLParser):
     """Extract article links from HTML using heading-first strategy.
     
@@ -145,7 +249,7 @@ class _ArticleExtractor(HTMLParser):
     def handle_endtag(self, tag):
         if tag == 'a' and self._in_link:
             href = self._link_href
-            title = ' '.join(t for t in self._link_text if t).strip()
+            title = _clean_text(' '.join(t for t in self._link_text if t))
             
             if href and not href.startswith('#') and not href.startswith('javascript:'):
                 full_url = urljoin(self.base_url, href)
@@ -167,7 +271,9 @@ class _ArticleExtractor(HTMLParser):
 
 def _extract_read_more_links(html: str, base_url: str, domain: str, locale: str,
                               category: str, source_id: str, max_results: int,
-                              seen_urls: set) -> list[SearchResult]:
+                              seen_urls: set, run_date: str = "",
+                              headers: Optional[dict] = None,
+                              timeout: int = 15) -> list[SearchResult]:
     """Extract articles from 'Read article' style links by looking backward for headings.
     
     Used as fallback when heading-first extraction doesn't capture all articles
@@ -200,14 +306,23 @@ def _extract_read_more_links(html: str, base_url: str, domain: str, locale: str,
         if not headings:
             continue
         
-        # Clean heading text (remove HTML tags)
-        title = re.sub(r'<[^>]+>', '', headings[-1]).strip()
+        title = _clean_text(headings[-1])
         
         if len(title) < 10:
             continue
         
-        # Extract date
-        published_at = _extract_date(full_url, html)
+        if run_date and headers:
+            published_at = _resolve_published_at(
+                full_url,
+                run_date,
+                headers,
+                timeout,
+                fallback_text=chunk,
+            )
+        else:
+            published_at = _extract_date(full_url, chunk)
+            if run_date and _is_future_date(published_at, run_date):
+                published_at = None
         
         result = SearchResult(
             url=full_url,
@@ -215,8 +330,8 @@ def _extract_read_more_links(html: str, base_url: str, domain: str, locale: str,
             snippet=title,
             locale=locale,
             published_at=published_at,
-            source_domain=domain,
-            source_type_hint=category,
+            source_domain=extract_domain(full_url),
+            source_type_hint=normalize_source_type(category),
             engine=f"direct_fetch:{source_id}",
             query_id=f"df-{source_id}-fallback",
         )
@@ -226,7 +341,12 @@ def _extract_read_more_links(html: str, base_url: str, domain: str, locale: str,
     return results
 
 
-def fetch_source(source: dict, run_date: str, timeout: int = 15) -> list[SearchResult]:
+def fetch_source(
+    source: dict,
+    run_date: str,
+    timeout: int = 15,
+    raise_on_error: bool = False,
+) -> list[SearchResult]:
     """Fetch articles from a single source definition.
     
     Args:
@@ -235,9 +355,11 @@ def fetch_source(source: dict, run_date: str, timeout: int = 15) -> list[SearchR
         timeout: HTTP timeout in seconds
     
     Returns:
-        List of SearchResult (may be empty on failure)
+        List of SearchResult. When raise_on_error is true, a source whose URLs
+        all fail raises instead of looking like a valid empty source.
     """
     results = []
+    errors = []
     source_id = source.get("id", "unknown")
     source_name = source.get("name", source_id)
     locale = source.get("locale", "en")
@@ -245,6 +367,7 @@ def fetch_source(source: dict, run_date: str, timeout: int = 15) -> list[SearchR
     urls = source.get("urls", [])
     max_articles = source.get("max_articles", source.get("defaults", {}).get("max_articles_per_url", 10))
     timeout = source.get("timeout", 15)
+    resolve_article_dates = bool(source.get("resolve_article_dates", False))
     
     headers = {
         "User-Agent": "Stratum/1.0 (storage industry monitor; +https://github.com/stratum)",
@@ -261,7 +384,8 @@ def fetch_source(source: dict, run_date: str, timeout: int = 15) -> list[SearchR
             parser = _ArticleExtractor(url)
             parser.feed(resp.text)
             
-            domain = urlparse(url).netloc.lower().lstrip("www.")
+            domain = extract_domain(url)
+            source_type = normalize_source_type(category)
             
             # Detect page structure: AEM/corp CMS with "Read article" buttons
             has_read_more = bool(re.search(
@@ -271,9 +395,9 @@ def fetch_source(source: dict, run_date: str, timeout: int = 15) -> list[SearchR
             
             # Phase 1: heading-first links (skip if page has read-more buttons)
             if not has_read_more:
-                added = 0
+                candidates: list[tuple[str, str]] = []
                 for link in parser.links:
-                    if added >= max_articles:
+                    if len(candidates) >= max_articles:
                         break
                         
                     link_url = link['url']
@@ -284,8 +408,26 @@ def fetch_source(source: dict, run_date: str, timeout: int = 15) -> list[SearchR
                     
                     if len(title.split()) <= 2 and title == title.upper():
                         continue
-                    
-                    published_at = _extract_date(link_url, resp.text)
+
+                    candidates.append((link_url, title))
+
+                if resolve_article_dates:
+                    dates = _resolve_published_dates(
+                        [url for url, _title in candidates],
+                        run_date,
+                        headers,
+                        timeout,
+                    )
+                else:
+                    dates = {
+                        url: (
+                            date if not _is_future_date(date, run_date) else None
+                        )
+                        for url, _title in candidates
+                        for date in [_extract_date(url, "")]
+                    }
+                for link_url, title in candidates:
+                    published_at = dates.get(link_url)
                     
                     result = SearchResult(
                         url=link_url,
@@ -293,25 +435,31 @@ def fetch_source(source: dict, run_date: str, timeout: int = 15) -> list[SearchR
                         snippet=title,
                         locale=locale,
                         published_at=published_at,
-                        source_domain=domain,
-                        source_type_hint=category,
+                        source_domain=extract_domain(link_url),
+                        source_type_hint=source_type,
                         engine=f"direct_fetch:{source_id}",
                         query_id=f"df-{source_id}",
                     )
                     results.append(result)
-                    added += 1
             
             # Phase 2: fallback — "Read article" style links with backward heading lookup
             remaining = max_articles - len(results)
             if remaining > 0:
-                results.extend(_extract_read_more_links(resp.text, url, domain, locale, 
+                results.extend(_extract_read_more_links(resp.text, url, domain, locale,
                                                          category, source_id, remaining,
-                                                         {r.url for r in results}))
+                                                         {r.url for r in results},
+                                                         run_date, headers if resolve_article_dates else None,
+                                                         timeout))
             
         except requests.RequestException as e:
             print(f"  ⚠️  direct_fetch [{source_id}]: {e}", file=sys.stderr)
+            errors.append(str(e))
         except Exception as e:
             print(f"  ⚠️  direct_fetch [{source_id}] parse error: {e}", file=sys.stderr)
+            errors.append(f"parse error: {e}")
+
+    if raise_on_error and errors and not results:
+        raise RuntimeError("; ".join(errors))
     
     return results
 

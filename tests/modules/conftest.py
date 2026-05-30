@@ -11,7 +11,7 @@ SUBSYSTEMS_DIR = os.path.join(PROJECT_ROOT, "stratum", "subsystems")
 
 
 def discover_modules():
-    """Discover all Stratum modules: SKILL.md + Python + shell scripts.
+    """Discover all Stratum modules: SKILL.md + shell scripts.
     Scans skills/ and stratum/subsystems/."""
     modules = []
 
@@ -31,17 +31,6 @@ def discover_modules():
                         "name": name,
                         "path": os.path.join(root, f),
                     })
-
-    # Python modules — scan source-graph
-    py_dir = os.path.join(SUBSYSTEMS_DIR, "source-graph")
-    if os.path.isdir(py_dir):
-        for f in sorted(os.listdir(py_dir)):
-            if f.endswith(".py") and not f.startswith("__"):
-                modules.append({
-                    "type": "python",
-                    "name": f"source-graph/{f}",
-                    "path": os.path.join(py_dir, f),
-                })
 
     # Shell scripts
     for base_dir in (SKILLS_DIR, SUBSYSTEMS_DIR):

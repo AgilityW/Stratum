@@ -1,8 +1,0 @@
-# Weekly Briefing — Manifest
-timescale: weekly
-query_intents:
-  - detection
-  - confirmation
-  - verification
-budget:
-  max_items: 15

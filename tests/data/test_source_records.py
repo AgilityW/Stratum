@@ -1,188 +1,133 @@
-"""Data integrity tests for source-records.jsonl.
+"""Data integrity tests for collector_stats.json sidecar shape.
 
-Verifies:
-  - All entries are valid JSON
-  - Required SourceRecord fields present
-  - source_role values are valid
-  - Date fields are valid
-  - Source diversity metrics are plausible
+The old source-records artifact was removed with source-intelligence. The
+current acquisition-side evidence is collector_stats.json, written beside each
+run's raw/articles/clusters artifacts.
 """
 
 import json
-import re
-from datetime import date
 
 
-# Valid enum values based on source-intelligence-architecture.md
-VALID_SOURCE_ROLES = {"primary", "confirming", "context", "breaking"}
-
-VALID_SOURCE_TYPES = {"official", "media", "analyst", "blog", "social", "financial"}
+VALID_ACCESS_TYPES = {"direct_fetch", "rss", "browser", "unknown"}
+VALID_STATUSES = {"ok", "empty", "error", "unsupported", "skipped"}
 
 
-def _load_records(path):
-    records = []
-    with open(path) as f:
-        for line in f:
-            line = line.strip()
-            if line:
-                records.append(json.loads(line))
-    return records
+def _write_stats(path, sources):
+    path.write_text(json.dumps({
+        "domain": "storage",
+        "date": "2026-05-30",
+        "total_results": sum(src.get("hits", 0) for src in sources),
+        "sources": sources,
+    }))
 
 
-class TestSourceRecordRequired:
-    def test_all_lines_valid_json(self, tmp_path):
-        path = tmp_path / "source-records.jsonl"
-        # Write a minimal valid record
-        records = [
+def _load(path):
+    return json.loads(path.read_text())
+
+
+class TestCollectorStatsRequired:
+    def test_collector_stats_valid_json(self, tmp_path):
+        path = tmp_path / "collector_stats.json"
+        _write_stats(path, [{
+            "source": "micron-newsroom",
+            "access": "direct_fetch",
+            "status": "ok",
+            "hits": 3,
+            "duration_ms": 12.5,
+            "locale": "en",
+            "category": "newsroom",
+            "dated": 2,
+        }])
+
+        data = _load(path)
+        assert data["domain"] == "storage"
+        assert isinstance(data["sources"], list)
+
+
+class TestCollectorStatsFields:
+    def test_source_stats_required_fields(self, tmp_path):
+        path = tmp_path / "collector_stats.json"
+        _write_stats(path, [{
+            "source": "servethehome-rss",
+            "access": "rss",
+            "status": "ok",
+            "hits": 5,
+            "selected": 4,
+            "duration_ms": 20.0,
+            "locale": "en",
+            "category": "media",
+            "dated": 5,
+        }])
+
+        required = {"source", "access", "status", "hits", "selected", "duration_ms", "dated"}
+        for source in _load(path)["sources"]:
+            assert required <= set(source)
+
+    def test_access_type_valid(self, tmp_path):
+        path = tmp_path / "collector_stats.json"
+        _write_stats(path, [
             {
-                "article_id": "a001",
-                "article_date": "2025-06-15",
-                "source_url": "https://news.skhynix.com/hbm4",
-                "source_domain": "news.skhynix.com",
-                "source_type": "official",
-                "source_locale": "en",
-                "source_role": "primary",
-                "source_diversity_same_story": 3,
-                "total_articles_today": 50,
-            },
-        ]
-        with open(path, "w") as f:
-            for r in records:
-                f.write(json.dumps(r) + "\n")
-
-        data = _load_records(str(path))
-        assert len(data) == 1
-
-
-class TestSourceRecordFields:
-    def test_source_role_valid(self, tmp_path):
-        path = tmp_path / "source-records.jsonl"
-        with open(path, "w") as f:
-            for role in VALID_SOURCE_ROLES:
-                r = {
-                    "article_id": f"a_{role}",
-                    "article_date": "2025-06-15",
-                    "source_url": f"https://{role}.com/a",
-                    "source_domain": f"{role}.com",
-                    "source_type": "media",
-                    "source_locale": "en",
-                    "source_role": role,
-                    "source_diversity_same_story": 1,
-                    "total_articles_today": 10,
-                }
-                f.write(json.dumps(r) + "\n")
-
-        records = _load_records(str(path))
-        for r in records:
-            assert r["source_role"] in VALID_SOURCE_ROLES, \
-                f"Invalid source_role: {r['source_role']}"
-
-    def test_source_type_valid(self, tmp_path):
-        path = tmp_path / "source-records.jsonl"
-        with open(path, "w") as f:
-            for stype in VALID_SOURCE_TYPES:
-                r = {
-                    "article_id": f"a_{stype}",
-                    "article_date": "2025-06-15",
-                    "source_url": f"https://{stype}.com/a",
-                    "source_domain": f"{stype}.com",
-                    "source_type": stype,
-                    "source_locale": "en",
-                    "source_role": "primary",
-                    "source_diversity_same_story": 1,
-                    "total_articles_today": 10,
-                }
-                f.write(json.dumps(r) + "\n")
-
-        records = _load_records(str(path))
-        for r in records:
-            assert r["source_type"] in VALID_SOURCE_TYPES, \
-                f"Invalid source_type: {r['source_type']}"
-
-    def test_article_date_valid(self, tmp_path):
-        path = tmp_path / "source-records.jsonl"
-        with open(path, "w") as f:
-            r = {
-                "article_id": "a001",
-                "article_date": "2025-06-15",
-                "source_url": "https://example.com/a",
-                "source_domain": "example.com",
-                "source_type": "media",
-                "source_locale": "en",
-                "source_role": "primary",
-                "source_diversity_same_story": 1,
-                "total_articles_today": 10,
+                "source": f"source-{access}",
+                "access": access,
+                "status": "ok",
+                "hits": 1,
+                "selected": 1,
+                "duration_ms": 1.0,
+                "dated": 1,
             }
-            f.write(json.dumps(r) + "\n")
+            for access in VALID_ACCESS_TYPES
+        ])
 
-        records = _load_records(str(path))
-        try:
-            date.fromisoformat(records[0]["article_date"])
-        except ValueError as e:
-            assert False, f"Invalid article_date: {e}"
+        for source in _load(path)["sources"]:
+            assert source["access"] in VALID_ACCESS_TYPES
 
-    def test_source_diversity_plausible(self, tmp_path):
-        """source_diversity_same_story should be ≤ total_articles_today."""
-        path = tmp_path / "source-records.jsonl"
-        with open(path, "w") as f:
-            r = {
-                "article_id": "a001",
-                "article_date": "2025-06-15",
-                "source_url": "https://example.com/a",
-                "source_domain": "example.com",
-                "source_type": "media",
-                "source_locale": "en",
-                "source_role": "primary",
-                "source_diversity_same_story": 3,
-                "total_articles_today": 50,
+    def test_status_valid(self, tmp_path):
+        path = tmp_path / "collector_stats.json"
+        _write_stats(path, [
+            {
+                "source": f"source-{status}",
+                "access": "direct_fetch",
+                "status": status,
+                "hits": 0,
+                "selected": 0,
+                "duration_ms": 1.0,
+                "dated": 0,
             }
-            f.write(json.dumps(r) + "\n")
+            for status in VALID_STATUSES
+        ])
 
-        records = _load_records(str(path))
-        r = records[0]
-        assert r["source_diversity_same_story"] <= r["total_articles_today"], \
-            "source_diversity_same_story should not exceed total_articles_today"
+        for source in _load(path)["sources"]:
+            assert source["status"] in VALID_STATUSES
 
-    def test_no_duplicate_article_ids(self, tmp_path):
-        path = tmp_path / "source-records.jsonl"
-        with open(path, "w") as f:
-            for i in range(3):
-                r = {
-                    "article_id": f"a00{i}",
-                    "article_date": "2025-06-15",
-                    "source_url": f"https://example.com/a{i}",
-                    "source_domain": "example.com",
-                    "source_type": "media",
-                    "source_locale": "en",
-                    "source_role": "primary",
-                    "source_diversity_same_story": 1,
-                    "total_articles_today": 10,
-                }
-                f.write(json.dumps(r) + "\n")
+    def test_dated_count_not_greater_than_hits(self, tmp_path):
+        path = tmp_path / "collector_stats.json"
+        _write_stats(path, [{
+            "source": "micron-newsroom",
+            "access": "direct_fetch",
+            "status": "ok",
+            "hits": 3,
+            "selected": 2,
+            "duration_ms": 12.5,
+            "dated": 2,
+        }])
 
-        records = _load_records(str(path))
-        ids = [r["article_id"] for r in records]
-        assert len(ids) == len(set(ids)), "Duplicate article_ids in source-records"
+        source = _load(path)["sources"][0]
+        assert source["dated"] <= source["hits"]
 
-    def test_locale_pattern(self, tmp_path):
-        path = tmp_path / "source-records.jsonl"
-        with open(path, "w") as f:
-            for loc in ["en", "zh-CN", "ja", "ko", "en-US"]:
-                r = {
-                    "article_id": f"a_{loc}",
-                    "article_date": "2025-06-15",
-                    "source_url": f"https://example.com/{loc}",
-                    "source_domain": "example.com",
-                    "source_type": "media",
-                    "source_locale": loc,
-                    "source_role": "primary",
-                    "source_diversity_same_story": 1,
-                    "total_articles_today": 10,
-                }
-                f.write(json.dumps(r) + "\n")
+    def test_no_duplicate_source_ids(self, tmp_path):
+        path = tmp_path / "collector_stats.json"
+        _write_stats(path, [
+            {
+                "source": f"source-{i}",
+                "access": "rss",
+                "status": "ok",
+                "hits": i,
+                "selected": i,
+                "duration_ms": 1.0,
+                "dated": i,
+            }
+            for i in range(3)
+        ])
 
-        records = _load_records(str(path))
-        pattern = re.compile(r"^[a-z]{2}(-[A-Z]{2})?$")
-        for r in records:
-            assert pattern.match(r["source_locale"]), \
-                f"Invalid locale: {r['source_locale']}"
+        sources = [source["source"] for source in _load(path)["sources"]]
+        assert len(sources) == len(set(sources))

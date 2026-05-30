@@ -31,7 +31,7 @@ CREATE TABLE IF NOT EXISTS sources (
     locale TEXT,
     reliability REAL DEFAULT 0.5,
     status TEXT DEFAULT 'trial',       -- active/trial/deprecated/blocked
-    added_by TEXT DEFAULT 'seed',      -- seed/trial-source-manager/agent
+    added_by TEXT DEFAULT 'seed',      -- seed/source_registry/agent
     first_seen TEXT,
     last_seen TEXT,
     tags TEXT                          -- JSON array
@@ -57,6 +57,8 @@ CREATE TABLE IF NOT EXISTS queries (
     text TEXT NOT NULL,
     locale TEXT NOT NULL,
     intent TEXT NOT NULL,              -- detection/confirmation/verification/context/structural
+    dimension TEXT DEFAULT 'general',  -- briefing coverage dimension
+    include_domains TEXT,              -- JSON array of engine include-domain filters
     thread_id TEXT,                    -- NULL = standalone
     keyword_ids TEXT,                  -- JSON array of keyword IDs
     status TEXT DEFAULT 'active',      -- active/stale/deprecated
@@ -66,6 +68,15 @@ CREATE TABLE IF NOT EXISTS queries (
     hit_count_30d INTEGER DEFAULT 0,
     avg_articles REAL DEFAULT 0,
     signal_score REAL DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS query_run_stats (
+    query_id TEXT NOT NULL REFERENCES queries(id),
+    run_date TEXT NOT NULL,
+    results_count INTEGER DEFAULT 0,
+    status TEXT,
+    updated_at TEXT,
+    PRIMARY KEY (query_id, run_date)
 );
 
 -- ============================================================

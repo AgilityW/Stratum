@@ -3,13 +3,23 @@
 Verifies:
   - All entries are valid JSON
   - Required fields are present
-  - Dates are monotonically non-decreasing (sorted)
+  - Current ArticleRecord fields are present
   - No duplicate IDs or URLs
   - Locale pattern is valid
 """
 
 import json
-from datetime import date
+from datetime import datetime
+from pathlib import Path
+
+from jsonschema import validate
+
+
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+
+
+def _article_schema():
+    return json.loads((PROJECT_ROOT / "stratum/contracts/article_record.json").read_text())
 
 
 def test_all_lines_valid_json(valid_articles_jsonl):
@@ -22,12 +32,23 @@ def test_all_lines_valid_json(valid_articles_jsonl):
 
 
 def test_required_fields_present(valid_articles_jsonl):
-    required = ["id", "url", "title", "date", "source", "source_type", "source_locale", "artifact_type"]
+    required = [
+        "id", "url", "canonical_url", "title", "source", "source_type", "source_locale",
+        "published_at", "date_source", "fetched_at", "content_hash", "entities", "terms",
+        "verification_status", "discovery_mode", "query_dimension", "artifact_type",
+    ]
     with open(valid_articles_jsonl) as f:
         for i, line in enumerate(f, 1):
             data = json.loads(line)
             for field in required:
                 assert field in data, f"Line {i}: missing required field '{field}'"
+
+
+def test_articles_match_contract_schema(valid_articles_jsonl):
+    schema = _article_schema()
+    with open(valid_articles_jsonl) as f:
+        for i, line in enumerate(f, 1):
+            validate(json.loads(line), schema)
 
 
 def test_no_duplicate_ids(valid_articles_jsonl):
@@ -52,16 +73,17 @@ def test_dates_are_valid(valid_articles_jsonl):
     with open(valid_articles_jsonl) as f:
         for i, line in enumerate(f, 1):
             data = json.loads(line)
-            d = data["date"]
-            try:
-                date.fromisoformat(d)
-            except ValueError:
-                assert False, f"Line {i}: invalid date format: {d}"
+            for field in ["published_at", "fetched_at"]:
+                value = data[field].replace("Z", "+00:00")
+                try:
+                    datetime.fromisoformat(value)
+                except ValueError:
+                    assert False, f"Line {i}: invalid {field}: {data[field]}"
 
 
 def test_locale_pattern(valid_articles_jsonl):
     import re
-    locale_pattern = re.compile(r"^[a-z]{2}(-[A-Z]{2})?$")
+    locale_pattern = re.compile(r"^[A-Za-z]{2,3}(-[A-Za-z0-9]{2,8})*$")
     with open(valid_articles_jsonl) as f:
         for i, line in enumerate(f, 1):
             data = json.loads(line)
@@ -95,10 +117,25 @@ def test_url_has_scheme(valid_articles_jsonl):
 
 def test_cluster_id_null_or_valid(valid_articles_jsonl):
     import re
-    cluster_pattern = re.compile(r"^sc-\d{4}-\d{2}-\d{2}-\d{3}$")
+    cluster_pattern = re.compile(r"^sc-[a-z0-9_-]+-\d{4}$")
     with open(valid_articles_jsonl) as f:
         for i, line in enumerate(f, 1):
             data = json.loads(line)
             cid = data.get("cluster_id")
             if cid is not None:
                 assert cluster_pattern.match(cid), f"Line {i}: invalid cluster_id: {cid}"
+
+
+def test_verified_status(valid_articles_jsonl):
+    with open(valid_articles_jsonl) as f:
+        for i, line in enumerate(f, 1):
+            data = json.loads(line)
+            assert data["verification_status"] == "verified", f"Line {i}: unexpected verification_status"
+
+
+def test_entities_and_terms_are_lists(valid_articles_jsonl):
+    with open(valid_articles_jsonl) as f:
+        for i, line in enumerate(f, 1):
+            data = json.loads(line)
+            assert isinstance(data["entities"], list), f"Line {i}: entities must be a list"
+            assert isinstance(data["terms"], list), f"Line {i}: terms must be a list"

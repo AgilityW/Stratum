@@ -1,63 +1,75 @@
+.PHONY: pipeline daily weekly monthly quarterly yearly
 .PHONY: test test-unit test-schema test-data test-cov test-cov-html clean
-.PHONY: daily weekly monthly quarterly yearly
+
+PYTHON ?= $(shell if [ -x .venv/bin/python ]; then echo .venv/bin/python; else echo python3; fi)
+DOMAIN ?= storage
+DATE ?= $(shell date +%F)
+OUTPUT_DIR ?=
+PIPELINE_ARGS ?=
+
+PIPELINE_CMD = $(PYTHON) stratum/orchestrator/pipeline.py --domain $(DOMAIN) --date $(DATE)
+ifneq ($(strip $(OUTPUT_DIR)),)
+PIPELINE_CMD += --output-dir $(OUTPUT_DIR)
+endif
 
 # ── Pipeline ──────────────────────────────────────────────
 
-# Full daily: collect → render → PDF to WeChat
-daily:
-	hermes cron run 102deb18b91e
+# Full daily pipeline. Override with DOMAIN=robot DATE=YYYY-MM-DD OUTPUT_DIR=/tmp/out.
+pipeline daily:
+	$(PIPELINE_CMD) $(PIPELINE_ARGS)
 
-# Weekly brief (Sunday)
+# Higher-scale runners are not first-class in the current orchestrator.
 weekly:
-	hermes cron run 46f1a9a31ab2
+	@echo "weekly is not available in the current daily-only orchestrator. Use: make daily DOMAIN=$(DOMAIN) DATE=$(DATE)"
+	@exit 2
 
-# Monthly brief (1st)
 monthly:
-	hermes cron run 505ab3342070
+	@echo "monthly is not available in the current daily-only orchestrator. Use: make daily DOMAIN=$(DOMAIN) DATE=$(DATE)"
+	@exit 2
 
-# Quarterly review
 quarterly:
-	hermes cron run bce084d381c8
+	@echo "quarterly is not available in the current daily-only orchestrator. Use: make daily DOMAIN=$(DOMAIN) DATE=$(DATE)"
+	@exit 2
 
-# Yearly review
 yearly:
-	hermes cron run 97fb7165be35
+	@echo "yearly is not available in the current daily-only orchestrator. Use: make daily DOMAIN=$(DOMAIN) DATE=$(DATE)"
+	@exit 2
 
 # ── Testing ───────────────────────────────────────────────
 
 # Default: run all tests
 test:
-	python3 -m pytest tests/ -v
+	$(PYTHON) -m pytest tests/ stratum/stages/ stratum/subsystems/ -v
 
-# Only unit tests (source-graph-engine)
+# Only focused unit tests
 test-unit:
-	python3 -m pytest tests/unit/ -v
+	$(PYTHON) -m pytest tests/test_search.py stratum/stages/ stratum/subsystems/ -v
 
-# Only schema validation tests
+# Only schema/contract validation tests
 test-schema:
-	python3 -m pytest tests/schema/ -v
+	$(PYTHON) -m pytest tests/test_contract_schemas.py tests/modules/test_story_event_schemas.py -v
 
 # Data integrity + infra + module tests
 test-data:
-	python3 -m pytest tests/infra/ tests/modules/ -v
+	$(PYTHON) -m pytest tests/infra/ tests/modules/ -v
 
 # Only module-level tests (contract + dependency + logic)
 test-modules:
-	python3 -m pytest tests/modules/ -v
+	$(PYTHON) -m pytest tests/modules/ -v
 
 # Coverage report (terminal)
 test-cov:
-	python3 -m pytest tests/ --cov --cov-report=term-missing
+	$(PYTHON) -m pytest tests/ stratum/stages/ stratum/subsystems/ --cov --cov-report=term-missing
 
 # Coverage report (HTML)
 test-cov-html:
-	python3 -m pytest tests/ --cov --cov-report=html
+	$(PYTHON) -m pytest tests/ stratum/stages/ stratum/subsystems/ --cov --cov-report=html
 	@echo "Open htmlcov/index.html"
 
 # Run specific test file
-# Usage: make test-file FILE=tests/unit/test_graph.py
+# Usage: make test-file FILE=tests/test_search.py
 test-file:
-	python3 -m pytest $(FILE) -v
+	$(PYTHON) -m pytest $(FILE) -v
 
 # Clean up artifacts
 clean:

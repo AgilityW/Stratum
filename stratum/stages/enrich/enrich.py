@@ -101,6 +101,30 @@ def parse_date_from_match(match, pattern_type, run_date):
     return None
 
 
+def is_plausible_publication_date(
+    date_str: str | None,
+    run_date: str,
+    *,
+    max_future_days: int = 1,
+    max_past_days: int = 365,
+) -> bool:
+    """Return True when a candidate date is plausible as a publication date."""
+    if not date_str:
+        return False
+    try:
+        dt = datetime.fromisoformat(date_str[:10])
+        run_dt = datetime.fromisoformat(run_date)
+    except ValueError:
+        return False
+
+    delta_days = (dt.date() - run_dt.date()).days
+    if delta_days > max_future_days:
+        return False
+    if delta_days < -max_past_days:
+        return False
+    return True
+
+
 def extract_date_from_url(url: str) -> str | None:
     """Extract date from URL path patterns like /2026/05/28/ or /2026-05-28-."""
     if not url:
@@ -119,30 +143,32 @@ def extract_date_from_url(url: str) -> str | None:
     return None
 
 
-def extract_date_from_text(text: str, run_date: str) -> str | None:
-    """Extract the FIRST plausible date from text using regex patterns."""
+def extract_date_from_text(text: str, run_date: str, *, max_future_days: int = 1) -> str | None:
+    """Extract the first plausible date from text using regex patterns."""
     if not text:
         return None
 
     for pattern, ptype in DATE_PATTERNS:
-        match = re.search(pattern, text, re.IGNORECASE)
-        if match:
+        for match in re.finditer(pattern, text, re.IGNORECASE):
             result = parse_date_from_match(match, ptype, run_date)
+            if result and not is_plausible_publication_date(
+                result,
+                run_date,
+                max_future_days=max_future_days,
+            ):
+                continue
             if result:
-                try:
-                    dt = datetime.fromisoformat(result)
-                    run_dt = datetime.fromisoformat(run_date)
-                    diff = abs((run_dt - dt).days)
-                    if diff > 365:
-                        continue
-                except ValueError:
-                    continue
                 return result
 
     return None
 
 
-def extract_date_from_web(url: str) -> str | None:
+def extract_date(text: str, run_date: str) -> str | None:
+    """Backward-compatible wrapper for text date extraction."""
+    return extract_date_from_text(text, run_date)
+
+
+def extract_date_from_web(url: str, run_date: str | None = None) -> str | None:
     """Fetch page and extract date from HTML meta tags using curl + regex."""
     if not url:
         return None
@@ -172,6 +198,8 @@ def extract_date_from_web(url: str) -> str | None:
             if m:
                 date_str = m.group(1)[:10]  # YYYY-MM-DD
                 if re.match(r'\d{4}-\d{2}-\d{2}', date_str):
+                    if run_date and not is_plausible_publication_date(date_str, run_date):
+                        continue
                     return date_str
 
         # JSON-LD datePublished
@@ -179,6 +207,8 @@ def extract_date_from_web(url: str) -> str | None:
         if ld_match:
             date_str = ld_match.group(1)[:10]
             if re.match(r'\d{4}-\d{2}-\d{2}', date_str):
+                if run_date and not is_plausible_publication_date(date_str, run_date):
+                    return None
                 return date_str
 
     except Exception:
@@ -188,9 +218,11 @@ def extract_date_from_web(url: str) -> str | None:
 
 def enrich_article(article: dict, run_date: str, *, use_web_extract: bool = False) -> dict:
     """Add datePublished if missing/empty. Respect agent-provided dates."""
-    existing = article.get("datePublished", "")
+    existing = str(article.get("datePublished") or article.get("published_at") or "")
     if existing and existing.strip():
-        article["date_source"] = "search_api"
+        article["datePublished"] = existing
+        existing_source = article.get("date_source", "")
+        article["date_source"] = existing_source if existing_source and existing_source != "none" else "search_api"
         return article
 
     # ── Step 1: Regex from text ──
@@ -203,7 +235,7 @@ def enrich_article(article: dict, run_date: str, *, use_web_extract: bool = Fals
 
     # ── Step 2: URL path extraction ──
     url_date = extract_date_from_url(article.get("url", ""))
-    if url_date:
+    if url_date and is_plausible_publication_date(url_date, run_date):
         article["datePublished"] = url_date
         article["date_source"] = "url_path"
         return article
@@ -220,7 +252,7 @@ def enrich_article(article: dict, run_date: str, *, use_web_extract: bool = Fals
     # ── Step 4: Web extract fallback ──
     if use_web_extract:
         url = article.get("url", "")
-        web_date = extract_date_from_web(url)
+        web_date = extract_date_from_web(url, run_date)
         if web_date:
             article["datePublished"] = web_date
             article["date_source"] = "web_extract"

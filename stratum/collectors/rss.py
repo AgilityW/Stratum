@@ -12,12 +12,13 @@ import re
 import sys
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
+from html import unescape
 from typing import Optional
-from urllib.parse import urlparse
 from xml.etree import ElementTree as ET
 
 import requests
 
+from stratum.collectors.common import extract_domain, normalize_source_type
 from stratum.subsystems.search.models import SearchResult
 
 
@@ -31,9 +32,7 @@ def _parse_rss_date(date_str: str) -> Optional[str]:
     
     # Try ISO 8601: 2026-05-30T12:00:00Z or 2026-05-30T12:00:00+09:00
     try:
-        # Handle timezone offset
-        clean = re.sub(r'(\d{2}:\d{2})$', r'\1:00', date_str)
-        dt = datetime.fromisoformat(clean.replace('Z', '+00:00'))
+        dt = datetime.fromisoformat(date_str.replace('Z', '+00:00'))
         return dt.strftime('%Y-%m-%d')
     except (ValueError, AttributeError):
         pass
@@ -50,7 +49,7 @@ def _parse_rss_date(date_str: str) -> Optional[str]:
 
 # ── Feed parsing ──
 
-def _parse_rss_feed(xml_text: str) -> list[dict]:
+def _parse_rss_feed(xml_text: str, raise_on_error: bool = False) -> list[dict]:
     """Parse RSS 2.0 feed. Returns list of {title, url, snippet, published_at}."""
     articles = []
     try:
@@ -73,12 +72,14 @@ def _parse_rss_feed(xml_text: str) -> list[dict]:
                     'published_at': _parse_rss_date(pubdate),
                 })
     except ET.ParseError:
+        if raise_on_error:
+            raise
         pass
     
     return articles
 
 
-def _parse_atom_feed(xml_text: str) -> list[dict]:
+def _parse_atom_feed(xml_text: str, raise_on_error: bool = False) -> list[dict]:
     """Parse Atom feed. Returns list of {title, url, snippet, published_at}."""
     articles = []
     ns = {'atom': 'http://www.w3.org/2005/Atom'}
@@ -91,7 +92,9 @@ def _parse_atom_feed(xml_text: str) -> list[dict]:
             
             # Atom <link> has href attribute
             url = ''
-            link = entry.find('atom:link', ns) or entry.find('link')
+            link = entry.find('atom:link', ns)
+            if link is None:
+                link = entry.find('link')
             if link is not None:
                 url = link.get('href', '')
             
@@ -108,16 +111,18 @@ def _parse_atom_feed(xml_text: str) -> list[dict]:
                     'published_at': _parse_rss_date(published),
                 })
     except ET.ParseError:
+        if raise_on_error:
+            raise
         pass
     
     return articles
 
 
-def _parse_any_feed(xml_text: str) -> list[dict]:
+def _parse_any_feed(xml_text: str, raise_on_error: bool = False) -> list[dict]:
     """Auto-detect feed type and parse."""
-    articles = _parse_rss_feed(xml_text)
+    articles = _parse_rss_feed(xml_text, raise_on_error=raise_on_error)
     if not articles:
-        articles = _parse_atom_feed(xml_text)
+        articles = _parse_atom_feed(xml_text, raise_on_error=raise_on_error)
     return articles
 
 
@@ -125,7 +130,11 @@ def _parse_any_feed(xml_text: str) -> list[dict]:
 
 def _text(element, tag: str, ns: Optional[dict] = None) -> str:
     """Get element text safely."""
-    child = element.find(tag, ns) if ns else element.find(tag)
+    child = None
+    if ns and ":" not in tag and "atom" in ns:
+        child = element.find(f"atom:{tag}", ns)
+    if child is None:
+        child = element.find(tag, ns) if ns else element.find(tag)
     return child.text.strip() if child is not None and child.text else ''
 
 
@@ -134,7 +143,7 @@ _HTML_TAG_RE = re.compile(r'<[^>]+>')
 
 def _strip_html(text: str) -> str:
     """Remove HTML tags from text for clean snippets."""
-    return _HTML_TAG_RE.sub('', text).strip()
+    return unescape(_HTML_TAG_RE.sub('', text)).strip()
 
 
 # ── Keyword extraction from domain.yaml ──
@@ -143,12 +152,19 @@ def _strip_html(text: str) -> str:
 
 # ── Main collection ──
 
-def fetch_feed(url: str, keywords: list[str], source_id: str,
-               locale: str, category: str, timeout: int = 15) -> list[SearchResult]:
+def fetch_feed(
+    url: str,
+    keywords: list[str],
+    source_id: str,
+    locale: str,
+    category: str,
+    timeout: int = 15,
+    raise_on_error: bool = False,
+) -> list[SearchResult]:
     """Fetch and parse a single RSS feed. Keywords filtered via keywords.match_keywords."""
     from stratum.collectors.keywords import match_keywords
     results = []
-    domain = urlparse(url).netloc.lower().lstrip("www.")
+    source_type = normalize_source_type(category)
     
     headers = {
         "User-Agent": "Stratum/1.0 (storage industry monitor; +https://github.com/stratum)",
@@ -159,7 +175,7 @@ def fetch_feed(url: str, keywords: list[str], source_id: str,
         resp = requests.get(url, headers=headers, timeout=timeout, allow_redirects=True)
         resp.raise_for_status()
         
-        articles = _parse_any_feed(resp.text)
+        articles = _parse_any_feed(resp.text, raise_on_error=raise_on_error)
         
         for art in articles:
             # Filter by domain keywords
@@ -172,8 +188,8 @@ def fetch_feed(url: str, keywords: list[str], source_id: str,
                 snippet=art['snippet'],
                 locale=locale,
                 published_at=art.get('published_at'),
-                source_domain=domain,
-                source_type_hint=category,
+                source_domain=extract_domain(art['url']),
+                source_type_hint=source_type,
                 engine=f"rss:{source_id}",
                 query_id=f"rss-{source_id}",
             )
@@ -188,8 +204,12 @@ def fetch_feed(url: str, keywords: list[str], source_id: str,
             
     except requests.RequestException as e:
         print(f"  ⚠️  rss [{source_id}]: {e}", file=sys.stderr)
+        if raise_on_error:
+            raise
     except ET.ParseError as e:
         print(f"  ⚠️  rss [{source_id}]: XML parse error: {e}", file=sys.stderr)
+        if raise_on_error:
+            raise
     
     return results
 

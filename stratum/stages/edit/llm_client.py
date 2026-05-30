@@ -55,8 +55,8 @@ def call_llm(
         ["curl", "-s", "-X", "POST", endpoint,
          "-H", f"Authorization: Bearer {api_key}",
          "-H", "Content-Type: application/json",
-         "-d", payload],
-        capture_output=True, text=True, timeout=REQUEST_TIMEOUT,
+         "--data-binary", "@-"],
+        input=payload, capture_output=True, text=True, timeout=REQUEST_TIMEOUT,
     )
 
     if result.returncode != 0:

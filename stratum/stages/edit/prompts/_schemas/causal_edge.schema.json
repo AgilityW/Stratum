@@ -7,12 +7,12 @@
   "properties": {
     "cause_thread_id": {
       "type": "string",
-      "pattern": "^et-\\d{4}-\\d{3}$",
-      "description": "原因事件线的 ID，格式: et-YYYY-NNN"
+      "pattern": "^et-[A-Za-z0-9][A-Za-z0-9_-]*$",
+      "description": "原因事件线的 ID，格式与 event_thread.thread_id 一致"
     },
     "effect_thread_id": {
       "type": "string",
-      "pattern": "^et-\\d{4}-\\d{3}$",
+      "pattern": "^et-[A-Za-z0-9][A-Za-z0-9_-]*$",
       "description": "结果事件线的 ID"
     },
     "mechanism": {

@@ -1,42 +1,56 @@
-# domains/storage — Storage 领域配置
+# domains/storage - Storage 领域配置
 
 ## Purpose
-存储产业的领域知识配置。包括公司/技术词表、搜索查询、提示词模板、简报模板、价值链探测模型。
 
-这是 Stratum 框架的**第一个领域实例**。所有领域特定知识集中在此目录，框架代码零硬编码。
+`domains/storage` 是 Stratum 的 storage industry domain 实例。这里集中放公司、技术词、信源、搜索 query、模板、验证规则和渲染标签。
+
+框架代码必须从这里读取 storage 领域知识，不能在 `stratum/` 中硬编码 storage 公司名、技术名或来源规则。
+
+## Files
+
+| File | Role |
+|:---|:---|
+| `domain.yaml` | domain metadata, pipeline rules, source registry, source classification, render tags |
+| `queries.yaml` | structured Search query templates by intent, dimension, and locale |
+| `taxonomy.yaml` | story-tracking controlled vocabulary |
+| `prompts/daily.md` | reserved domain prompt override asset; not active in the current Edit stage |
+| `templates/daily.html` | domain-level render template |
+| `tests/fixtures/` | domain-specific fixture area |
 
 ## Boundaries
 
-### ✅ 包含
-- domain.yaml — 公司/技术/信源 seed + 种子查询 + 价值链 11 层模型
-- taxonomy.yaml — 受控词表（topics × 19, entities × 16）
-- queries.yaml — 多语言搜索查询模板
-- prompts/daily.md — Agent Edit 阶段的日频简报 prompt
-- templates/daily.html — 简报 HTML 渲染模板
-- weekly.yaml — 周报配置
+### 包含
 
-### ❌ 不包含
-- **任何可执行代码** — 纯配置，由 stratum/ 框架读取
-- **运行时数据** — 运行时产出在 {workspace}/storage/
+- Storage companies, aliases, source domains, keywords, terms, validation blocklists.
+- Collector source registry (`source_registry.sources`).
+- Query templates for Search stage. Source-scoped query templates must use
+  structured `include_domains`; query text should stay engine-neutral and must
+  not embed `site:` operators. Values should be bare hostnames such as
+  `digitimes.com`, not URLs or paths.
+- Source display aliases under `pipeline.source_aliases`; values may be a
+  single domain string or a list of domain patterns when one publisher brand
+  spans multiple domains.
+- Render template assets that are specific to storage.
+- Reserved prompt override assets under `prompts/`; active prompt assembly currently lives in `stratum/stages/edit/prompts/` and injects storage policy from `domain.yaml`.
 
-## Data Contracts
+### 不包含
 
-### 配置文件格式
-| 文件 | 格式 | 读取者 |
-|:---|:---|:---|
-| domain.yaml | YAML | pipeline.py, stages, value-chain |
-| taxonomy.yaml | YAML | story-tracking/taxonomy.py |
-| queries.yaml | YAML | agent_interface.py |
-| prompts/*.md | Markdown | Agent (LLM) |
-| templates/*.html | HTML/Jinja2 | stages/render |
+- Runtime output. Pipeline output belongs under configured `reports_dir`/`output_dir`.
+- Python implementation logic.
+- API keys or secrets.
 
-## Design Principles
+## Main Consumers
 
-### 铁律
-1. **框架不包含领域知识** — stratum/ 下无公司名、技术名、领域术语
-2. **新领域 = 复制此目录** — 创建 domains/robot/ 不改框架一行代码
+- `stratum/orchestrator/pipeline.py`
+- `stratum/stages/search/search.py`
+- `stratum/stages/verify/verify.py`
+- `stratum/stages/normalize/normalize.py`
+- `stratum/stages/edit/edit.py` via `domain.yaml` policy injection
+- `stratum/stages/render/render.py`
+- `stratum/collectors/registry.py`
+- `stratum/collectors/keywords.py`
+- `stratum/db/seed.py`
 
-## Dependencies
+## Extension Rule
 
-### 被依赖
-- stratum/ 框架所有模块
+To create a new domain, copy this directory and change configuration values. A new domain should not require code changes in `stratum/`.

@@ -7,11 +7,20 @@
   "properties": {
     "id": {"type": "string"},
     "url": {"type": "string", "format": "uri"},
+    "canonical_url": {"type": "string", "format": "uri"},
     "title": {"type": "string"},
     "source": {"type": "string", "description": "Domain extracted from URL"},
     "snippet": {"type": "string"},
     "query_used": {"type": "string"},
     "engine": {"type": "string"},
+    "date_source": {
+      "type": "string",
+      "enum": ["search_api", "web_extract", "snippet_regex", "url_path", "freshness_window", "none", ""]
+    },
+    "date_confidence": {
+      "type": "string",
+      "enum": ["high", "medium", "low", "none", ""]
+    },
     "verification_status": {
       "type": "string",
       "enum": ["verified", "rejected"]
@@ -19,6 +28,7 @@
     "rejection_reason": {"type": ["string", "null"]},
     "published_at": {"type": ["string", "null"]},
     "magnitude_flags": {"type": "array", "items": {"type": "string"}},
+    "quality_flags": {"type": "array", "items": {"type": "string"}},
     "raw_metadata": {"type": "object"}
   }
 }

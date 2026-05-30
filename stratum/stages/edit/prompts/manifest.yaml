@@ -18,6 +18,9 @@ daily:
         inject: []
     template: daily.md
   output:
+    threads:
+      enabled: true
+      schema: _schemas/event_thread.schema.json
     causal_edges:
       enabled: true
       schema: _schemas/causal_edge.schema.json

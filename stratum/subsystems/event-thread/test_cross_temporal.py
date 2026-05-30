@@ -104,6 +104,15 @@ class TestCrossTemporalLink:
         link.add_appearance(BriefingRef("daily-2026-05-26", "daily", "2026-05-26", "S1", "lead", "b"))
         assert link.appearances[0].date == "2026-05-26"
 
+    def test_add_appearance_replaces_same_briefing(self):
+        link = CrossTemporalLink("et-1", created_scale="daily")
+        link.add_appearance(BriefingRef("daily-2026-05-28", "daily", "2026-05-28", "S1", "lead", "old"))
+        link.add_appearance(BriefingRef("daily-2026-05-28", "daily", "2026-05-28", "S1", "supporting", "new"))
+
+        assert len(link.appearances) == 1
+        assert link.appearances[0].prominence == "supporting"
+        assert link.appearances[0].synthesis == "new"
+
     def test_get_appearances_at_scale(self):
         link = CrossTemporalLink("et-1", created_scale="daily")
         link.add_appearance(BriefingRef("daily-2026-05-28", "daily", "2026-05-28", "S1", "lead", "a"))
@@ -158,6 +167,17 @@ class TestRegister:
             "et-1", "daily-2026-05-29", "daily", "2026-05-29", "S1", "supporting", "day2"))
         link = empty_state.links["et-1"]
         assert len(link.appearances) == 2
+
+    def test_register_same_briefing_is_idempotent(self, empty_state):
+        register_appearance(empty_state, RegisterInput(
+            "et-1", "daily-2026-05-28", "daily", "2026-05-28", "S1", "lead", "day1"))
+        register_appearance(empty_state, RegisterInput(
+            "et-1", "daily-2026-05-28", "daily", "2026-05-28", "S1", "supporting", "updated"))
+
+        link = empty_state.links["et-1"]
+        assert len(link.appearances) == 1
+        assert link.appearances[0].prominence == "supporting"
+        assert link.appearances[0].synthesis == "updated"
 
     def test_register_batch(self, empty_state):
         inputs = [
@@ -215,6 +235,22 @@ class TestRollup:
         target = s.links["et-0010"]
         assert target.has_appeared_at_scale("weekly")
         assert target.appearances[0].synthesis == "Weekly synthesis"
+
+    def test_rollup_target_appearance_is_idempotent_on_rerun(self, daily_state):
+        s = daily_state
+        first = RollupInput(
+            ["et-storage-0001"], "et-0010", "weekly",
+            "weekly-2026-W22", "2026-05-31", "Weekly synthesis")
+        second = RollupInput(
+            ["et-storage-0001"], "et-0010", "weekly",
+            "weekly-2026-W22", "2026-05-31", "Updated weekly synthesis")
+
+        rollup(s, first)
+        rollup(s, second)
+
+        target = s.links["et-0010"]
+        assert len(target.appearances) == 1
+        assert target.appearances[0].synthesis == "Updated weekly synthesis"
 
     def test_rollup_preserves_source_scale(self, rolled_up_state):
         s = rolled_up_state

@@ -6,7 +6,7 @@ LLM call delegated to llm_client.py.
 
 Input:  verified articles (JSONL), clusters (JSON), story context (JSON),
         domain.yaml, config.yaml, manifest + prompt fragments.
-Output: briefing.md (+ optional event-threads.json for causal_edges/judgments).
+Output: briefing.md (+ optional event-threads.json for threads/causal_edges/judgments).
 
 Usage:
     python3 edit.py --domain storage --date 2026-05-29 --timescale daily \\
@@ -18,12 +18,14 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import re
 import sys
 import yaml
 from datetime import datetime
+from urllib.parse import urlparse
 
 # ── Internal imports ──
 _EDIT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -74,6 +76,14 @@ def load_domain_cfg(domain_config_path: str) -> dict:
         return yaml.safe_load(f)
 
 
+def resolve_domain_title(config: dict, domain_cfg: dict, domain_id: str) -> str:
+    """Resolve the briefing title from config override, domain.yaml, or fallback."""
+    channels = config.get("channels", {})
+    channel_title = channels.get(domain_id, {}).get("title", "") if isinstance(channels, dict) else ""
+    domain_title = domain_cfg.get("domain", {}).get("title", "") if isinstance(domain_cfg, dict) else ""
+    return channel_title or domain_title or f"{domain_id}早报"
+
+
 def split_llm_output(response: str) -> tuple[str, dict | None]:
     """Split LLM response into briefing markdown and structured data.
 
@@ -89,9 +99,189 @@ def split_llm_output(response: str) -> tuple[str, dict | None]:
         except json.JSONDecodeError:
             # Graceful fallback: try to extract JSON block
             match = re.search(r'\{[\s\S]*\}', parts[1])
-            data = json.loads(match.group(0)) if match else None
+            try:
+                data = json.loads(match.group(0)) if match else None
+            except json.JSONDecodeError:
+                data = None
         return briefing, data
     return response.strip(), None
+
+
+def strip_source_locale_tags(markdown: str) -> str:
+    """Remove source-line language tags like [en] and [zh-CN] from LLM output."""
+    locale_tag = r"\s*\[(?:[A-Za-z]{2,3}(?:-[A-Za-z]{2,8}){0,2})\]"
+
+    def replace_line(match: re.Match) -> str:
+        line = match.group(0)
+        return re.sub(locale_tag, "", line)
+
+    return re.sub(r"^\*[^*\n]*·[^*\n]*\*$", replace_line, markdown, flags=re.MULTILINE)
+
+
+def normalize_structured_data(
+    data: dict | None,
+    domain_id: str = "domain",
+    run_date: str = "",
+) -> dict | None:
+    """Normalize common LLM key drift in optional structured output."""
+    if not isinstance(data, dict):
+        return data
+    for key in ("threads", "causal_edges", "judgments"):
+        data[key] = _normalize_structured_list(data.get(key))
+    for index, thread in enumerate(data.get("threads", []), start=1):
+        if not isinstance(thread, dict):
+            continue
+        thread_id = str(thread.get("thread_id") or thread.get("id") or "").strip()
+        if not thread_id:
+            thread_id = _synthetic_thread_id(domain_id, run_date, thread, index)
+        thread["thread_id"] = thread_id
+        thread.setdefault("id", thread_id)
+    for judgment in data.get("judgments", []):
+        if isinstance(judgment, dict) and "hypothesis" not in judgment and "mechanism" in judgment:
+            judgment["hypothesis"] = judgment.pop("mechanism")
+    return data
+
+
+def _normalize_structured_list(value) -> list:
+    """Return a list for structured-output array fields."""
+    if value is None:
+        return []
+    if isinstance(value, list):
+        return [item for item in value if isinstance(item, dict)]
+    if isinstance(value, dict):
+        return [value]
+    return []
+
+
+def _synthetic_thread_id(domain_id: str, run_date: str, thread: dict, index: int) -> str:
+    """Build a deterministic id for new LLM-created threads."""
+    title = str(thread.get("title") or thread.get("label") or thread.get("canonical_question") or "")
+    seed = f"{domain_id}|{run_date}|{index}|{title}"
+    digest = hashlib.sha1(seed.encode("utf-8")).hexdigest()[:8]
+    date_part = re.sub(r"[^0-9]", "", run_date) or "undated"
+    domain_part = re.sub(r"[^a-z0-9_-]+", "-", domain_id.lower()).strip("-") or "domain"
+    return f"et-{domain_part}-{date_part}-{digest}"
+
+
+def structured_event_counts(data: dict | None) -> dict[str, int]:
+    """Count structured event-thread surfaces that should be persisted."""
+    if not isinstance(data, dict):
+        return {"threads": 0, "causal_edges": 0, "judgments": 0}
+    return {
+        "threads": len(data.get("threads") if isinstance(data.get("threads"), list) else []),
+        "causal_edges": len(data.get("causal_edges") if isinstance(data.get("causal_edges"), list) else []),
+        "judgments": len(data.get("judgments") if isinstance(data.get("judgments"), list) else []),
+    }
+
+
+def should_write_event_threads(data: dict | None) -> bool:
+    """Return True when structured output carries any event-thread state."""
+    return any(structured_event_counts(data).values())
+
+
+def _article_source_label(article: dict) -> str:
+    """Best display label for a source line."""
+    source = article.get("source") or article.get("source_domain") or ""
+    if source:
+        return str(source).strip()
+    url = article.get("url", "")
+    if not url:
+        return ""
+    host = urlparse(url).netloc.lower()
+    if host.startswith("www."):
+        host = host[4:]
+    if host.startswith("m."):
+        host = host[2:]
+    return host
+
+
+def _article_date_label(article: dict, fallback_date: str) -> str:
+    """Return Chinese date label for source lines."""
+    raw_date = article.get("published_at") or article.get("date") or fallback_date
+    date_text = str(raw_date)[:10]
+    try:
+        dt = datetime.fromisoformat(date_text)
+        return f"{dt.year}年{dt.month}月{dt.day}日"
+    except ValueError:
+        return _format_cn_date(fallback_date).split(" · ")[0]
+
+
+def _match_tokens(text: str) -> set[str]:
+    """Extract rough multilingual tokens for deterministic item/article matching."""
+    tokens = set()
+    for token in re.findall(r"[A-Za-z0-9][A-Za-z0-9+.-]*|[\u4e00-\u9fff]{2,}", text.lower()):
+        if len(token) >= 2:
+            tokens.add(token)
+    return tokens
+
+
+def _best_article_for_item(title: str, body_lines: list[str], articles: list[dict]) -> dict | None:
+    """Find the best article backing a markdown item by token overlap."""
+    item_tokens = _match_tokens(f"{title} {' '.join(body_lines)}")
+    if not item_tokens:
+        return None
+
+    best_article = None
+    best_score = 0.0
+    for article in articles:
+        article_tokens = _match_tokens(
+            f"{article.get('title', '')} {article.get('snippet', '')}"
+        )
+        if not article_tokens:
+            continue
+        overlap = len(item_tokens & article_tokens)
+        score = overlap / max(1, min(len(item_tokens), len(article_tokens)))
+        if score > best_score:
+            best_score = score
+            best_article = article
+
+    return best_article if best_score >= 0.35 else None
+
+
+def repair_missing_source_lines(markdown: str, articles: list[dict], run_date: str) -> str:
+    """Add a source/date line to items that lack one when article match is clear."""
+    lines = markdown.splitlines()
+    repaired: list[str] = []
+    current: dict | None = None
+    non_news_sections = {"今日要点", "关注", "反向信号"}
+
+    def flush_current():
+        if not current:
+            return
+        repaired.extend(current["lines"])
+        if current["title"] not in non_news_sections and not current["has_source"]:
+            article = _best_article_for_item(current["title"], current["body"], articles)
+            if article:
+                source = _article_source_label(article)
+                if source:
+                    if repaired and repaired[-1].strip():
+                        repaired.append("")
+                    repaired.append(f"*{source} · {_article_date_label(article, run_date)}*")
+
+    for line in lines:
+        if line.startswith("### "):
+            flush_current()
+            current = {
+                "title": line.replace("### ", "", 1).strip(),
+                "body": [],
+                "lines": [line],
+                "has_source": False,
+            }
+            continue
+
+        if current is None:
+            repaired.append(line)
+            continue
+
+        current["lines"].append(line)
+        stripped = line.strip()
+        if stripped.startswith("*") and "·" in stripped:
+            current["has_source"] = True
+        elif stripped and not stripped.startswith("#") and not stripped.startswith("---"):
+            current["body"].append(stripped)
+
+    flush_current()
+    return "\n".join(repaired).rstrip() + ("\n" if markdown.endswith("\n") else "")
 
 
 def main():
@@ -124,16 +314,12 @@ def main():
         with open(args.context) as f:
             context = json.load(f)
 
-    # ── Resolve title from config ──
-    channels = config.get("channels", {})
-    channel_title = channels.get(args.domain, {}).get("title", "")
-    title = channel_title or config.get("domain", {}).get("title", "")
-
     # ── Load domain config ──
     # Derive domain.yaml path from config or convention
     project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
     domain_config_path = os.path.join(project_root, "domains", args.domain, "domain.yaml")
     domain_cfg = load_domain_cfg(domain_config_path)
+    title = resolve_domain_title(config, domain_cfg, args.domain)
 
     # ── Assemble prompt via assembler ──
     prompts_dir = os.path.join(_EDIT_DIR, "prompts")
@@ -147,7 +333,7 @@ def main():
         domain_cfg=domain_cfg,
         domain_id=args.domain,
         run_date=args.date,
-        title=title or f"{args.domain}早报",
+        title=title,
         articles=articles,
         clusters=clusters,
         context=context,
@@ -168,6 +354,9 @@ def main():
 
     # ── Split output ──
     briefing, structured_data = split_llm_output(response)
+    briefing = strip_source_locale_tags(briefing)
+    briefing = repair_missing_source_lines(briefing, articles, args.date)
+    structured_data = normalize_structured_data(structured_data, args.domain, args.date)
 
     # ── Apply header ──
     if title:
@@ -184,17 +373,14 @@ def main():
     print(f"✅ Briefing written: {args.output} ({len(briefing)} chars)", file=sys.stderr)
 
     # ── Write event-threads.json (if structured output) ──
-    if structured_data:
-        has_edges = bool(structured_data.get("causal_edges"))
-        has_judgments = bool(structured_data.get("judgments"))
-        if has_edges or has_judgments:
-            event_threads_path = os.path.join(output_dir, "event-threads.json")
-            with open(event_threads_path, "w") as f:
-                json.dump(structured_data, f, ensure_ascii=False, indent=2)
-            n_edges = len(structured_data.get("causal_edges", []))
-            n_judgments = len(structured_data.get("judgments", []))
-            print(f"✅ Event threads written: {event_threads_path} "
-                  f"({n_edges} causal_edges, {n_judgments} judgments)", file=sys.stderr)
+    if should_write_event_threads(structured_data):
+        event_threads_path = os.path.join(output_dir, "event-threads.json")
+        with open(event_threads_path, "w") as f:
+            json.dump(structured_data, f, ensure_ascii=False, indent=2)
+        counts = structured_event_counts(structured_data)
+        print(f"✅ Event threads written: {event_threads_path} "
+              f"({counts['threads']} threads, {counts['causal_edges']} causal_edges, "
+              f"{counts['judgments']} judgments)", file=sys.stderr)
 
 
 if __name__ == "__main__":

@@ -154,3 +154,19 @@ def test_get_term_company_progress_groups_events_by_entity(monkeypatch, tmp_path
     assert [event["title"] for event in progress["sk-hynix"]] == [
         "SK hynix expands HBM capacity"
     ]
+
+
+def test_get_thread_timeline_parses_json_columns(monkeypatch, tmp_path):
+    from stratum.db.ingest import get_thread_timeline
+
+    db_path = tmp_path / "storage.db"
+    _make_events_db(db_path)
+    _patch_get_db(monkeypatch, db_path)
+
+    events = get_thread_timeline("storage", "et-hbm")
+
+    assert [event["id"] for event in events] == ["ev-2", "ev-1"]
+    assert events[0]["article_ids"] == ["a-2"]
+    assert events[0]["entity_ids"] == ["sk-hynix"]
+    assert events[0]["term_ids"] == ["hbm"]
+    assert events[0]["source_domains"] == ["example.kr"]

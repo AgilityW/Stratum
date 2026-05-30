@@ -1,73 +1,364 @@
-# stages — 确定性 Pipeline 阶段
+# stages — 8-stage briefing pipeline
 
 ## Purpose
-日频简报管线的 8 个处理阶段。每个阶段是独立可运行的脚本，通过标准 CLI 接口串联。
 
-阶段顺序：search → enrich → verify → normalize → cluster → edit → validate → render
+`stratum/stages` contains the executable production chain that turns search and collector results into a rendered briefing.
 
-## Boundaries
+The orchestrator runs these stages in order:
 
-### ✅ 每个 stage 的共性契约
-- 标准 CLI：`--input <path> --output <path> [--domain <config>] [--date <ISO>] [--config <yaml>]`
-- 只读输入文件，只写输出文件
-- 独立可测试
-- Deterministic stages (enrich/verify/normalize/cluster/validate/render): 不调 LLM
+1. `search`
+2. collector merge, via `stratum.collectors`
+3. `enrich`
+4. `verify`
+5. `normalize`
+6. `cluster`
+7. `edit`
+8. `validate`
+9. `render`
 
-### ❌ 不做什么
-- **不包含领域知识** — 领域配置从 domain.yaml 或 config.yaml 注入
+The user-facing pipeline still calls this the "8 stage" flow because collectors are a sidecar merge after search, not a numbered stage script.
 
-## 各 Stage 速览
+## Stage Contracts
 
-| Stage | 输入 | 输出 | 职责 |
-|:---|:---|:---|:---|
-| search | config.yaml + queries.yaml | raw.json | 调 bocha/tavily API，精确日期过滤 |
-| enrich | raw.json | enriched.json | 补全日期等元数据 |
-| verify | enriched.json | verified.jsonl | 过验证门（去重、去噪、blocklist） |
-| normalize | verified.jsonl + domain.yaml + **thread_keywords.json** | articles.jsonl | 标准化为 ArticleRecord，**三步 term 提取** |
-| cluster | articles.jsonl | clusters.json | **thread 锚定 + Jaccard 聚类**，超簇递归拆分 |
-| edit | articles.jsonl + clusters.json + story_context.json | briefing.md | 调 LLM 生成简报 |
-| validate | briefing.md + articles.jsonl | gate pass/fail | 简报形式校验（来源、日期） |
-| render | briefing.md + template | HTML + PDF | 模板渲染输出 |
+| Stage | Determinism | Primary input | Primary output | Responsibility |
+|:---|:---|:---|:---|:---|
+| `search` | external APIs | `config.yaml` plus DB queries or `queries.yaml` | `raw.json` | Run the configured search subsystem and write raw result objects. |
+| collectors sidecar | network-dependent | `domain.yaml` source registry | merged `raw.json` | Fetch configured RSS/browser/direct sources and append deduped results. |
+| `enrich` | deterministic unless `--web-extract` | `raw.json` | `enriched.json` | Fill missing publication dates from API metadata, snippets, URLs, or optional page fetches. |
+| `verify` | deterministic | `enriched.json` plus `domain.yaml` | `verified.jsonl` | Apply freshness, URL, duplication, blocklist, and source quality gates. |
+| `normalize` | deterministic | `verified.jsonl` plus `domain.yaml` | `articles.jsonl` | Convert verified records into ArticleRecord-like rows with entities, terms, source metadata, and optional event-thread matches. |
+| `cluster` | deterministic | `articles.jsonl` | `clusters.json` | Group related articles by event-thread anchor and entity/term overlap. |
+| `edit` | LLM-dependent | `articles.jsonl`, `clusters.json`, story context | `briefing.md`, optional `event-threads.json` | Assemble prompts and ask the LLM to produce the editorial briefing plus structured thread data. |
+| `validate` | deterministic | `briefing.md`, `articles.jsonl`, optional schemas | exit status and JSON report | Check cited sources, cited dates, and structured event-thread schema validity. |
+| `render` | deterministic, PDF shell-out optional | `briefing.md`, template | `briefing.html`, optional `briefing.pdf` | Convert Markdown to template-backed HTML, then use local Chrome for PDF when available. |
 
-## 关键 Stage 详细
+## Detailed Flow
 
-### normalize — 三步 Term 提取
+### 1. search
 
-1. **静态列表匹配** — domain.yaml `flat_entities` + `flat_terms` (现有逻辑)
-2. **标题模式提取** — 正则抽取公司名、产品名、数字+单位（如 "12层", "48GB"）
-3. **thread_keywords 匹配** — 从 Story Bridge 导出的活跃事件关键词中匹配，命中则：
-   - `article.event_thread_id` 设置为匹配的 thread_id
-   - `article.terms` 追加 thread 的关键词
+`search/search.py` is now a wrapper around `stratum.subsystems.search`.
 
-新增 CLI 参数: `--thread-keywords <path>` (可选，未提供时退化为仅步骤 1+2)
+Inputs:
+- `--config config.yaml` for API keys, engine settings, and `.env` resolution.
+- `--db <domain.db>` for current DB-backed discovery queries, plus `--queries <queries.yaml>` as the baseline fallback.
+- `--date YYYY-MM-DD` for date-aware engine calls and freshness scoring.
 
-### cluster — 分层聚类
+Output:
+- JSON array of search result dictionaries in `raw.json`.
+- Search quality and execution sidecar in `raw.stats.json`.
 
-1. **Phase 0: thread 锚定** — 同一 `event_thread_id` 的文章强制归入同一簇
-2. **Phase 1: Jaccard 聚类** — 剩余文章按 entity/term Jaccard ≥ 0.35 聚类 (Union-Find)
-3. **Phase 2: 超簇拆分** — >10 篇文章的簇，内部以 threshold+0.1 递归拆分
+Important boundary:
+- No legacy curl scripts or old search implementation should be reintroduced here.
+- A present DB file is not treated as sufficient by itself. If it has no active
+  daily queries, the stage falls back to `queries.yaml` so Search does not
+  silently produce an empty raw pool.
+- `queries.yaml` uses the structured `queries` schema. It may be either
+  `queries: intent -> locale -> list` for simple domains or
+  `queries: intent -> dimension -> locale -> list` for coverage-aware domains.
+  Search normalizes these into `{id, text, locale, intent, dimension}`.
+  Query items may also carry `include_domains`, which Tavily receives as hard
+  source filters. This is the preferred shape for source-first/official-site
+  queries; legacy `site:` text still works but is no longer the only option.
+- Search diagnostics live in `raw.stats.json`, not in `raw.json`. They cover
+  per-query status plus raw-vs-curated locale/dimension/source-type coverage,
+  source-type shortfalls, low-yield queries, and top contributing domains.
+- Search results preserve original `url` but add `canonical_url` for dedupe.
+  Canonicalization strips tracking query parameters/fragments and normalizes
+  common `www.`/`m.` host variants.
 
-新增 CLI 参数: `--threshold 0.35` (从 0.25 上调), `--max-size 10`
+### 2. collectors sidecar
 
-## Design Principles
+Collectors are not a separate numbered stage script. The orchestrator calls them immediately after search and merges their results into `raw.json`.
 
-### 铁律
-1. **单文件脚本** — 每个 stage 一个 .py 文件，通过 subprocess 调用
-2. **Domain-agnostic** — 领域配置通过 --domain/--config 参数注入
-3. **格式契约化** — 每个 stage 的输入输出 schema 在代码 docstring 中定义
+Inputs:
+- `domain.yaml` `source_registry.sources`
+- domain keyword config
+- current run date
 
-### v5.1 变更 (2026-05-29)
-- normalize: 从纯静态 term 提取升级为三步提取，支持 thread_keywords 消费
-- cluster: 从纯 Jaccard 升级为 thread 锚定 + 分层聚类，阈值 0.25→0.35，新增超簇拆分
-- search/edit: 已在前序版本改为确定性代码驱动
+Supported collectors:
+- RSS/Atom feeds
+- direct page fetches
+- browser-backed sources when Playwright is installed
+
+Output:
+- More search-shaped records appended to the same raw result set.
+
+Important boundary:
+- Collector failures should degrade a source, not invalidate the whole briefing run.
+- Browser collection is optional and must report missing Playwright clearly.
+
+### 3. enrich
+
+`enrich/enrich.py` adds or repairs publication dates.
+
+Inputs:
+- `raw.json`
+- run date
+- optional `--web-extract`
+
+Output:
+- `enriched.json`
+
+Freshness order:
+- existing `datePublished`
+- existing `published_at` when `datePublished` is absent
+- snippet regex
+- URL path date
+- configured freshness window fallback
+- optional page metadata extraction
+
+Dates extracted by snippet regex, URL path, or page metadata must be plausible
+publication dates for the run date. Candidates beyond the configured future
+grace are ignored so future event dates do not poison article freshness.
+When text contains multiple date-like values, Enrich keeps scanning within the
+same pattern until it finds a plausible publication date instead of letting the
+first future event date hide a later publication timestamp.
+`date_source` records the lineage (`search_api`, `snippet_regex`, `url_path`,
+`freshness_window`, `web_extract`, or `none`) and is preserved through verify
+and normalize for debugging and quality policy.
+Verify maps that lineage to `date_confidence`: API, page metadata, and URL-path
+dates are high confidence; freshness-window inference is medium; title/snippet
+regex dates are low. Domains can set
+`pipeline.date_window.min_date_confidence` to reject weak date evidence. The
+default policy keeps low-confidence dates with a `LOW_CONFIDENCE_DATE` quality
+flag so downstream stages can inspect the risk without losing recall.
+Enrich preserves an existing non-`none` `date_source` instead of relabeling
+collector or upstream-derived dates as `search_api`.
+
+### 4. verify
+
+`verify/verify.py` decides which enriched records are allowed into the briefing evidence set.
+
+Inputs:
+- `enriched.json`
+- `domain.yaml`
+- run date
+
+Output:
+- JSONL `verified.jsonl`
+- JSON sidecar `verified.stats.json` with verification totals, rejection
+  reasons, date-confidence counts, and quality-flag counts
+
+Checks:
+- publication date freshness
+- malformed or blocked URLs
+- title/snippet quality
+- duplicate canonical URLs or near-duplicate titles
+- domain-level source policy
+
+Important boundary:
+- Blocklist and low-priority domain policy use host-boundary matching. A rule
+  for `youtube.com` applies to `m.youtube.com`, but not to
+  `notyoutube.com`; low-priority roots such as `google.com` also cover their
+  subdomains.
+- Verify preserves upstream `date_source` when present. If an enriched/raw
+  record has metadata dates but no lineage, Verify marks it as `search_api`;
+  if Verify itself extracts a date from title/snippet text, it marks
+  `snippet_regex`; records rejected with no usable date emit `none`.
+- Verify emits `date_confidence` and `quality_flags` so weak inferred freshness
+  is visible to Normalize, clustering/debugging, and future editorial policy.
+- Verify writes a stats sidecar next to `verified.jsonl` by default, or to
+  `--stats` when the orchestrator supplies an explicit path. This keeps
+  rejection diagnostics machine-readable instead of only printed to stderr.
+
+### 5. normalize
+
+`normalize/normalize.py` converts verified search-like records into stable article records.
+
+Inputs:
+- `verified.jsonl`
+- `domain.yaml`
+- optional `thread_keywords.json`
+
+Output:
+- JSONL `articles.jsonl`
+
+Adds:
+- stable article id based on canonical URL plus title
+- canonical URL preserved from Verify or recomputed with the Search canonicalizer
+- `source`, `source_type`, `source_locale`, and `date_source`
+- upstream `engine`, `query_id`, `query_used`, `query_dimension`, and `discovery_mode`
+- extracted entities, terms, numeric claims, artifact type
+- optional `event_thread_id`
+
+Important boundary:
+- Upstream explicit metadata wins over heuristics. For example,
+  `source_type_hint` from Search/Collectors is preferred over URL
+  reclassification, and explicit `locale` is preferred over domain guessing.
+- URL fallback source classification uses domain-boundary matching instead of
+  loose substring matching, so impostor domains such as `fakesamsung.com` cannot
+  inherit official-source treatment from configured `samsung.com` rules.
+- `content_hash` uses canonical URL plus title so mobile/tracking URL variants
+  do not become distinct ArticleRecords.
+- `thread_keywords.json` may assign `event_thread_id`, but only keywords/topics
+  that actually match the article text are added to `terms`. Unmatched thread
+  vocabulary must not pollute ArticleRecord terms.
+
+### 6. cluster
+
+`cluster/cluster.py` groups normalized articles into story clusters.
+
+Inputs:
+- `articles.jsonl`
+- `domain.yaml`
+- run date
+
+Output:
+- `clusters.json`
+
+Algorithm:
+- force-merge articles sharing `event_thread_id`
+- cluster remaining articles by weighted entity/term overlap; entity overlap
+  carries more weight than generic term overlap, and shared primary entities
+  carry more salience than incidental secondary-entity overlap
+- review orphan clusters for bridge over-merge: when a component has no entity
+  shared by every article, it is split by primary entity so one article cannot
+  connect distinct subjects only through pairwise overlap
+- split oversized orphan clusters recursively with a stricter threshold, with
+  a minimum split threshold of `0.35` so low-threshold discovery does not keep
+  oversized generic components intact
+
+Cluster objects include `source_domains` and `canonical_urls` in addition to
+article IDs. These are audit fields: downstream stages should still use
+`article_ids` as the primary join key, but the extra fields make source-mix and
+duplicate investigations visible without rehydrating every article.
+When upstream records provide `source_domain` instead of `source`, or only a
+raw `url` instead of `canonical_url`, Cluster fills those audit fields from the
+available metadata so diagnostics stay useful across search-shaped and
+ArticleRecord-shaped inputs.
+`created` is the pipeline run date, not wall-clock execution date, so backfills
+and historical reruns produce stable cluster artifacts.
+`event_thread_id` anchoring is a continuity contract with Story Tracking. A
+thread-anchored cluster is not split by the generic `max_size` overflow pass;
+large continuing stories should stay one cluster unless Story Tracking itself
+splits or resolves the thread.
+
+### 7. edit
+
+`edit/edit.py` is the LLM editorial boundary.
+
+Inputs:
+- `articles.jsonl`
+- `clusters.json`
+- generated story context
+- prompt manifest and prompt fragments from `stratum/stages/edit/prompts/`
+- `config.yaml` LLM settings
+- `domain.yaml` policy and title values injected into the prompt
+
+Output:
+- `briefing.md`
+- optional `event-threads.json` when the LLM emits `threads`, `causal_edges`,
+  or `judgments`
+
+Important boundary:
+- Prompt assembly lives in `assembler.py`.
+- LLM transport lives in `llm_client.py`.
+- Daily structured output asks for `threads` with concrete `watch_signals`,
+  `close_conditions`, status, priority, and entity/term ids so DB ingest can
+  seed next-run Search follow-up queries.
+- `threads`, `causal_edges`, and `judgments` all have JSON Schema files under
+  `prompts/_schemas/`. The schema thread-id shape follows the current
+  `et-{domain}-{date}-{hash}` / `et-{domain}-{seq}` style instead of the older
+  `et-YYYY-NNN` placeholder.
+- If the LLM leaves a new thread id blank, Edit assigns a deterministic
+  `et-{domain}-{date}-{hash}` id before writing `event-threads.json`. This keeps
+  DB ingest and watch-query persistence pointed at the same thread surface.
+- Domain prompt files under `domains/<domain>/prompts/` are reserved for future
+  override support; the active prompt engine is the manifest/fragments in this
+  stage directory.
+- The stage should still write the Markdown briefing if optional structured JSON is malformed.
+- Before writing, Edit applies a deterministic source-line repair: if a news
+  item has no source/date line and clearly matches one input article, it adds
+  that article's source and date. It does not invent sources for weak matches
+  and skips structural sections such as `今日要点`, `关注`, and `反向信号`.
+
+### 8. validate
+
+`validate/validate.py` is the content gate after LLM editing.
+
+Inputs:
+- `briefing.md`
+- `articles.jsonl`
+- `domain.yaml`
+- optional `event-threads.json` and schema directory
+
+Output:
+- JSON status report to stdout
+- exit code `0` for clean validation, `1` for violations
+
+Checks:
+- cited sources map back to verified/normalized article sources
+- cited source articles have coarse content overlap with the news item they support
+- cited source-line dates match the publication date of a supporting article
+  when that article carries date evidence
+- cited dates are parseable and within `pipeline.date_window`
+- structured threads, causal edges, and judgments match JSON Schema when present
+
+Important boundary:
+- Validate strips source-line locale tags such as `[en]` or `[zh-CN]` while
+  parsing, so one missed Edit cleanup does not cause a false source violation.
+  The prompt and Edit cleanup still require rendered source lines to omit those
+  tags.
+- Brand-like source labels such as `Reuters` must match through configured
+  aliases or exact source names. Alias and domain-like source matching use
+  host-boundary rules, so `Reuters -> reuters.com` can match
+  `www.reuters.com` but not `notreuters.com`. Parent-domain labels such as
+  `sina.com.cn` can still match article subdomains such as
+  `finance.sina.com.cn`.
+- Source-item alignment requires the cited article to expose comparable title,
+  snippet, or extracted-summary tokens when the generated item has content.
+  A source existing in the article pool is not sufficient evidence by itself.
+- Source-date alignment is evidence-based: if aligned articles from a cited
+  source carry publication dates and none match the report's cited date,
+  Validate emits `SOURCE_DATE`. Undated aligned articles do not create a date
+  mismatch by themselves.
+
+### 9. render
+
+`render/render.py` turns the validated Markdown into user-facing artifacts.
+
+Inputs:
+- `briefing.md`
+- HTML template
+- title/date/footer strings
+- optional `domain.yaml` render tags
+
+Output:
+- `briefing.html`
+- `briefing.pdf` only when local Chrome exists and succeeds
+
+Important boundary:
+- Missing Chrome is a non-fatal PDF skip; HTML remains the durable artifact.
+- Render tag badges are detected from a complete item block: title plus body
+  text. The heading is rendered only after the item body/source line is seen, so
+  domain tags such as price, supply, or technology can be driven by the actual
+  item text instead of title keywords only.
+- Render strips machine locale tags such as `[en]` and `[zh-CN]` from displayed
+  source lines as a final presentation guard. Locale cleanup accepts case
+  variants and script/region tags such as `[EN]`, `[zh-cn]`, and
+  `[zh-Hans-CN]`. Edit should still avoid writing them, and Validate should
+  still parse defensively.
 
 ## Dependencies
 
-### 依赖
-- domain.yaml（运行时注入）
-- config.yaml（search、edit 阶段）
-- thread_keywords.json（normalize 阶段，可选）
-- story_context.json（edit 阶段）
+Runtime dependencies:
+- `config.yaml`
+- `domains/<domain>/domain.yaml`
+- `domains/<domain>/queries.yaml` or SQLite discovery DB
+- `domains/<domain>/templates/daily.html`
+- `stratum/subsystems/search`
+- `stratum/collectors`
+- optional local Chrome for PDF
 
-### 被依赖
-- orchestrator/pipeline.py
+Downstream dependencies:
+- `stratum/orchestrator/pipeline.py`
+- `stratum/db/ingest.py` for post-run event-thread ingestion
+- `stratum/subsystems/story-tracking` for context and next-run keyword export
+
+## Design Rules
+
+- Keep stages executable as standalone scripts.
+- Keep domain knowledge in domain config, not hardcoded stage code.
+- Keep search and edit as the only external intelligence boundaries.
+- Treat collectors as additive evidence acquisition, not a replacement for search.
+- Prefer deterministic validation after every LLM boundary.

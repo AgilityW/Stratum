@@ -13,6 +13,7 @@ Thumbs.db
 .idea/
 
 # Environment & instance config (never commit)
+.venv/
 .env
 *.env
 config.yaml
@@ -36,6 +37,7 @@ __pycache__/
 .pytest_cache/
 .coverage
 htmlcov/
+*.egg-info/
 
 # Runtime config (generated at runtime)
 data/value-chain/runtime-config.json

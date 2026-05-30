@@ -183,6 +183,12 @@ class TestSerialization:
             last_updated="2026-05-28",
             topic_tags=["HBM"],
             entity_tags=["Samsung"],
+            timeline=[TimelineEntry(
+                date="2026-05-28",
+                update_type=UpdateType.FIRST_DISCLOSURE,
+                summary="First report of HBM4 shipping",
+                confidence="B",
+            )],
             scale_refs=[ScaleRef(
                 scale="daily", briefing_id="daily-2026-05-28",
                 date="2026-05-28", prominence=Prominence.LEAD,
@@ -193,6 +199,13 @@ class TestSerialization:
         assert data["id"] == "event-storage-0001"
         assert data["topic_tags"] == ["HBM"]
         assert data["scale_refs"][0]["prominence"] == "lead"
+
+        restored = from_jsonl_line(line, EventRecord)
+        assert isinstance(restored, EventRecord)
+        assert isinstance(restored.scale_refs[0], ScaleRef)
+        assert restored.scale_refs[0].prominence == Prominence.LEAD
+        assert isinstance(restored.timeline[0], TimelineEntry)
+        assert restored.timeline[0].update_type == UpdateType.FIRST_DISCLOSURE
 
     def test_causal_edge_roundtrip(self):
         ce = CausalEdge(

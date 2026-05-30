@@ -9,11 +9,11 @@ Architecture:
     The CALLER (pipeline.py, SKILL.md, cron) selects the template file via --template.
     To add a new briefing type: create a template .html file — no code changes needed.
 
-Template placeholders: {title} {date_str} {weekday} {body} {footer}
+Template placeholders: {title} {date_str} {weekday} {body} {footer} {artifact_name}
 CSS braces in templates must be escaped as {{{{ and }}}}.
 
 Input:  briefing.md + template.html + domain.yaml (for render_tags)
-Output: briefing.html + briefing.pdf in --output-dir
+Output: <artifact-name>.html + <artifact-name>.pdf in --output-dir
 Side effects: Writes files. Invokes Chrome headless subprocess (system call).
 Invariants:  HTML output is self-contained (all CSS inline). PDF via Chrome --headless.
 Error behavior: Chrome not found → PDF skipped, HTML still generated.
@@ -28,7 +28,7 @@ Usage:
         --footer "由 AI Agent 自动生成 · 每日 7:30 CST"
 """
 from __future__ import annotations
-import argparse, re, os, subprocess, sys, yaml
+import argparse, re, os, shutil, subprocess, sys, yaml
 from pathlib import Path
 from datetime import datetime, timezone, timedelta
 
@@ -98,17 +98,67 @@ def load_template(template_path: str | None) -> str:
 <body><h1>{title}</h1><p>{date_str} · {weekday}</p><div>{body}</div><footer>{footer}</footer></body></html>"""
 
 
-def convert(md_text):
+def _slug_part(text: str) -> str:
+    """Return a filesystem-safe title-case filename segment."""
+    text = re.sub(r"[^A-Za-z0-9]+", "_", text).strip("_")
+    return text[:1].upper() + text[1:] if text else "Briefing"
+
+
+def artifact_basename(domain: str, briefing_type: str, run_date: str) -> str:
+    """Build stable artifact names like Storage_Daily_Briefing_2026-05-30."""
+    return f"{_slug_part(domain)}_{_slug_part(briefing_type)}_Briefing_{run_date}"
+
+
+def _legacy_copy(path: str, legacy_name: str) -> None:
+    legacy_path = os.path.join(os.path.dirname(path), legacy_name)
+    if os.path.abspath(path) != os.path.abspath(legacy_path):
+        shutil.copyfile(path, legacy_path)
+
+
+def _render_tag_spans(tags):
+    """Render item tag badges."""
+    return "".join(
+        f'<span class="tag {esc(css_class)}">{esc(label)}</span>'
+        for label, css_class in tags
+    )
+
+
+def _clean_source_line_display(text: str) -> str:
+    """Remove machine locale tags from rendered source lines."""
+    return re.sub(r"\s*\[(?:[A-Za-z]{2,3}(?:-[A-Za-z]{2,8}){0,2})\]", "", text).strip()
+
+
+def convert(md_text, tag_config=None):
     """Convert Stratum briefing markdown to HTML body. Domain-agnostic."""
+    tag_config = tag_config or {}
     lines = md_text.split("\n")
     body_parts = []
     item_lines = []
+    item_title = ""
+    item_tag_text = []
     in_item = False
     in_section = False
     section_kind = ""
     item_num = 0
     first_hr_seen = False
     summary_collected = False
+
+    def flush_item():
+        nonlocal item_lines, item_title, item_tag_text, in_item
+        if not in_item:
+            return
+        title_esc = esc(item_title)
+        tags_html = _render_tag_spans(detect_tags(item_title, " ".join(item_tag_text), tag_config))
+        body_parts.append(
+            '<div class="item">\n'
+            f'<h3><span class="num">{item_num}</span>{title_esc}{tags_html}</h3>'
+        )
+        body_parts.append("\n".join(item_lines))
+        body_parts.append("</div>\n")
+        item_lines = []
+        item_title = ""
+        item_tag_text = []
+        in_item = False
 
     for raw in lines:
         s = raw.strip()
@@ -118,12 +168,8 @@ def convert(md_text):
             continue
 
         if s.startswith("---"):
-            if in_item:
-                body_parts.append("\n".join(item_lines))
-                body_parts.append("</div>\n")
-                item_lines = []
-                in_item = False
-                in_section = False
+            flush_item()
+            in_section = False
             body_parts.append("<hr>\n")
             first_hr_seen = True
             summary_collected = False
@@ -133,11 +179,7 @@ def convert(md_text):
             continue
 
         if s.startswith("### "):
-            if in_item:
-                body_parts.append("\n".join(item_lines))
-                body_parts.append("</div>\n")
-                item_lines = []
-                in_item = False
+            flush_item()
 
             title = s[4:].strip()
             title_esc = esc(title)
@@ -151,20 +193,16 @@ def convert(md_text):
             item_num += 1
             in_item = True
             in_section = False
-            item_lines = [
-                '<div class="item">',
-                f'<h3><span class="num">{item_num}</span>{title_esc}</h3>',
-            ]
+            item_title = title
+            item_tag_text = []
+            item_lines = []
             continue
 
         if s.startswith("*") and s.endswith("*") and "·" in s:
             text = s.strip("* ").strip()
             if in_item:
-                item_lines.append(f'<div class="source">{esc(text)}</div>')
-                body_parts.append("\n".join(item_lines))
-                body_parts.append("</div>\n")
-                item_lines = []
-                in_item = False
+                item_lines.append(f'<div class="source">{esc(_clean_source_line_display(text))}</div>')
+                flush_item()
             continue
 
         if s.startswith("- "):
@@ -173,6 +211,7 @@ def convert(md_text):
                 body_parts.append(f'<div class="bullet">· {text}</div>\n')
             elif in_item:
                 item_lines.append(f"<p>{text}</p>")
+                item_tag_text.append(s[2:].strip())
             else:
                 body_parts.append(f'<div class="bullet">· {text}</div>\n')
             continue
@@ -189,22 +228,22 @@ def convert(md_text):
 
         if in_item:
             item_lines.append(f"<p>{esc(s)}</p>")
+            item_tag_text.append(s)
         else:
             body_parts.append(f"<p>{esc(s)}</p>")
 
-    if in_item:
-        body_parts.append("\n".join(item_lines))
-        body_parts.append("</div>\n")
+    flush_item()
 
     return "".join(body_parts)
 
 
-def render_html(md_path, output_dir, title, date_str, weekday, footer, template_str):
+def render_html(md_path, output_dir, title, date_str, weekday, footer, template_str,
+                artifact_name="briefing", write_legacy=False, tag_config=None):
     """Render briefing.md → HTML using the provided template string."""
     with open(md_path) as f:
         md = f.read()
 
-    body_html = convert(md)
+    body_html = convert(md, tag_config=tag_config)
 
     html = template_str.format(
         title=title,
@@ -212,24 +251,36 @@ def render_html(md_path, output_dir, title, date_str, weekday, footer, template_
         weekday=weekday,
         body=body_html,
         footer=footer,
+        artifact_name=artifact_name,
     )
 
-    html_path = os.path.join(output_dir, "briefing.html")
+    html_path = os.path.join(output_dir, f"{artifact_name}.html")
     with open(html_path, "w") as f:
         f.write(html)
+    if write_legacy:
+        _legacy_copy(html_path, "briefing.html")
     return html_path
 
 
-def render_pdf(html_path, output_dir):
-    pdf_path = os.path.join(output_dir, "briefing.pdf")
-    result = subprocess.run(
-        [CHROME, "--headless", "--disable-gpu", "--no-pdf-header-footer",
-         f"--print-to-pdf={pdf_path}", "--no-margins", f"file://{html_path}"],
-        capture_output=True, text=True, timeout=30,
-    )
+def render_pdf(html_path, output_dir, artifact_name="briefing", write_legacy=False):
+    pdf_path = os.path.join(output_dir, f"{artifact_name}.pdf")
+    if not os.path.exists(CHROME):
+        print(f"PDF render skipped: Chrome not found at {CHROME}", file=sys.stderr)
+        return None
+    try:
+        result = subprocess.run(
+            [CHROME, "--headless", "--disable-gpu", "--no-pdf-header-footer",
+             f"--print-to-pdf={pdf_path}", "--no-margins", f"file://{html_path}"],
+            capture_output=True, text=True, timeout=30,
+        )
+    except OSError as e:
+        print(f"PDF render skipped: {e}", file=sys.stderr)
+        return None
     if result.returncode != 0:
         print(f"PDF render failed: {result.stderr[-300:]}", file=sys.stderr)
         return None
+    if write_legacy:
+        _legacy_copy(pdf_path, "briefing.pdf")
     return pdf_path
 
 
@@ -242,31 +293,54 @@ def main():
     parser.add_argument("--weekday", help="Weekday (e.g. '周五')")
     parser.add_argument("--template", help="Path to HTML template file (default: built-in)")
     parser.add_argument("--domain", help="Path to domain.yaml (for render_tags)")
+    parser.add_argument("--domain-id", default="storage",
+                        help="Domain name for artifact filename (e.g. storage)")
+    parser.add_argument("--briefing-type", default="daily",
+                        help="Briefing type for artifact filename (e.g. daily)")
+    parser.add_argument("--artifact-name",
+                        help="Output basename without extension. Defaults to Domain_Type_Briefing_YYYY-MM-DD")
+    parser.add_argument("--legacy-names", action="store_true",
+                        help="Also write briefing.html/pdf compatibility copies")
     parser.add_argument("--footer", default="由 AI Agent 自动生成",
                         help="Footer text (e.g. '由 AI Agent 自动生成 · 每日 7:30 CST')")
     args = parser.parse_args()
 
-    # Auto-derive date/weekday if not provided
+    # Auto-derive display date/weekday if not provided. ISO dates are accepted
+    # for artifact naming and rendered as Chinese dates in the template.
+    run_dt = datetime.now(CST)
     date_str = args.date
-    weekday = args.weekday
-    if not date_str or not weekday:
-        now = datetime.now(CST)
-        if not date_str:
-            date_str = f"{now.year}年{now.month}月{now.day}日"
-        if not weekday:
-            weekday = WEEKDAY_ZH[now.weekday()]
+    if args.date:
+        iso_match = re.match(r"(\d{4})-(\d{2})-(\d{2})", args.date)
+        cn_match = re.search(r"(\d{4})年(\d{1,2})月(\d{1,2})日", args.date)
+        if iso_match:
+            run_dt = datetime.fromisoformat(iso_match.group(0)).replace(tzinfo=CST)
+            date_str = f"{run_dt.year}年{run_dt.month}月{run_dt.day}日"
+        elif cn_match:
+            y, m, d = map(int, cn_match.groups())
+            run_dt = datetime(y, m, d, tzinfo=CST)
+    if not date_str:
+        date_str = f"{run_dt.year}年{run_dt.month}月{run_dt.day}日"
+    weekday = args.weekday or WEEKDAY_ZH[run_dt.weekday()]
 
     os.makedirs(args.output_dir, exist_ok=True)
 
     # Load template (with fallback)
     template_str = load_template(args.template)
+    run_date = run_dt.date().isoformat()
+    artifact_name = args.artifact_name or artifact_basename(
+        args.domain_id, args.briefing_type, run_date
+    )
 
     print(f"📄 Rendering: {args.input}", file=sys.stderr)
+    tag_config = load_render_tags(args.domain)
     html_path = render_html(args.input, args.output_dir, args.title, date_str, weekday,
-                            args.footer, template_str)
+                            args.footer, template_str, artifact_name,
+                            write_legacy=args.legacy_names,
+                            tag_config=tag_config)
     print(f"   HTML: {html_path}", file=sys.stderr)
 
-    pdf_path = render_pdf(html_path, args.output_dir)
+    pdf_path = render_pdf(html_path, args.output_dir, artifact_name,
+                          write_legacy=args.legacy_names)
     if pdf_path:
         print(f"   PDF:  {pdf_path}", file=sys.stderr)
     print(f"✅ Render complete", file=sys.stderr)

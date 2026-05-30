@@ -25,7 +25,23 @@ from datetime import datetime, timezone, timedelta
 from typing import Optional
 from urllib.parse import urlparse
 
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+if PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, PROJECT_ROOT)
+
+from stratum.subsystems.search.models import canonicalize_url, source_pattern_matches
+
 CST = timezone(timedelta(hours=8))
+
+CANONICAL_SOURCE_TYPES = {"official", "analyst", "media", "blog", "social", "unknown"}
+SOURCE_TYPE_ALIASES = {
+    "newsroom": "official",
+    "press": "official",
+    "press_release": "official",
+    "press-release": "official",
+    "rss": "media",
+    "news": "media",
+}
 
 
 def load_domain_config(domain_path: str) -> dict:
@@ -43,9 +59,19 @@ def extract_domain(url: str) -> str:
         domain = parsed.netloc.lower()
         if domain.startswith("www."):
             domain = domain[4:]
+        if domain.startswith("m."):
+            domain = domain[2:]
         return domain
     except Exception:
         return ""
+
+
+def normalize_source_type(value: str) -> str:
+    """Normalize upstream source hints into ArticleRecord source_type values."""
+    normalized = SOURCE_TYPE_ALIASES.get((value or "").strip().lower(), (value or "").strip().lower())
+    if normalized in CANONICAL_SOURCE_TYPES:
+        return normalized
+    return ""
 
 
 def classify_source_type(url: str, source_classification: dict) -> str:
@@ -54,7 +80,7 @@ def classify_source_type(url: str, source_classification: dict) -> str:
 
     for category, patterns in source_classification.items():
         for pattern in patterns:
-            if pattern in domain or pattern in url.lower():
+            if source_pattern_matches(url, pattern):
                 return category
 
     # Default heuristic
@@ -62,6 +88,21 @@ def classify_source_type(url: str, source_classification: dict) -> str:
         return "media"
 
     return "unknown"
+
+
+def resolve_source_type(article: dict, url: str, source_classification: dict) -> str:
+    """Prefer upstream source typing, then fall back to domain classification."""
+    raw_metadata = article.get("raw_metadata", {})
+    explicit = (
+        article.get("source_type")
+        or article.get("source_type_hint")
+        or raw_metadata.get("source_type")
+        or raw_metadata.get("source_type_hint")
+    )
+    normalized = normalize_source_type(explicit)
+    if normalized:
+        return normalized
+    return classify_source_type(url, source_classification)
 
 
 def classify_artifact_type(title: str, snippet: str, artifact_types: dict) -> str:
@@ -153,7 +194,7 @@ def match_thread_keywords(title: str, snippet: str, thread_keywords: dict) -> tu
 
     Highest-scoring thread wins; ties broken by thread order.
 
-    Returns (thread_id | None, additional_keywords | []).
+    Returns (thread_id | None, matched_keywords | []).
     """
     text = f"{title} {snippet}".lower()
 
@@ -188,6 +229,7 @@ def match_thread_keywords(title: str, snippet: str, thread_keywords: dict) -> tu
         score = 0.0
         strong_signals = 0
         matched_kw_count = 0  # For co-occurrence bonus
+        matched_tokens = []
 
         # Full keyword matches (weight 3 × IDF, counts as strong only if
         # unique to thread OR co-occurring with other keywords)
@@ -196,6 +238,7 @@ def match_thread_keywords(title: str, snippet: str, thread_keywords: dict) -> tu
                 w = idf_weight(kw)
                 score += 3 * w
                 matched_kw_count += 1
+                matched_tokens.append(kw)
                 # Strong signal: unique keyword (IDF≥2) or part of co-occurrence
                 if w >= 2.0:
                     strong_signals += 1
@@ -205,6 +248,7 @@ def match_thread_keywords(title: str, snippet: str, thread_keywords: dict) -> tu
             if len(tp) >= 2 and tp in text:
                 score += 2 * idf_weight(tp)
                 strong_signals += 1
+                matched_tokens.append(tp)
 
         # ASCII words extracted from compound keywords (weight 2, strong)
         kw_text = ' '.join(keywords)
@@ -216,6 +260,7 @@ def match_thread_keywords(title: str, snippet: str, thread_keywords: dict) -> tu
                 score += 2
                 strong_signals += 1
                 matched_kw_count += 1
+                matched_tokens.append(wl)
 
         # CJK sub-token matches from compound phrases (weight 1, weak)
         cjk_seen = set()
@@ -240,7 +285,7 @@ def match_thread_keywords(title: str, snippet: str, thread_keywords: dict) -> tu
         if score >= threshold and score > best_score:
             best_score = score
             best_tid = thread.get("thread_id")
-            best_tokens = keywords + topics
+            best_tokens = list(dict.fromkeys(matched_tokens))
 
     return best_tid, best_tokens
 
@@ -255,8 +300,9 @@ def extract_numeric_claims(snippet: str, numeric_patterns: list[str]) -> list[st
 
 
 def content_hash(url: str, title: str) -> str:
-    """SHA-256 of url+title for dedup."""
-    return hashlib.sha256(f"{url}{title}".encode()).hexdigest()
+    """SHA-256 of canonical URL + title for dedup."""
+    url_key = canonicalize_url(url) or url
+    return hashlib.sha256(f"{url_key}{title}".encode()).hexdigest()
 
 
 def determine_source_locale(url: str, locale_rules: dict) -> str:
@@ -276,6 +322,14 @@ def determine_source_locale(url: str, locale_rules: dict) -> str:
             return rule.get("locale", "en")
 
     return locale_rules.get("default_locale", "en")
+
+
+def resolve_source_locale(article: dict, url: str, locale_rules: dict) -> str:
+    """Prefer explicit upstream locale, then fall back to URL heuristics."""
+    explicit = article.get("locale") or article.get("raw_metadata", {}).get("locale")
+    if explicit:
+        return explicit
+    return determine_source_locale(url, locale_rules)
 
 
 def normalize_article(article: dict, pipeline_config: dict, index: int,
@@ -299,13 +353,22 @@ def normalize_article(article: dict, pipeline_config: dict, index: int,
     locale_rules = pipeline_config.get("locale_rules", {})
 
     url = article.get("url", "")
+    canonical_url = article.get("canonical_url") or article.get("raw_metadata", {}).get("canonical_url") or canonicalize_url(url)
     title = article.get("title", "")
     snippet = article.get("snippet", "")
     published_at = article.get("published_at", "")
+    date_source = article.get("date_source") or article.get("raw_metadata", {}).get("date_source", "")
+    date_confidence = article.get("date_confidence") or article.get("raw_metadata", {}).get("date_confidence", "")
+    quality_flags = article.get("quality_flags") or article.get("raw_metadata", {}).get("quality_flags", [])
     source = article.get("source", extract_domain(url))
     query_used = article.get("query_used", "")
+    raw_metadata = article.get("raw_metadata", {})
+    query_id = article.get("query_id") or raw_metadata.get("query_id") or query_used
+    query_dimension = article.get("query_dimension") or raw_metadata.get("query_dimension", "general")
+    engine = article.get("engine") or raw_metadata.get("engine", "unknown")
+    discovery_mode = article.get("discovery_mode") or raw_metadata.get("discovery_mode", "baseline_seed")
 
-    obj_id = hashlib.sha256(f"{url}{title}".encode()).hexdigest()[:16]
+    obj_id = hashlib.sha256(f"{canonical_url or url}{title}".encode()).hexdigest()[:16]
 
     # ── Three-source term extraction (v5.1) ──
     # Source 1: static domain.yaml flat_terms
@@ -320,22 +383,29 @@ def normalize_article(article: dict, pipeline_config: dict, index: int,
     return {
         "id": obj_id,
         "url": url,
-        "canonical_url": url,
+        "canonical_url": canonical_url or url,
         "title": title,
         "source": source,
-        "source_type": classify_source_type(url, source_classification),
-        "source_locale": determine_source_locale(url, locale_rules),
+        "source_type": resolve_source_type(article, url, source_classification),
+        "source_locale": resolve_source_locale(article, url, locale_rules),
         "published_at": published_at,
+        "date_source": date_source,
+        "date_confidence": date_confidence,
+        "quality_flags": quality_flags,
         "fetched_at": datetime.now(CST).isoformat(),
         "snippet": snippet,
         "extracted_summary": snippet[:300] if snippet else "",
-        "content_hash": content_hash(url, title),
+        "content_hash": content_hash(canonical_url or url, title),
         "entities": extract_entities(title, snippet, flat_entities),
         "terms": all_terms,
         "numeric_claims": extract_numeric_claims(snippet, numeric_patterns),
         "verification_status": "verified",
         "rejection_reason": None,
-        "discovery_mode": "baseline_seed",
+        "discovery_mode": discovery_mode,
+        "engine": engine,
+        "query_id": query_id,
+        "query_used": query_used,
+        "query_dimension": query_dimension,
         "artifact_type": classify_artifact_type(title, snippet, artifact_types),
         "cluster_id": None,
         "event_thread_id": thread_id,

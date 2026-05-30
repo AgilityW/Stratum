@@ -86,6 +86,7 @@ class TestFullPipeline:
         raw_input = tmp_path / "raw.json"
         enriched = tmp_path / "enriched.json"
         verified = tmp_path / "verified.jsonl"
+        verify_stats = tmp_path / "verified.stats.json"
         articles = tmp_path / "articles.jsonl"
         clusters = tmp_path / "clusters.json"
 
@@ -115,6 +116,7 @@ class TestFullPipeline:
         ], capture_output=True, text=True)
         assert result.returncode == 0, f"Verify failed: {result.stderr}"
         assert verified.exists()
+        assert verify_stats.exists()
 
         # Check verification results
         verified_lines = []
@@ -127,6 +129,14 @@ class TestFullPipeline:
         statuses = [v["verification_status"] for v in verified_lines]
         assert "verified" in statuses
         assert "rejected" in statuses  # youtube.com should be rejected
+
+        with open(verify_stats) as f:
+            stats = json.load(f)
+        assert stats["total"] == 4
+        assert stats["verified"] >= 1
+        assert stats["rejected"] >= 1
+        assert stats["reasons"]["BLOCKED: youtube.com"] == 1
+        assert stats["date_confidence"]["high"] >= 1
 
         # Stage 4: Normalize
         result = subprocess.run([
@@ -172,7 +182,7 @@ class TestFullPipeline:
             with open(clusters) as f:
                 cluster_data = json.load(f)
             assert "clusters" in cluster_data
-            assert "domain" in cluster_data
+            assert cluster_data["domain"] == "storage"
 
     def test_robot_pipeline_end_to_end(self, tmp_path):
         """Run deterministic stages with robot domain mock data."""

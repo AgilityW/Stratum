@@ -17,7 +17,7 @@
     },
     "target_thread_ids": {
       "type": "array",
-      "items": {"type": "string", "pattern": "^et-\\d{4}-\\d{3}$"},
+      "items": {"type": "string", "pattern": "^et-[A-Za-z0-9][A-Za-z0-9_-]*$"},
       "description": "当 target_type=event_pair 时，涉及的 thread ID 列表"
     },
     "hypothesis": {

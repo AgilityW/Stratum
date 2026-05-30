@@ -33,6 +33,42 @@ class TestLifecycle:
                                    update_type="first_disclosure", summary="test", confidence_after="C")])
         assert compute_thread_status(t, "2026-05-28") == "resolved"
 
+    def test_status_ignores_future_timeline_entries_for_backfills(self):
+        t = EventThread(
+            id="et-1",
+            title="Backfill",
+            canonical_question="?",
+            status="active",
+            priority="medium",
+            created="2026-04-01",
+            last_updated="2026-06-20",
+            timeline=[
+                TimelineEntry(date="2026-04-01", cluster_id="sc-1",
+                              update_type="first_disclosure", summary="old", confidence_after="C"),
+                TimelineEntry(date="2026-06-20", cluster_id="sc-2",
+                              update_type="confirmation", summary="future", confidence_after="B"),
+            ],
+        )
+        assert compute_thread_status(t, "2026-05-15") == "resolved"
+
+    def test_status_uses_latest_timeline_date_even_when_entries_are_unsorted(self):
+        t = EventThread(
+            id="et-1",
+            title="Unsorted",
+            canonical_question="?",
+            status="active",
+            priority="medium",
+            created="2026-05-01",
+            last_updated="2026-05-20",
+            timeline=[
+                TimelineEntry(date="2026-05-20", cluster_id="sc-2",
+                              update_type="confirmation", summary="new", confidence_after="B"),
+                TimelineEntry(date="2026-05-01", cluster_id="sc-1",
+                              update_type="first_disclosure", summary="old", confidence_after="C"),
+            ],
+        )
+        assert compute_thread_status(t, "2026-05-28") == "cooling"
+
     def test_should_archive_resolved_old(self):
         t = EventThread(id="et-1", title="Test", canonical_question="?", status="resolved",
                         priority="low", created="2026-01-01", last_updated="2026-01-01",
@@ -82,6 +118,46 @@ class TestMatchCluster:
         result = match_cluster_to_thread({"samsung", "hbm4"}, {"ddr5"}, threads)
         assert result is None
 
+    def test_does_not_match_resolved_threads(self):
+        threads = {
+            "et-1": EventThread(id="et-1", title="HBM Race", canonical_question="who leads HBM?",
+                                status="resolved", priority="high", created="2026-05-01", last_updated="2026-05-20",
+                                watch_signals=["HBM4", "Samsung", "NVIDIA"])
+        }
+        result = match_cluster_to_thread({"samsung", "hbm4", "nvidia"}, {"memory"}, threads)
+        assert result is None
+
+    def test_tokenizes_watch_signal_phrases(self):
+        threads = {
+            "et-1": EventThread(id="et-1", title="Bandwidth", canonical_question="memory bandwidth roadmap",
+                                status="active", priority="high", created="2026-05-01", last_updated="2026-05-20",
+                                watch_signals=["memory bandwidth"])
+        }
+        result = match_cluster_to_thread({"bandwidth"}, {"memory"}, threads)
+        assert result == "et-1"
+
+    def test_matches_by_title_when_watch_signals_missing(self):
+        threads = {
+            "et-1": EventThread(id="et-1", title="Samsung HBM4 qualification", canonical_question="",
+                                status="active", priority="high", created="2026-05-01", last_updated="2026-05-20",
+                                watch_signals=[])
+        }
+        result = match_cluster_to_thread({"Samsung"}, {"HBM4"}, threads)
+        assert result == "et-1"
+
+    def test_matches_by_timeline_summary_when_watch_signals_missing(self):
+        threads = {
+            "et-1": EventThread(id="et-1", title="Qualification", canonical_question="",
+                                status="active", priority="high", created="2026-05-01", last_updated="2026-05-20",
+                                timeline=[TimelineEntry(date="2026-05-20", cluster_id="sc-1",
+                                           update_type="first_disclosure",
+                                           summary="Micron enterprise SSD controller ramp",
+                                           confidence_after="B")],
+                                watch_signals=[])
+        }
+        result = match_cluster_to_thread({"Micron"}, {"enterprise", "SSD"}, threads)
+        assert result == "et-1"
+
 
 class TestCreateAndUpdate:
     def test_create_thread(self):
@@ -99,14 +175,15 @@ class TestCreateAndUpdate:
         add_update(t, "2026-05-25", "sc-2", "confirmation", "confirmed by second source", "A")
         assert len(t.timeline) == 2
         assert t.last_updated == "2026-05-25"
+        assert t.confidence == "A"
         assert t.confidence_history[-1]["confidence"] == "A"
 
     def test_update_changes_status(self):
         t = create_thread("storage", 1, "Test", "?", "medium",
                          "2026-05-13", "sc-1", "first report", "B", [], [])
         add_update(t, "2026-05-28", "sc-2", "confirmation", "update", "A")
-        # Last update = today, originally "emerging" → stays emerging
-        assert t.status == "emerging"
+        # A second update means the thread has moved beyond first disclosure.
+        assert t.status == "active"
 
 
 class TestWatchQueries:
@@ -123,6 +200,41 @@ class TestWatchQueries:
         assert len(queries) == 2
         assert queries[0]["source"] == "thread:et-1"
 
+    def test_generates_for_cooling_threads(self):
+        threads = {
+            "et-1": EventThread(id="et-1", title="HBM", canonical_question="?",
+                                status="cooling", priority="medium", created="2026-05-01", last_updated="2026-05-20",
+                                watch_signals=["HBM4 follow-up"]),
+        }
+        queries = generate_watch_queries(threads)
+        assert len(queries) == 1
+        assert queries[0]["query"] == "HBM4 follow-up"
+
+    def test_prioritizes_high_priority_threads(self):
+        threads = {
+            "et-low": EventThread(id="et-low", title="Low", canonical_question="?",
+                                  status="active", priority="low", created="2026-05-01", last_updated="2026-05-20",
+                                  watch_signals=["low signal"]),
+            "et-high": EventThread(id="et-high", title="High", canonical_question="?",
+                                   status="active", priority="high", created="2026-05-01", last_updated="2026-05-20",
+                                   watch_signals=["high signal"]),
+        }
+        queries = generate_watch_queries(threads, max_queries=1)
+        assert queries[0]["source"] == "thread:et-high"
+
+    def test_prioritizes_recent_threads_within_same_priority(self):
+        threads = {
+            "et-old": EventThread(id="et-old", title="Old", canonical_question="?",
+                                  status="active", priority="high", created="2026-05-01", last_updated="2026-05-20",
+                                  watch_signals=["old signal"]),
+            "et-new": EventThread(id="et-new", title="New", canonical_question="?",
+                                  status="active", priority="high", created="2026-05-01", last_updated="2026-05-30",
+                                  watch_signals=["new signal"]),
+        }
+        queries = generate_watch_queries(threads, max_queries=1)
+        assert queries[0]["source"] == "thread:et-new"
+        assert queries[0]["query"] == "new signal"
+
     def test_respects_max_queries(self):
         threads = {}
         for i in range(5):
@@ -134,6 +246,45 @@ class TestWatchQueries:
         queries = generate_watch_queries(threads, max_queries=5)
         assert len(queries) == 5
 
+    def test_generates_watch_queries_for_configured_locales(self):
+        threads = {
+            "et-1": EventThread(id="et-1", title="HBM", canonical_question="?",
+                                status="active", priority="high", created="2026-05-01", last_updated="2026-05-20",
+                                watch_signals=["HBM4 supply"]),
+        }
+        queries = generate_watch_queries(threads, locales=["en", "zh-CN"])
+        assert [(q["query"], q["locale"]) for q in queries] == [
+            ("HBM4 supply", "en"),
+            ("HBM4 supply", "zh-CN"),
+        ]
+
+    def test_watch_queries_dedupe_same_signal_and_locale(self):
+        threads = {
+            "et-high": EventThread(id="et-high", title="High", canonical_question="?",
+                                   status="active", priority="high", created="2026-05-01", last_updated="2026-05-20",
+                                   watch_signals=["HBM4 supply"]),
+            "et-low": EventThread(id="et-low", title="Low", canonical_question="?",
+                                  status="active", priority="low", created="2026-05-01", last_updated="2026-05-20",
+                                  watch_signals=["hbm4 supply"]),
+        }
+        queries = generate_watch_queries(threads)
+        assert len(queries) == 1
+        assert queries[0]["source"] == "thread:et-high"
+
+    def test_watch_queries_fall_back_to_thread_title(self):
+        threads = {
+            "et-1": EventThread(id="et-1", title="Samsung HBM4 qualification", canonical_question="",
+                                status="active", priority="high", created="2026-05-01", last_updated="2026-05-20",
+                                watch_signals=[]),
+        }
+        queries = generate_watch_queries(threads)
+        assert queries == [{
+            "query": "Samsung HBM4 qualification",
+            "locale": "en",
+            "source": "thread:et-1",
+            "reason": "watch signal from Samsung HBM4 qualification",
+        }]
+
 
 class TestEvolve:
     def test_empty_clusters_no_change(self):
@@ -141,6 +292,15 @@ class TestEvolve:
         result = evolve_threads(threads, "storage", "2026-05-28", [])
         assert result["stats"]["created"] == 0
         assert result["stats"]["matched"] == 0
+
+    def test_evolve_threads_passes_watch_locales(self):
+        threads = {
+            "et-1": EventThread(id="et-1", title="HBM", canonical_question="?",
+                                status="active", priority="high", created="2026-05-01", last_updated="2026-05-20",
+                                watch_signals=["HBM4 supply"]),
+        }
+        result = evolve_threads(threads, "storage", "2026-05-28", [], watch_locales=["en", "ja"])
+        assert [q["locale"] for q in result["watch_queries"]] == ["en", "ja"]
 
     def test_new_cluster_creates_thread(self):
         threads = {}
@@ -164,3 +324,70 @@ class TestEvolve:
         }
         result = evolve_threads(threads, "storage", "2026-05-28", [])
         assert threads["et-old"].status == "archived"
+        assert result["stats"]["archived"] == 1
+
+    def test_does_not_overcount_preexisting_archived_threads(self):
+        threads = {
+            "et-archived": EventThread(id="et-archived", title="Archived", canonical_question="?",
+                                       status="archived", priority="low",
+                                       created="2026-01-01", last_updated="2026-01-01"),
+        }
+        result = evolve_threads(threads, "storage", "2026-05-28", [])
+        assert result["stats"]["archived"] == 0
+
+    def test_respects_max_thread_limit(self):
+        threads = {}
+        for i in range(30):
+            threads[f"et-storage-{i:04d}"] = EventThread(
+                id=f"et-storage-{i:04d}",
+                title=f"Thread {i}",
+                canonical_question="?",
+                status="active",
+                priority="medium",
+                created="2026-05-01",
+                last_updated="2026-05-20",
+            )
+        clusters = [{
+            "id": "sc-new", "canonical_title": "New Story",
+            "canonical_summary": "New signal", "entities": ["Samsung"],
+            "terms": ["HBM4"],
+        }]
+        result = evolve_threads(threads, "storage", "2026-05-28", clusters)
+        assert result["stats"]["created"] == 0
+        assert result["stats"]["skipped"] == 1
+        assert len(result["threads"]) == 30
+
+    def test_new_thread_id_does_not_collide_with_sparse_existing_ids(self):
+        threads = {
+            "et-storage-0001": EventThread(
+                id="et-storage-0001",
+                title="Old 1",
+                canonical_question="?",
+                status="active",
+                priority="medium",
+                created="2026-05-01",
+                last_updated="2026-05-20",
+            ),
+            "et-storage-0003": EventThread(
+                id="et-storage-0003",
+                title="Old 3",
+                canonical_question="?",
+                status="active",
+                priority="medium",
+                created="2026-05-01",
+                last_updated="2026-05-20",
+            ),
+        }
+        clusters = [{
+            "id": "sc-new",
+            "canonical_title": "New sparse-id story",
+            "canonical_summary": "New signal",
+            "entities": ["Samsung"],
+            "terms": ["HBM4"],
+        }]
+
+        result = evolve_threads(threads, "storage", "2026-05-28", clusters)
+
+        assert result["stats"]["created"] == 1
+        assert "et-storage-0004" in result["threads"]
+        assert result["threads"]["et-storage-0003"].title == "Old 3"

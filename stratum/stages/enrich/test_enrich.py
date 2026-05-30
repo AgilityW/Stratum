@@ -45,9 +45,14 @@ class TestEnrichExtractDate:
         assert result is None
 
     def test_far_future_rejected(self):
-        """Dates more than 365 days from run_date are rejected."""
-        result = extract_date("Published 2028-05-28", "2026-05-28")
+        """Future event dates should not be treated as publication dates."""
+        result = extract_date("Earnings call scheduled for 2026-06-24", "2026-05-28")
         assert result is None
+
+    def test_skips_future_event_date_and_uses_later_publication_date(self):
+        text = "Earnings call scheduled for June 24, 2026. Published May 28, 2026."
+        result = extract_date(text, "2026-05-28")
+        assert result == "2026-05-28"
 
     def test_far_past_rejected(self):
         result = extract_date("Published 2020-05-28", "2026-05-28")
@@ -64,7 +69,30 @@ class TestEnrichArticle:
         }
         result = enrich_article(article, "2026-05-29")
         assert result["datePublished"] == "2026-05-28"
-        assert result["date_source"] == "web_extract"
+        assert result["date_source"] == "search_api"
+
+    def test_preserves_existing_date_source_lineage(self):
+        article = {
+            "title": "Test",
+            "url": "https://example.com/2026/05/28/story",
+            "datePublished": "2026-05-28",
+            "date_source": "url_path",
+            "snippet": "",
+        }
+        result = enrich_article(article, "2026-05-29")
+        assert result["datePublished"] == "2026-05-28"
+        assert result["date_source"] == "url_path"
+
+    def test_uses_published_at_when_date_published_missing(self):
+        article = {
+            "title": "Test",
+            "url": "https://example.com/story",
+            "published_at": "2026-05-28",
+            "snippet": "",
+        }
+        result = enrich_article(article, "2026-05-29")
+        assert result["datePublished"] == "2026-05-28"
+        assert result["date_source"] == "search_api"
 
     def test_extracts_from_snippet(self):
         article = {
@@ -83,3 +111,14 @@ class TestEnrichArticle:
         result = enrich_article(article, "2026-05-28")
         assert result["datePublished"] == ""
         assert result["date_source"] == "none"
+
+    def test_future_snippet_date_does_not_block_url_date(self):
+        article = {
+            "title": "Micron HBM update",
+            "url": "https://example.com/2026/05/28/micron-hbm-update",
+            "datePublished": "",
+            "snippet": "Micron will report results on June 24, 2026",
+        }
+        result = enrich_article(article, "2026-05-28")
+        assert result["datePublished"] == "2026-05-28"
+        assert result["date_source"] == "url_path"

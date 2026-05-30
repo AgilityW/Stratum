@@ -71,7 +71,14 @@ class CrossTemporalLink:
     narrative: str = ""                  # Accumulated narrative across scales (LLM-generated)
 
     def add_appearance(self, ref: BriefingRef):
-        """Append a briefing appearance, maintaining chronological order."""
+        """Add or replace a briefing appearance, maintaining chronological order."""
+        self.appearances = [
+            existing for existing in self.appearances
+            if not (
+                existing.scale == ref.scale
+                and existing.briefing_id == ref.briefing_id
+            )
+        ]
         self.appearances.append(ref)
         self.appearances.sort(key=lambda r: r.date)
 

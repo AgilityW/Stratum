@@ -1,117 +1,127 @@
-# Stratum — Multi-Scale Industry Intelligence
+# Stratum — Storage Industry Intelligence Pipeline
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+> **v5.0** — Domain-agnostic framework. 8-stage deterministic pipeline. Three-tier collection (search + direct fetch + RSS + browser). SQLite-backed story tracking. Template-driven HTML/PDF rendering.
 
-> **Status**: v5.0 — Layered architecture. Domain-agnostic framework (`stratum/`) with domain configs (`domains/`). 8-stage deterministic pipeline. Template-driven rendering. 862 tests, 0 failures.
-
-## Architecture (v5.0)
+## Architecture
 
 ```
 Stratum/
-├── stratum/                    # Framework — zero domain knowledge
-│   ├── stages/                 # 6 deterministic stages (pure functions)
-│   │   ├── enrich/             #   Date extraction from search snippets
-│   │   ├── verify/             #   Article verification (blocklist/date/magnitude)
-│   │   ├── normalize/          #   Article normalization (entities/terms/classification)
-│   │   ├── cluster/            #   Story clustering (Jaccard + Union-Find)
-│   │   ├── validate/           #   Content gate (briefing claims vs verified articles)
-│   │   └── render/             #   MD→HTML→PDF (template-driven)
-│   ├── orchestrator/           # Pipeline executor + agent interface
-│   ├── contracts/              # JSON schemas (data contracts)
-│   └── subsystems/             # Decoupled intelligence engines
-│       ├── source-graph/       #   Entity/Term/Channel graph evolution ✅
-│       ├── event-thread/       #   Cross-day story tracking (placeholder)
-│       ├── value-chain/        #   Multi-layer exploration (placeholder)
-│       ├── monitoring/         #   Health/coverage tracking (placeholder)
-│       └── source-management/  #   Source lifecycle (placeholder)
+├── stratum/                     # Framework — zero domain knowledge
+│   ├── collectors/              #   Content acquisition beyond search
+│   │   ├── direct_fetch.py      #     HTTP GET → HTML parse (newsrooms, blogs)
+│   │   ├── rss.py               #     RSS/Atom feed parser
+│   │   ├── browser.py           #     Headless Chrome via Playwright
+│   │   ├── keywords.py          #     Domain keyword extraction
+│   │   └── registry.py          #     Source registry (reads domain.yaml)
+│   ├── orchestrator/
+│   │   └── pipeline.py          #   Main pipeline executor (8 stages + collector)
+│   ├── stages/                  #   8 pipeline stages
+│   │   ├── search/              #     Search engine API calls
+│   │   ├── enrich/              #     Date extraction from snippets
+│   │   ├── verify/              #     Blocklist, date window, magnitude sanity
+│   │   ├── normalize/           #     Entity/term extraction, source classification
+│   │   ├── cluster/             #     Jaccard + Union-Find story clustering
+│   │   ├── edit/                #     LLM-powered briefing assembly
+│   │   ├── validate/            #     Content gate (claims vs verified articles)
+│   │   └── render/              #     MD → HTML → PDF (template-driven)
+│   ├── subsystems/
+│   │   ├── search/              #   Search engine abstraction (Tavily, Bocha)
+│   │   ├── story-tracking/      #   Cross-day event tracking (SQLite)
+│   │   ├── event-thread/        #   Event threading engine
+│   │   └── monitoring/          #   Health + coverage tracking
+│   ├── db/                      #   SQLite schema, ingest, connection
+│   └── contracts/               #   JSON schemas (data contracts)
 │
-├── domains/                    # Domain configs — the ONLY place with domain data
-│   ├── storage/                #   Storage industry ✅
-│   │   ├── domain.yaml         #     Companies, terms, pipeline rules, editorial
-│   │   ├── queries.yaml        #     Search queries by locale
-│   │   ├── prompts/daily.md    #     Agent edit prompt
-│   │   └── templates/daily.html#     HTML template
-│   └── robot/                  #   Robotics industry 🤖 (placeholder)
+├── domains/                     # Domain-owned config and assets
+│   ├── storage/                 #   Storage industry
+│   │   ├── domain.yaml          #     Companies, terms, source_registry, pipeline rules
+│   │   ├── queries.yaml         #     Search queries by locale (5 locales)
+│   │   ├── taxonomy.yaml        #     Industry taxonomy
+│   │   ├── prompts/daily.md     #     Reserved domain prompt override asset
+│   │   └── templates/daily.html #     HTML template
+│   └── robot/                   #   Robotics (placeholder)
 │
-├── briefings/                  # Briefing type definitions (framework layer)
-│   ├── daily/SKILL.md
-│   └── weekly/SKILL.md
-│
-└── skills/                     # Hermes agent skills (runtime instructions)
+├── tests/                       # Unit + integration + data integrity tests
+├── config.yaml                  # Runtime config (output_dir, db_dir, API keys)
+└── config.example.yaml          # Config template
 ```
 
-## Pipeline (8 stages)
+## Pipeline (8 stages + collector)
 
 ```
-1. Agent Search  → raw.json        (LLM — external agent)
-2. enrich        → enriched.json   (deterministic, regex date extraction)
-3. verify        → verified.jsonl  (deterministic, blocklist/date/magnitude)
-4. normalize     → articles.jsonl  (deterministic, entity/term classification)
-5. cluster       → clusters.json   (deterministic, Jaccard similarity)
-6. Agent Edit    → briefing.md     (LLM — external agent)
-7. validate      → gate pass/fail  (deterministic, source/date verification)
-8. render        → HTML + PDF      (deterministic, template-driven)
+Stage 1.0:  Search     → raw.json         (Tavily/Bocha search APIs)
+Stage 1.5:  Collect    → raw.json merge   (direct_fetch + RSS + browser)
+Stage 2:    Enrich     → enriched.json    (date extraction)
+Stage 3:    Verify     → verified.jsonl   (blocklist, freshness, magnitude)
+Stage 4:    Normalize  → articles.jsonl   (entities, terms, classification)
+Stage 5:    Cluster    → clusters.json    (Jaccard story grouping)
+Stage 6:    Edit       → briefing.md      (LLM assembly)
+Stage 7:    Validate   → gate pass/fail   (claims vs verified articles)
+Stage 8:    Render     → HTML + PDF       (template-driven)
 ```
 
-**Iron law**: `stratum/` contains **zero** hardcoded domain knowledge. No company names, no technology terms, no industry keywords. Everything flows from `domains/{id}/domain.yaml`.
+**Collection tiers** (source_registry in domain.yaml):
+
+| Tier | Method | Sources |
+|------|--------|---------|
+| `direct_fetch` | HTTP + HTML parse | Micron newsroom/blog, SK hynix, WD blog |
+| `rss` | XML feed parse | ServeTheHome, StorageNewsletter, EE Times, SemiEngineering |
+| `browser` | Playwright headless | Samsung newsroom/tech-blog, WD newsroom |
+| `site:` queries | Tavily search | Digitimes, TrendForce, Tom's Hardware, etc. |
+| `broad` queries | Tavily search | New source discovery |
+
+**Iron law**: `stratum/` has **zero** hardcoded domain data. Domain-owned knowledge lives under `domains/{id}/`: `domain.yaml` for entities, sources, validation/editorial rules; `queries.yaml` for search templates; HTML template files for rendering. The active Edit prompt engine currently lives in `stratum/stages/edit/prompts/` and injects domain policy from `domain.yaml`; `domains/{id}/prompts/` is reserved for future domain prompt overrides.
 
 ## Quick Start
 
 ```bash
-# Full pipeline (agent handles search & edit)
-python stratum/orchestrator/pipeline.py --domain storage --date 2026-05-28
+# Full pipeline
+python stratum/orchestrator/pipeline.py --domain storage --date 2026-05-30
 
-# Deterministic-only stages (skip LLM — requires raw.json from previous run)
-python stratum/orchestrator/pipeline.py --domain storage --date 2026-05-28 \
+# Skip LLM stages (deterministic only, requires raw.json)
+python stratum/orchestrator/pipeline.py --domain storage --date 2026-05-30 \
     --raw-input raw.json --skip-agent
 
-# Run individual stage
-python stratum/stages/verify/verify.py \
-    --input enriched.json --output verified.jsonl \
-    --date 2026-05-28 --domain domains/storage/domain.yaml
+# Collector test (no API calls)
+python -c "
+from stratum.collectors import collect
+results = collect('storage', '.', '2026-05-30')
+print(f'{len(results)} articles')
+"
 ```
 
 ## Adding a New Domain
 
 ```bash
-cp -r domains/storage domains/your_domain
-vim domains/your_domain/domain.yaml   # Edit companies, terms, sources, queries
-vim domains/your_domain/queries.yaml  # Edit search queries
-vim domains/your_domain/prompts/daily.md  # Edit agent prompt
-vim domains/your_domain/templates/daily.html  # Optional: custom HTML template
+cp -r domains/storage domains/new_domain
+# Edit domain.yaml (companies, terms, sources, pipeline rules)
+# Edit queries.yaml (search queries by locale)
+# Optional: templates/daily.html (HTML template)
+# Reserved: prompts/daily.md (future domain prompt override)
 ```
 
-**Zero framework changes.** Domain config is the single source of truth.
-
-## Adding a New Briefing Type
-
-```bash
-cp domains/storage/templates/daily.html domains/storage/templates/weekly.html
-# Edit CSS, layout, section structure as needed
-```
-
-Pass `--template` to the render stage. No code changes.
+Zero framework changes required.
 
 ## Development
 
 ```bash
 # Run all tests
-python -m pytest tests/ stratum/stages/ -q
+make test
 
-# Run specific stage tests
-python -m pytest stratum/stages/render/tests/ -v
+# Run fast unit tests while iterating
+make test-unit
 
-# Lint
-python -m pytest --tb=short
+# Run a specific test file
+make test-file FILE=tests/test_search.py
 ```
 
 ## Design Principles
 
-1. **Code gates over prompt fixes** — architecture problems are solved in code, not in prompts
-2. **Pure function stages** — every deterministic stage reads input, writes output, no side effects
-3. **Domain config is truth** — `domain.yaml` is the only place domain data lives
-4. **Template-driven rendering** — render.py knows nothing about briefing types; the template file defines everything
-5. **Test coverage is mandatory** — every stage, every function, every refactor gets tests
+1. **Domain directory is truth** — domain knowledge lives under `domains/{id}/`, with queries kept in `queries.yaml`
+2. **Pure function stages** — every stage reads input, writes output, no side effects
+3. **Collector > search** — direct source access wins over search API results
+4. **Template-driven rendering** — render.py knows nothing about content; templates own layout
+5. **SQLite for persistence** — story tracking, entity snapshots, query stats all in DB
 
 ## License
 

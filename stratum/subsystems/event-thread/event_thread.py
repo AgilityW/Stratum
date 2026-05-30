@@ -9,6 +9,7 @@ The deterministic fallback here uses entity-overlap matching (same algorithm as 
 
 from dataclasses import dataclass, field
 from datetime import date, timedelta
+import re
 from typing import Optional
 
 
@@ -54,17 +55,33 @@ LIFECYCLE_RULES = {
 MAX_THREADS = 30
 MIN_THREADS = 5
 MAX_WATCH_QUERIES_PER_DAY = 10
+WATCH_QUERY_STATUSES = {"emerging", "active", "cooling"}
+MATCHABLE_STATUSES = {"emerging", "active", "cooling"}
+PRIORITY_ORDER = {"high": 0, "medium": 1, "low": 2}
+
+
+def _next_thread_sequence(domain_id: str, threads: dict[str, EventThread]) -> int:
+    """Return the next numeric suffix for a domain without colliding with existing IDs."""
+    prefix = f"et-{domain_id}-"
+    max_seq = 0
+    for thread_id in threads:
+        if not thread_id.startswith(prefix):
+            continue
+        suffix = thread_id[len(prefix):]
+        if suffix.isdigit():
+            max_seq = max(max_seq, int(suffix))
+    return max_seq + 1
 
 
 def compute_thread_status(thread: EventThread, run_date_str: str) -> str:
     """Determine thread status based on time since last update."""
     run_date = date.fromisoformat(run_date_str)
 
-    if not thread.timeline:
+    observed_dates = _timeline_dates_through(thread, run_date)
+    if not observed_dates:
         return thread.status
 
-    first_date = date.fromisoformat(thread.timeline[0].date)
-    last_date = date.fromisoformat(thread.timeline[-1].date)
+    last_date = observed_dates[-1]
 
     days_since_last = (run_date - last_date).days
 
@@ -72,10 +89,23 @@ def compute_thread_status(thread: EventThread, run_date_str: str) -> str:
         return "resolved"
     elif days_since_last >= 7:
         return "cooling"
-    elif thread.status == "emerging" and days_since_last == 0:
+    elif thread.status == "emerging" and len(observed_dates) == 1 and days_since_last == 0:
         return "emerging"
     else:
         return "active"
+
+
+def _timeline_dates_through(thread: EventThread, run_date: date) -> list[date]:
+    """Return sorted timeline dates visible at run_date."""
+    dates: list[date] = []
+    for entry in thread.timeline:
+        try:
+            entry_date = date.fromisoformat(str(entry.date)[:10])
+        except (ValueError, TypeError):
+            continue
+        if entry_date <= run_date:
+            dates.append(entry_date)
+    return sorted(dates)
 
 
 def should_archive(thread: EventThread, run_date_str: str) -> bool:
@@ -93,6 +123,19 @@ def jaccard_similarity(set_a: set, set_b: set) -> float:
     return len(set_a & set_b) / len(set_a | set_b)
 
 
+def _signature_terms(values) -> set[str]:
+    """Normalize signal phrases into comparable lowercase tokens."""
+    terms = set()
+    for value in values:
+        text = str(value or "").lower()
+        for token in re.findall(r"[a-z0-9]+|[\u4e00-\u9fff]+", text):
+            if len(token) >= 2:
+                terms.add(token)
+        if text.strip():
+            terms.add(text.strip())
+    return terms
+
+
 def match_cluster_to_thread(
     cluster_entities: set[str],
     cluster_terms: set[str],
@@ -104,7 +147,7 @@ def match_cluster_to_thread(
     Returns thread_id if Jaccard similarity > threshold, else None.
     For high-quality semantic matching, use the LLM path in SKILL.md.
     """
-    cluster_set = {s.lower() for s in (cluster_entities | cluster_terms)}
+    cluster_set = _signature_terms(cluster_entities | cluster_terms)
     if not cluster_set:
         return None
 
@@ -112,15 +155,29 @@ def match_cluster_to_thread(
     best_score = 0.0
 
     for tid, thread in threads.items():
-        # Use watch_signals + canonical_question as proxy for thread signature
-        thread_set = {s.lower() for s in
-                      (set(thread.watch_signals) | set(thread.canonical_question.lower().split()))}
+        if thread.status not in MATCHABLE_STATUSES:
+            continue
+        # Use all stable thread descriptors as a proxy for semantic signature.
+        # Some threads are created before the LLM supplies watch_signals, so the
+        # title and timeline summaries are necessary fallback anchors.
+        thread_set = _thread_signature(thread)
         score = jaccard_similarity(cluster_set, thread_set)
         if score > best_score:
             best_score = score
             best_id = tid
 
     return best_id if best_score >= threshold else None
+
+
+def _thread_signature(thread: EventThread) -> set[str]:
+    """Return tokenized descriptors that can match future clusters."""
+    values = set(thread.watch_signals)
+    values.add(thread.title)
+    values.add(thread.canonical_question)
+    values.update(thread.open_questions)
+    values.update(thread.close_conditions)
+    values.update(entry.summary for entry in thread.timeline)
+    return _signature_terms(values)
 
 
 def create_thread(
@@ -178,28 +235,68 @@ def add_update(
     ))
     thread.last_updated = run_date
     thread.status = compute_thread_status(thread, run_date)
+    thread.confidence = confidence
     thread.confidence_history.append({"date": run_date, "confidence": confidence})
 
 
 def generate_watch_queries(
     threads: dict[str, EventThread],
     max_queries: int = MAX_WATCH_QUERIES_PER_DAY,
+    locales: Optional[list[str]] = None,
 ) -> list[dict]:
     """Generate watch queries from active/emerging threads for next day's collection."""
     queries = []
-    for tid, thread in threads.items():
-        if thread.status not in ("active", "emerging"):
+    seen = set()
+    locales = locales or ["en"]
+    ordered_threads = sorted(
+        threads.items(),
+        key=lambda item: (
+            PRIORITY_ORDER.get(item[1].priority, 9),
+            _date_sort_key(item[1].last_updated),
+        ),
+    )
+    for tid, thread in ordered_threads:
+        if thread.status not in WATCH_QUERY_STATUSES:
             continue
-        for signal in thread.watch_signals:
-            queries.append({
-                "query": signal,
-                "locale": "en",
-                "source": f"thread:{tid}",
-                "reason": f"watch signal from {thread.title}",
-            })
-            if len(queries) >= max_queries:
-                return queries
+        for signal in _watch_query_signals(thread):
+            query = str(signal or "").strip()
+            if not query:
+                continue
+            for locale in locales:
+                dedupe_key = (query.lower(), locale)
+                if dedupe_key in seen:
+                    continue
+                seen.add(dedupe_key)
+                queries.append({
+                    "query": query,
+                    "locale": locale,
+                    "source": f"thread:{tid}",
+                    "reason": f"watch signal from {thread.title}",
+                })
+                if len(queries) >= max_queries:
+                    return queries
     return queries
+
+
+def _date_sort_key(value: str) -> int:
+    """Return an inverted ISO-date sort key so recent threads win within priority."""
+    date_text = str(value or "")[:10]
+    if not date_text:
+        return 9999999
+    try:
+        ordinal = date.fromisoformat(date_text).toordinal()
+    except ValueError:
+        return 9999999
+    return -ordinal
+
+
+def _watch_query_signals(thread: EventThread) -> list[str]:
+    """Return explicit watch signals, or a conservative thread-title fallback."""
+    explicit = [str(signal).strip() for signal in thread.watch_signals if str(signal or "").strip()]
+    if explicit:
+        return explicit
+    fallback = str(thread.canonical_question or thread.title or "").strip()
+    return [fallback] if fallback else []
 
 
 def archive_resolved(
@@ -219,6 +316,7 @@ def evolve_threads(
     run_date: str,
     # New clusters to process (from agent — see SKILL.md for LLM matching)
     new_clusters: list[dict] = None,
+    watch_locales: Optional[list[str]] = None,
 ) -> dict:
     """Process new clusters against existing threads.
 
@@ -228,11 +326,12 @@ def evolve_threads(
     new_clusters = new_clusters or []
 
     # Archive resolved threads
-    before_count = len(threads)
+    before_archived = sum(1 for t in threads.values() if t.status == "archived")
     threads = archive_resolved(threads, run_date)
-    stats["archived"] = before_count - len([t for t in threads.values() if t.status != "archived"])
+    after_archived = sum(1 for t in threads.values() if t.status == "archived")
+    stats["archived"] = max(0, after_archived - before_archived)
 
-    seq = len(threads) + 1
+    seq = _next_thread_sequence(domain_id, threads)
 
     for cluster in new_clusters:
         entities = set(cluster.get("entities", []))
@@ -251,7 +350,7 @@ def evolve_threads(
             stats["matched"] += 1
         else:
             # Auto-create only if it looks substantial
-            if (len(entities) + len(terms)) >= 2 and seq - len(threads) <= MAX_THREADS:
+            if (len(entities) + len(terms)) >= 2 and len(threads) < MAX_THREADS:
                 new_thread = create_thread(
                     domain_id, seq,
                     title=cluster.get("canonical_title", "Untitled"),
@@ -270,7 +369,7 @@ def evolve_threads(
             else:
                 stats["skipped"] += 1
 
-    watch_queries = generate_watch_queries(threads)
+    watch_queries = generate_watch_queries(threads, locales=watch_locales)
 
     return {
         "threads": threads,

@@ -1,83 +1,91 @@
-"""Data integrity tests for story-clusters.json.
+"""Data integrity tests for clusters.json.
 
 Verifies:
   - Valid JSON structure
   - All required fields per cluster
   - article_ids reference valid articles
-  - novelty and confidence values are in valid ranges
+  - confidence values are in valid ranges
   - No duplicate cluster IDs
 """
 
 import json
 import re
+from pathlib import Path
+
+from jsonschema import validate
+
+
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+
+
+def _cluster_schema():
+    return json.loads((PROJECT_ROOT / "stratum/contracts/story_cluster.json").read_text())
+
+
+def _clusters(path):
+    with open(path) as f:
+        data = json.load(f)
+    assert isinstance(data, dict), "Top-level must be an object"
+    assert isinstance(data.get("clusters"), list), "clusters must be a list"
+    return data["clusters"]
 
 
 def test_valid_json_structure(valid_clusters_json):
     with open(valid_clusters_json) as f:
         data = json.load(f)
     assert isinstance(data, dict), "Top-level must be an object"
+    assert isinstance(data.get("clusters"), list), "clusters must be a list"
 
 
 def test_all_clusters_have_required_fields(valid_clusters_json):
-    required = ["id", "date", "title", "article_ids", "novelty", "confidence"]
-    with open(valid_clusters_json) as f:
-        clusters = json.load(f)
-    for cid, cluster in clusters.items():
+    required = [
+        "id", "canonical_title", "article_ids", "article_count", "confidence",
+        "source_types", "locales", "source_domains", "canonical_urls", "created",
+    ]
+    for cluster in _clusters(valid_clusters_json):
         for field in required:
-            assert field in cluster, f"Cluster {cid}: missing required field '{field}'"
+            assert field in cluster, f"Cluster {cluster.get('id', '?')}: missing required field '{field}'"
 
 
-def test_cluster_ids_match_keys(valid_clusters_json):
-    with open(valid_clusters_json) as f:
-        clusters = json.load(f)
-    for cid, cluster in clusters.items():
-        assert cluster["id"] == cid, f"Cluster key {cid} ≠ cluster.id {cluster['id']}"
+def test_clusters_match_contract_schema(valid_clusters_json):
+    schema = _cluster_schema()
+    for cluster in _clusters(valid_clusters_json):
+        validate(cluster, schema)
 
 
 def test_cluster_id_pattern(valid_clusters_json):
-    pattern = re.compile(r"^sc-\d{4}-\d{2}-\d{2}-\d{3}$")
-    with open(valid_clusters_json) as f:
-        clusters = json.load(f)
-    for cid in clusters:
-        assert pattern.match(cid), f"Invalid cluster ID pattern: {cid}"
+    pattern = re.compile(r"^sc-[a-z0-9_-]+-\d{4}$")
+    for cluster in _clusters(valid_clusters_json):
+        assert pattern.match(cluster["id"]), f"Invalid cluster ID pattern: {cluster['id']}"
 
 
 def test_article_ids_non_empty(valid_clusters_json):
-    with open(valid_clusters_json) as f:
-        clusters = json.load(f)
-    for cid, cluster in clusters.items():
-        assert len(cluster["article_ids"]) >= 1, f"Cluster {cid}: empty article_ids"
-
-
-def test_novelty_values_valid(valid_clusters_json):
-    valid = {"first_disclosure", "update", "rehash", "rumor", "confirmation", "contradiction"}
-    with open(valid_clusters_json) as f:
-        clusters = json.load(f)
-    for cid, cluster in clusters.items():
-        assert cluster["novelty"] in valid, f"Cluster {cid}: invalid novelty '{cluster['novelty']}'"
+    for cluster in _clusters(valid_clusters_json):
+        assert len(cluster["article_ids"]) >= 2, f"Cluster {cluster['id']}: empty article_ids"
+        assert cluster["article_count"] == len(cluster["article_ids"])
 
 
 def test_confidence_values_valid(valid_clusters_json):
-    valid = {"A", "B", "C", "D"}
-    with open(valid_clusters_json) as f:
-        clusters = json.load(f)
-    for cid, cluster in clusters.items():
-        assert cluster["confidence"] in valid, f"Cluster {cid}: invalid confidence '{cluster['confidence']}'"
+    valid = {"high", "medium", "low"}
+    for cluster in _clusters(valid_clusters_json):
+        assert cluster["confidence"] in valid, \
+            f"Cluster {cluster['id']}: invalid confidence '{cluster['confidence']}'"
 
 
 def test_date_format(valid_clusters_json):
     with open(valid_clusters_json) as f:
-        clusters = json.load(f)
-    for cid, cluster in clusters.items():
-        d = cluster["date"]
-        assert re.match(r"^\d{4}-\d{2}-\d{2}$", d), f"Cluster {cid}: invalid date format: {d}"
+        data = json.load(f)
+    assert re.match(r"^\d{4}-\d{2}-\d{2}$", data["date"]), \
+        f"Invalid run date format: {data['date']}"
+    for cluster in data["clusters"]:
+        created = cluster.get("created")
+        if created:
+            assert re.match(r"^\d{4}-\d{2}-\d{2}$", created), \
+                f"Cluster {cluster['id']}: invalid created date: {created}"
 
 
-def test_source_diversity_if_present(valid_clusters_json):
-    valid = {"low", "medium", "high"}
-    with open(valid_clusters_json) as f:
-        clusters = json.load(f)
-    for cid, cluster in clusters.items():
-        sd = cluster.get("source_diversity")
-        if sd is not None:
-            assert sd in valid, f"Cluster {cid}: invalid source_diversity '{sd}'"
+def test_summary_arrays_if_present(valid_clusters_json):
+    for cluster in _clusters(valid_clusters_json):
+        for field in ["source_types", "locales", "source_domains", "canonical_urls", "entities", "terms"]:
+            assert isinstance(cluster.get(field, []), list), \
+                f"Cluster {cluster['id']}: {field} must be a list"

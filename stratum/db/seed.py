@@ -13,6 +13,8 @@ import os
 import re
 import sys
 import yaml
+
+from stratum.subsystems.search.models import normalize_include_domains
 from datetime import datetime, timezone, timedelta
 
 CST = timezone(timedelta(hours=8))
@@ -46,8 +48,8 @@ def seed(domain: str, reset: bool = False) -> None:
     with open(domain_path) as f:
         domain_cfg = yaml.safe_load(f)
 
-    # Seed sources from channels
-    _seed_sources(conn, domain_cfg.get('channels', []))
+    # Seed sources from legacy channels and current source_registry.
+    _seed_sources(conn, domain_cfg)
 
     # Seed entities from companies
     _seed_entities(conn, domain_cfg.get('companies', []))
@@ -89,13 +91,14 @@ def _reset_all(conn):
     print('🗑️  All tables cleared.')
 
 
-def _seed_sources(conn, channels: list):
+def _seed_sources(conn, domain_cfg: dict):
     count = 0
-    for ch in channels:
+    for ch in _iter_source_configs(domain_cfg):
         ch_id = ch.get('id', '')
         if not ch_id:
             continue
-        url = ch.get('url', '')
+        urls = ch.get('urls') or []
+        url = ch.get('url') or (urls[0] if urls else '')
         domain = _extract_domain(url)
         conn.execute('''
             INSERT OR REPLACE INTO sources (id, name, domain, type, url, locale, reliability, status, first_seen, added_by)
@@ -104,16 +107,36 @@ def _seed_sources(conn, channels: list):
             ch_id,
             ch.get('name', ch_id),
             domain,
-            ch.get('type', 'MEDIA'),
+            ch.get('type', ch.get('category', 'media')).upper(),
             url,
             ch.get('locale', 'en'),
             ch.get('reliability', 0.8),
-            'active',
+            ch.get('status', 'active'),
             _now(),
-            'seed',
+            ch.get('added_by', 'seed'),
         ))
         count += 1
     print(f'  Sources: {count} seeded')
+
+
+def _iter_source_configs(domain_cfg: dict) -> list[dict]:
+    """Return normalized source configs from channels and source_registry."""
+    seen: set[str] = set()
+    sources: list[dict] = []
+
+    for ch in domain_cfg.get('channels', []):
+        sid = ch.get('id')
+        if sid and sid not in seen:
+            seen.add(sid)
+            sources.append({**ch, 'added_by': ch.get('added_by', 'seed')})
+
+    for src in domain_cfg.get('source_registry', {}).get('sources', []):
+        sid = src.get('id')
+        if sid and sid not in seen:
+            seen.add(sid)
+            sources.append({**src, 'added_by': src.get('added_by', 'source_registry')})
+
+    return sources
 
 
 def _seed_entities(conn, companies: list):
@@ -215,49 +238,58 @@ def _seed_keywords(conn, domain_cfg: dict):
 def _seed_queries(conn, queries_cfg: dict):
     count = 0
     now = _now()
+    has_dimension = _has_column(conn, "queries", "dimension")
+    has_include_domains = _has_column(conn, "queries", "include_domains")
 
-    # Read from the new intent-based structure if present, else fallback to seed_queries
     queries = queries_cfg.get('queries', {})
+    if not queries:
+        raise ValueError("queries.yaml must define structured queries")
 
-    if queries:
-        # New structure: queries grouped by intent
-        intent_map = {}
-        for intent, locale_map in queries.items():
-            for locale, qlist in locale_map.items():
-                for q in qlist:
-                    text = q.get('text', q) if isinstance(q, dict) else q
+    # Queries are grouped by intent. Supports both intent -> locale -> list and
+    # intent -> dimension -> locale -> list.
+    for intent, intent_map in queries.items():
+        for key, value in intent_map.items():
+            dimension = "general"
+            locale_groups = value.items() if isinstance(value, dict) else [(key, value)]
+            if isinstance(value, dict):
+                dimension = str(key)
+            for locale, qlist in locale_groups:
+                for q in qlist or []:
+                    text = q.get('text', q.get('query', '')) if isinstance(q, dict) else q
                     qid = q.get('id', '') if isinstance(q, dict) else ''
                     thread_id = q.get('thread', q.get('thread_id')) if isinstance(q, dict) else None
+                    item_dimension = q.get('dimension', dimension) if isinstance(q, dict) else dimension
+                    include_domains = _normalize_include_domains(
+                        q.get('include_domains', q.get('domains')) if isinstance(q, dict) else []
+                    )
                     if not qid:
                         qid = f'q-{intent}-{count:03d}'
-                    conn.execute('''
-                        INSERT OR REPLACE INTO queries (id, text, locale, intent, thread_id, status, created_at)
-                        VALUES (?, ?, ?, ?, ?, 'active', ?)
-                    ''', (qid, text, locale, intent, thread_id, now))
+                    columns = ["id", "text", "locale", "intent"]
+                    values = [qid, text, locale, intent]
+                    if has_dimension:
+                        columns.append("dimension")
+                        values.append(item_dimension)
+                    if has_include_domains:
+                        columns.append("include_domains")
+                        values.append(json.dumps(include_domains, ensure_ascii=False))
+                    columns.extend(["thread_id", "status", "created_at"])
+                    values.extend([thread_id, "active", now])
+                    placeholders = ", ".join(["?"] * len(values))
+                    conn.execute(f'''
+                        INSERT OR REPLACE INTO queries ({", ".join(columns)})
+                        VALUES ({placeholders})
+                    ''', values)
                     count += 1
-    else:
-        # Fallback: old flat structure (seed_queries + gap_searches)
-        for locale, qlist in queries_cfg.get('seed_queries', {}).items():
-            for q in qlist:
-                text = q.get('text', q) if isinstance(q, dict) else q
-                qid = q.get('id', f'q-detection-{count:03d}') if isinstance(q, dict) else f'q-detection-{count:03d}'
-                conn.execute('''
-                    INSERT OR REPLACE INTO queries (id, text, locale, intent, status, created_at)
-                    VALUES (?, ?, ?, 'detection', 'active', ?)
-                ''', (qid, text, locale, now))
-                count += 1
-
-        for gap in queries_cfg.get('gap_searches', []):
-            text = gap.get('query', '') if isinstance(gap, dict) else gap
-            locale = gap.get('locale', 'en') if isinstance(gap, dict) else 'en'
-            qid = gap.get('id', f'q-verification-{count:03d}') if isinstance(gap, dict) else f'q-verification-{count:03d}'
-            conn.execute('''
-                INSERT OR REPLACE INTO queries (id, text, locale, intent, status, created_at)
-                VALUES (?, ?, ?, 'verification', 'active', ?)
-            ''', (qid, text, locale, now))
-            count += 1
 
     print(f'  Queries: {count} seeded')
+
+
+def _has_column(conn, table: str, column: str) -> bool:
+    return any(row[1] == column for row in conn.execute(f"PRAGMA table_info({table})").fetchall())
+
+
+def _normalize_include_domains(domains) -> list[str]:
+    return normalize_include_domains(domains)
 
 
 def _extract_domain(url: str) -> str:

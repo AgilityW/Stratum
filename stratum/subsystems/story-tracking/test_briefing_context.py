@@ -72,6 +72,15 @@ class TestCarriedForward:
         result = _carried_forward(events, "daily", "2026-06-02", 7)
         assert len(result) == 0
 
+    def test_includes_cooling_events(self):
+        events = [
+            make_event(1, status="cooling", scale_refs=[
+                ScaleRef("daily", "d-001", "2026-06-01", Prominence.LEAD, "test")]),
+        ]
+        result = _carried_forward(events, "daily", "2026-06-02", 7)
+        assert len(result) == 1
+        assert result[0]["current_status"] == "cooling"
+
     def test_excludes_outside_window(self):
         events = [
             make_event(1, last_updated="2026-01-01", scale_refs=[
@@ -79,6 +88,14 @@ class TestCarriedForward:
         ]
         result = _carried_forward(events, "daily", "2026-06-02", 7)
         assert len(result) == 0
+
+    def test_excludes_future_refs_for_backfills(self):
+        events = [
+            make_event(1, scale_refs=[
+                ScaleRef("daily", "d-future", "2026-06-03", Prominence.LEAD, "test")]),
+        ]
+        result = _carried_forward(events, "daily", "2026-06-02", 7)
+        assert result == []
 
     def test_sorted_by_priority(self):
         events = [
@@ -89,6 +106,19 @@ class TestCarriedForward:
         ]
         result = _carried_forward(events, "daily", "2026-06-02", 7)
         assert result[0]["priority"] == 1
+
+    def test_same_priority_sorted_by_recent_ref(self):
+        events = [
+            make_event(1, priority=2, scale_refs=[
+                ScaleRef("daily", "d-old", "2026-05-29", Prominence.LEAD, "test")]),
+            make_event(2, priority=2, scale_refs=[
+                ScaleRef("daily", "d-new", "2026-06-01", Prominence.LEAD, "test")]),
+        ]
+        result = _carried_forward(events, "daily", "2026-06-02", 7)
+        assert [item["event_id"] for item in result] == [
+            "event-storage-0002",
+            "event-storage-0001",
+        ]
 
 
 # ── Due Judgments ──
@@ -116,6 +146,24 @@ class TestDueJudgments:
         ]
         result = _due_judgments(judgments, "2026-06-05", within_days=30)
         assert len(result) == 0
+
+    def test_excludes_future_made_judgments_for_backfills(self):
+        judgments = [
+            make_judgment(
+                1,
+                made_at="2026-06-20",
+                expected_verification="2026-06-22",
+            ),
+            make_judgment(
+                2,
+                made_at="2026-06-01",
+                expected_verification="2026-06-07",
+            ),
+        ]
+
+        result = _due_judgments(judgments, "2026-06-05", within_days=30)
+
+        assert [item["judgment_id"] for item in result] == ["judgment-storage-0002"]
 
     def test_sorted_by_days_remaining(self):
         judgments = [
@@ -155,6 +203,32 @@ class TestCoverageGaps:
         assert len(result) == 1
         assert result[0]["entity"] == "Micron"
 
+    def test_excludes_future_events_for_backfill_gap_detection(self):
+        events = [
+            make_event(1, entity_tags=["Micron"], last_updated="2026-01-01"),
+            make_event(2, entity_tags=["Micron"], last_updated="2026-06-20"),
+        ]
+        result = _coverage_gaps(events, "2026-06-05", gap_days=14)
+        assert len(result) == 1
+        assert result[0]["entity"] == "Micron"
+        assert result[0]["last_mentioned"] == "2026-01-01"
+
+    def test_includes_never_seen_configured_entities(self):
+        events = [
+            make_event(1, entity_tags=["Samsung"], last_updated="2026-06-04"),
+        ]
+
+        result = _coverage_gaps(
+            events,
+            "2026-06-05",
+            gap_days=14,
+            coverage_entities=["Samsung", "Micron", "Kioxia", "Micron"],
+        )
+
+        assert {gap["entity"] for gap in result} == {"Micron", "Kioxia"}
+        assert all(gap["last_mentioned"] is None for gap in result)
+        assert all(gap["status"] == "never_seen" for gap in result)
+
 
 # ── Active Chains ──
 
@@ -172,6 +246,20 @@ class TestActiveChains:
         result = _active_chains(edges, events)
         assert len(result) == 2
 
+    def test_excludes_future_edges_for_backfill_context(self):
+        edges = [
+            make_edge(1, cause="A", effect="B"),
+        ]
+        edges[0].created = "2026-06-20"
+        events = [
+            make_event(1, id="A", status="active"),
+            make_event(2, id="B", status="active"),
+        ]
+
+        result = _active_chains(edges, events, as_of="2026-06-05")
+
+        assert result == []
+
     def test_excludes_verified(self):
         edges = [
             make_edge(1, cause="A", effect="B"),
@@ -179,6 +267,17 @@ class TestActiveChains:
         edges[0].verified = True
         result = _active_chains(edges, [])
         assert len(result) == 0
+
+    def test_excludes_fully_resolved_chain(self):
+        edges = [
+            make_edge(1, cause="A", effect="B"),
+        ]
+        events = [
+            make_event(1, id="A", status="resolved"),
+            make_event(2, id="B", status="archived"),
+        ]
+        result = _active_chains(edges, events)
+        assert result == []
 
 
 # ── Unassigned ──
@@ -191,6 +290,16 @@ class TestUnassigned:
             make_event(3, status="resolved", scale_refs=[]),
         ]
         result = _unassigned(events)
+        assert result == ["event-storage-0001"]
+
+    def test_excludes_future_unassigned_events_for_backfill_context(self):
+        events = [
+            make_event(1, scale_refs=[], last_updated="2026-06-01"),
+            make_event(2, scale_refs=[], last_updated="2026-06-20"),
+        ]
+
+        result = _unassigned(events, as_of="2026-06-05")
+
         assert result == ["event-storage-0001"]
 
     def test_empty(self):
@@ -219,6 +328,33 @@ class TestGenerateContext:
         assert len(ctx.due_judgments) == 1
         assert len(ctx.active_causal_chains) == 1
 
+    def test_generates_coverage_gaps_from_configured_entity_universe(self):
+        ctx = generate_context(
+            "storage",
+            "daily",
+            "2026-06-02",
+            [],
+            [],
+            [],
+            coverage_entities=["Samsung", "Micron"],
+        )
+
+        assert [gap["entity"] for gap in ctx.coverage_gaps] == ["Samsung", "Micron"]
+        assert all(gap["status"] == "never_seen" for gap in ctx.coverage_gaps)
+
+    def test_generates_context_without_future_unassigned_or_edges(self):
+        events = [
+            make_event(1, id="A", scale_refs=[], last_updated="2026-06-01"),
+            make_event(2, id="B", scale_refs=[], last_updated="2026-06-20"),
+        ]
+        edges = [make_edge(1, cause="A", effect="B")]
+        edges[0].created = "2026-06-20"
+
+        ctx = generate_context("storage", "daily", "2026-06-05", events, edges, [])
+
+        assert ctx.unassigned_events == ["A"]
+        assert ctx.active_causal_chains == []
+
     def test_format_context(self):
         events = [
             make_event(1, title="HBM4 Race", scale_refs=[
@@ -230,3 +366,26 @@ class TestGenerateContext:
         assert "HBM4 Race" in text
         assert "Briefing Context" in text
         assert "Carried Forward" in text
+
+    def test_format_context_lists_unassigned_event_ids(self):
+        events = [
+            make_event(1, scale_refs=[]),
+        ]
+        ctx = generate_context("storage", "daily", "2026-06-02", events, [], [])
+        text = format_context_for_prompt(ctx)
+        assert "Unassigned Events: 1" in text
+        assert "event-storage-0001" in text
+
+    def test_format_context_describes_never_seen_coverage_gap(self):
+        ctx = generate_context(
+            "storage",
+            "daily",
+            "2026-06-02",
+            [],
+            [],
+            [],
+            coverage_entities=["Micron"],
+        )
+        text = format_context_for_prompt(ctx)
+        assert "Micron" in text
+        assert "no prior coverage found" in text

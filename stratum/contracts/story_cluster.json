@@ -3,9 +3,12 @@
   "title": "StoryCluster",
   "description": "Cluster of related articles. Output of cluster stage.",
   "type": "object",
-  "required": ["id", "canonical_title", "confidence", "article_ids"],
+  "required": [
+    "id", "canonical_title", "confidence", "article_ids", "article_count",
+    "source_types", "locales", "source_domains", "canonical_urls", "created"
+  ],
   "properties": {
-    "id": {"type": "string", "pattern": "^sc-[a-z_]+-\\d{4}$"},
+    "id": {"type": "string", "pattern": "^sc-[a-z0-9_-]+-\\d{4}$"},
     "canonical_title": {"type": "string"},
     "canonical_summary": {"type": "string"},
     "confidence": {"type": "string", "enum": ["high", "medium", "low"]},
@@ -14,6 +17,8 @@
     "article_count": {"type": "integer", "minimum": 2},
     "source_types": {"type": "array", "items": {"type": "string"}},
     "locales": {"type": "array", "items": {"type": "string"}},
+    "source_domains": {"type": "array", "items": {"type": "string"}},
+    "canonical_urls": {"type": "array", "items": {"type": "string", "format": "uri"}},
     "entities": {"type": "array", "items": {"type": "string"}},
     "terms": {"type": "array", "items": {"type": "string"}},
     "created": {"type": "string", "format": "date"}

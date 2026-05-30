@@ -14,10 +14,10 @@ Storage path: {config.output_dir}/{domain}/data/story-tracking/
 All dates are ISO 8601 strings ("2026-05-29" or "2026-05-29T08:00:00+08:00").
 """
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields, is_dataclass
 from datetime import date, datetime
 from enum import Enum
-from typing import Optional
+from typing import Optional, Union, get_args, get_origin
 
 
 # ═══════════════════════════════════════════════════
@@ -250,6 +250,36 @@ def from_jsonl_line(line: str, cls):
     """Parse a JSONL line into a dataclass instance."""
     import json
     data = json.loads(line)
-    # Handle enum fields by converting strings back
-    field_types = {f.name: f.type for f in cls.__dataclass_fields__.values()}
-    return cls(**data)
+    return _deserialize(data, cls)
+
+
+def _deserialize(value, target_type):
+    """Rebuild dataclasses/enums from JSON-compatible values."""
+    origin = get_origin(target_type)
+    args = get_args(target_type)
+
+    if origin is list:
+        item_type = args[0] if args else object
+        return [_deserialize(item, item_type) for item in value or []]
+
+    if origin is Union:
+        non_none = [arg for arg in args if arg is not type(None)]
+        if value is None or not non_none:
+            return value
+        return _deserialize(value, non_none[0])
+
+    if isinstance(target_type, type) and issubclass(target_type, Enum):
+        return target_type(value)
+
+    if isinstance(target_type, type) and is_dataclass(target_type):
+        if not isinstance(value, dict):
+            return value
+        field_map = {f.name: f.type for f in fields(target_type)}
+        kwargs = {
+            key: _deserialize(raw, field_map[key])
+            for key, raw in value.items()
+            if key in field_map
+        }
+        return target_type(**kwargs)
+
+    return value
