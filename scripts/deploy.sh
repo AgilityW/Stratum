@@ -87,6 +87,7 @@ fi
 mkdir -p "$RELEASE_DIR" "$CONFIG_DIR" "$OUTPUT_DIR" "$DEPLOY_BASE/logs"
 git archive "$VERSION" | tar -x -C "$RELEASE_DIR"
 cp "$CONFIG_SRC" "$CONFIG_DEST"
+chmod 600 "$CONFIG_DEST"
 
 echo "🐍 Creating release virtualenv..."
 python3 -m venv "$RELEASE_DIR/.venv"
