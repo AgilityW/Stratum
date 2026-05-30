@@ -52,31 +52,45 @@ engines:
     snippet_field: "content"
 
 # ── Output Format ──
-# Template for the Agent Edit stage (briefing generation).
-# Placeholders: {{TITLE}}, {{DATE_LINE}}, {{SUMMARY}}, {{ARTICLES}}, {{WATCH}}, {{CONTRARIAN}}, {{FOOTER_DATE}}
-# {{ARTICLES}} format: each item = "### title\n\nbody\n\n*Source · Date*\n\n---\n" (MUST have --- between items)
+# Reference template for the Agent Edit stage. Runtime Edit templates live in
+# stratum/stages/edit/templates/; keep this example aligned with the active
+# daily chunk names.
+# Placeholders: {{ title }}, {{ date_label }}, {{ summary }},
+# {{ main_categories }}, {{ edge_items }}, {{ focus }}, {{ contrarian }}
 output_format:
   zh-CN: |
-    # {{TITLE}}
-    ## {{DATE_LINE}}
+    # {{ title }}
+    ## {{ date_label }}
 
-    {{SUMMARY}}
+    ## 今日要点
 
-    ---
-
-    {{ARTICLES}}
+    {{ summary }}
 
     ---
 
-    ### 关注
-    {{WATCH}}
+    ## 行业要点
 
-    ### 反向信号
-    {{CONTRARIAN}}
+    {{ main_categories }}
 
     ---
 
-    *本简报由 AI Agent 自动生成 | {{FOOTER_DATE}}*
+    ## 产业信号
+
+    {{ edge_items }}
+
+    ---
+
+    ## 特别关注
+
+    {{ focus }}
+
+    ## 反向信号
+
+    {{ contrarian }}
+
+    ---
+
+    *由 AI Agent 自动生成 · 每日 7:30 CST*
 
 # ── LLM ──
 # Model for Agent Edit stage. Uses DeepSeek API (OpenAI-compatible).

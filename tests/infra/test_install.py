@@ -64,6 +64,15 @@ class TestConfigExample:
         assert "${BOCHA_API_KEY}" in yaml_str or "BOCHA_API_KEY" in yaml_str
         assert "${TAVILY_API_KEY}" in yaml_str or "TAVILY_API_KEY" in yaml_str
 
+    def test_output_format_uses_current_daily_chunks(self, config):
+        template = config["output_format"]["zh-CN"]
+        for chunk in ("今日要点", "行业要点", "产业信号", "特别关注", "反向信号"):
+            assert f"## {chunk}" in template
+        assert "### 关注" not in template
+        assert "{{ARTICLES}}" not in template
+        assert "{{WATCH}}" not in template
+        assert "{{CONTRARIAN}}" not in template
+
 
 # ── install.sh ─────────────────────────────────────────────
 
