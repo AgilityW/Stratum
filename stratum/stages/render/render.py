@@ -60,16 +60,23 @@ def load_render_tags(domain_path: str | None) -> dict:
         return {}
 
 
-def detect_tags(title, body, tag_config):
-    """Match title+body against domain-configured keyword sets. Returns [(label, css_class), ...]."""
+def detect_tags(title, body, tag_config, require_tag: bool = False):
+    """Match title+body against domain-configured keyword sets.
+
+    When require_tag is true, return a default `new` badge if no configured
+    keyword matches so every rendered item has a visible category marker.
+    """
     tags = []
     if not tag_config:
-        return tags
+        return [("new", "tag-new")] if require_tag else tags
     t = (title + " " + body).lower()
     for tag_id, cfg in tag_config.items():
         keywords = cfg.get("keywords", [])
         if any(w.lower() in t for w in keywords):
             tags.append((cfg.get("label", tag_id), cfg.get("class", f"tag-{tag_id}")))
+    if require_tag and not tags:
+        fallback = tag_config.get("new") or next(iter(tag_config.values()), {})
+        tags.append((fallback.get("label", "new"), fallback.get("class", "tag-new")))
     return tags
 
 
@@ -148,7 +155,12 @@ def convert(md_text, tag_config=None):
         if not in_item:
             return
         title_esc = esc(item_title)
-        tags_html = _render_tag_spans(detect_tags(item_title, " ".join(item_tag_text), tag_config))
+        tags_html = _render_tag_spans(detect_tags(
+            item_title,
+            " ".join(item_tag_text),
+            tag_config,
+            require_tag=True,
+        ))
         body_parts.append(
             '<div class="item">\n'
             f'<h3><span class="num">{item_num}</span>{title_esc}{tags_html}</h3>'

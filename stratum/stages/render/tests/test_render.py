@@ -186,6 +186,30 @@ Samsung and Micron supply constraints pushed contract price expectations higher.
         })
         assert '<span class="tag tag-price">price</span>' in html
 
+    def test_convert_applies_fallback_tag_when_no_keywords_match(self):
+        md = """# Title
+
+---
+
+### Routine market note
+
+No configured keyword appears here.
+
+*Source: test.com · 2026年5月29日*"""
+        html = convert(md, {
+            "new": {
+                "label": "new",
+                "class": "tag-new",
+                "keywords": ["announce"],
+            },
+            "price": {
+                "label": "price",
+                "class": "tag-price",
+                "keywords": ["contract price"],
+            },
+        })
+        assert '<span class="tag tag-new">new</span>' in html
+
     def test_convert_strips_source_locale_tags(self):
         md = """# Title
 

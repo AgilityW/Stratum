@@ -191,6 +191,90 @@ def test_result_set_stats():
     print("  ✓ ResultSet.to_stats_json")
 
 
+def test_result_set_raw_json_prefers_full_raw_results():
+    from stratum.subsystems.search.models import ResultSet, SearchResult
+
+    curated = SearchResult(
+        url="https://a.com",
+        title="Curated",
+        snippet="",
+        locale="en",
+        engine="tavily",
+        query_id="q1",
+    )
+    raw = [
+        curated,
+        SearchResult(
+            url="https://b.com",
+            title="Raw only",
+            snippet="",
+            locale="en",
+            engine="bocha",
+            query_id="q2",
+        ),
+    ]
+
+    rs = ResultSet(
+        results=[curated],
+        raw_results=raw,
+        date="2026-05-30",
+        total_raw=2,
+        total_curated=1,
+    )
+
+    payload = rs.to_raw_json()
+    assert [item["url"] for item in payload] == ["https://a.com", "https://b.com"]
+
+
+def test_split_queries_by_coverage_skips_covered_domain_queries():
+    from stratum.stages.search.search import split_queries_by_coverage
+
+    existing_raw = [
+        {"url": "https://www.reuters.com/technology/article", "source_domain": "reuters.com"},
+        {"url": "https://semiconductor.samsung.com/newsroom/post"},
+    ]
+    queries = [
+        {
+            "id": "q-covered",
+            "text": "Reuters memory chip news",
+            "locale": "en",
+            "include_domains": ["www.reuters.com"],
+        },
+        {
+            "id": "q-subdomain",
+            "text": "Samsung semiconductor news",
+            "locale": "en",
+            "include_domains": ["semiconductor.samsung.com"],
+        },
+        {
+            "id": "q-uncovered",
+            "text": "Micron news",
+            "locale": "en",
+            "include_domains": ["micron.com"],
+        },
+        {"id": "q-broad", "text": "HBM market news", "locale": "en"},
+    ]
+
+    active, skipped = split_queries_by_coverage(queries, existing_raw)
+
+    assert [q["id"] for q in skipped] == ["q-covered", "q-subdomain"]
+    assert [q["id"] for q in active] == ["q-uncovered", "q-broad"]
+
+
+def test_merge_raw_results_keeps_primary_on_canonical_conflict():
+    from stratum.stages.search.search import merge_raw_results
+
+    primary = [{"url": "https://www.example.com/a?utm_source=x", "title": "primary"}]
+    secondary = [
+        {"url": "https://example.com/a", "title": "duplicate"},
+        {"url": "https://example.com/b", "title": "secondary"},
+    ]
+
+    merged = merge_raw_results(primary, secondary)
+
+    assert [item["title"] for item in merged] == ["primary", "secondary"]
+
+
 # ============================================================
 # CURATOR
 # ============================================================

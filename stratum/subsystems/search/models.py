@@ -297,6 +297,7 @@ class QueryStats:
 class ResultSet:
     """Complete search output: curated results + statistics."""
     results: list[SearchResult] = field(default_factory=list)
+    raw_results: list[SearchResult] = field(default_factory=list)
     stats: list[QueryStats] = field(default_factory=list)
     date: str = ""
     total_raw: int = 0
@@ -304,7 +305,8 @@ class ResultSet:
     diagnostics: dict[str, Any] = field(default_factory=dict)
 
     def to_raw_json(self) -> list[dict]:
-        return [r.to_dict() for r in self.results]
+        output_results = self.raw_results if self.raw_results else self.results
+        return [r.to_dict() for r in output_results]
 
     def to_stats_json(self) -> dict:
         return {

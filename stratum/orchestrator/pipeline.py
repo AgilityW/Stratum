@@ -295,6 +295,21 @@ def main():
                 fail("search", paths["raw"], "--skip-agent missing raw.json")
             record("search", "skipped", paths["raw"], "--skip-agent")
         else:
+            # ── Stage 1.0: Collect high-priority fixed sources first ──
+            # RSS/direct/browser sources are cheaper and more trusted than broad
+            # web search. They seed raw.json; Bocha/Tavily then supplement only
+            # broad gaps and domain-scoped queries not already covered here.
+            collector_status = _run_collector(
+                args.domain,
+                PROJECT_ROOT,
+                args.date,
+                paths["raw"],
+                health_data_dir,
+                merge_existing=False,
+            )
+            record("collectors", collector_status.get("status", "unknown"),
+                   collector_status.get("output", paths["raw"]), collector_status.get("detail"))
+
             db_path = os.path.join(db_dir, args.domain, f"{args.domain}.db")
             queries_path = os.path.join(DOMAINS_DIR, args.domain, "queries.yaml")
             if os.path.exists(db_path):
@@ -306,9 +321,12 @@ def main():
                     "--queries", queries_path,
                     "--output", paths["raw"],
                     "--stats", paths["search_stats"],
+                    "--existing-raw", paths["raw"],
+                    "--skip-covered-domain-queries",
                 ], "1/8 Search"):
                     fail("search", paths["raw"])
                 record("search", "success", paths["raw"], "db")
+                _update_post_collect_search_stats(paths["raw"], _load_raw_results(paths["raw"]))
                 _try_ingest_search_stats(args.domain, paths["search_stats"], run_date=args.date)
             else:
                 if not run_stage("search", [
@@ -318,15 +336,20 @@ def main():
                     "--queries", queries_path,
                     "--output", paths["raw"],
                     "--stats", paths["search_stats"],
+                    "--existing-raw", paths["raw"],
+                    "--skip-covered-domain-queries",
                 ], "1/8 Search"):
                     fail("search", paths["raw"])
                 record("search", "success", paths["raw"], "queries.yaml")
+                _update_post_collect_search_stats(paths["raw"], _load_raw_results(paths["raw"]))
                 _try_ingest_search_stats(args.domain, paths["search_stats"], run_date=args.date)
-
-        # ── Stage 1.5: Collect (direct fetch from newsrooms) ──
-        collector_status = _run_collector(args.domain, PROJECT_ROOT, args.date, paths["raw"], health_data_dir)
-        record("collectors", collector_status.get("status", "unknown"),
-               collector_status.get("output", paths["raw"]), collector_status.get("detail"))
+        if args.raw_input or args.skip_agent:
+            # Preserve previous behavior for explicit raw-input/resume modes:
+            # deterministic collectors may still refresh/augment the provided
+            # raw pool unless the caller starts from a later stage.
+            collector_status = _run_collector(args.domain, PROJECT_ROOT, args.date, paths["raw"], health_data_dir)
+            record("collectors", collector_status.get("status", "unknown"),
+                   collector_status.get("output", paths["raw"]), collector_status.get("detail"))
 
     # ── Stage 2: Enrich ──
     enrich_cmd = [
@@ -981,8 +1004,9 @@ def _run_collector(
     run_date: str,
     raw_path: str,
     health_data_dir: str | None = None,
+    merge_existing: bool = True,
 ):
-    """Run all collectors (direct_fetch, rss) and merge results into raw.json."""
+    """Run all collectors and write/merge results into raw.json."""
     try:
         from stratum.collectors import collect_with_stats
         collector_run = collect_with_stats(domain, workspace, run_date)
@@ -995,11 +1019,14 @@ def _run_collector(
             with open(stats_path, "w") as f:
                 json.dump(collector_run.stats_json(domain, run_date), f, ensure_ascii=False, indent=2)
             _write_collector_health(domain, run_date, collector_run.source_stats, health_data_dir)
+            if not merge_existing:
+                with open(raw_path, "w") as f:
+                    json.dump([], f, ensure_ascii=False, indent=2)
             return {"status": "empty", "output": stats_path, "detail": "no collector results"}
 
         # Read existing raw.json (search results)
         search_results = []
-        if os.path.exists(raw_path):
+        if merge_existing and os.path.exists(raw_path):
             with open(raw_path) as f:
                 data = json.load(f)
                 search_results = data if isinstance(data, list) else data.get("results", [])
@@ -1097,6 +1124,21 @@ def _update_post_collect_search_stats(raw_path: str, merged_results: list[dict])
 
     with open(stats_path, "w") as f:
         json.dump(stats, f, ensure_ascii=False, indent=2)
+
+
+def _load_raw_results(raw_path: str) -> list[dict]:
+    """Read raw.json as a result list for final diagnostics."""
+    try:
+        with open(raw_path) as f:
+            data = json.load(f)
+    except (OSError, json.JSONDecodeError):
+        return []
+    if isinstance(data, list):
+        return data
+    if isinstance(data, dict):
+        results = data.get("results", [])
+        return results if isinstance(results, list) else []
+    return []
 
 
 def _set_collector_selected_counts(source_stats: list, selected_by_source: dict[str, int]) -> None:

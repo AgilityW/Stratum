@@ -24,6 +24,7 @@ from datetime import datetime
 import yaml
 
 from stratum.subsystems.search.models import normalize_include_domains
+from stratum.subsystems.search.models import canonicalize_url
 
 
 LOCALE_KEY_RE = re.compile(r"^[A-Za-z]{2,3}(?:-[A-Za-z0-9]{2,8})*$")
@@ -239,6 +240,99 @@ def resolve_queries(
     raise FileNotFoundError("Either --queries or an existing --db is required")
 
 
+def _domain_from_url(url: str) -> str:
+    from urllib.parse import urlparse
+
+    host = urlparse(url or "").netloc.lower()
+    if host.startswith("www."):
+        host = host[4:]
+    if host.startswith("m."):
+        host = host[2:]
+    return host
+
+
+def load_existing_raw(path: str | None) -> list[dict]:
+    """Load existing collector/source results used as higher-priority evidence."""
+    if not path or not os.path.exists(path):
+        return []
+    with open(path) as f:
+        data = json.load(f)
+    return data if isinstance(data, list) else data.get("results", [])
+
+
+def covered_domains(existing_results: list[dict]) -> set[str]:
+    """Return source domains already covered by higher-priority collection."""
+    domains = set()
+    for item in existing_results:
+        domain = item.get("source_domain") or _domain_from_url(item.get("url", ""))
+        if domain:
+            domains.add(str(domain).lower())
+    return domains
+
+
+def _domain_is_covered(domain: str, covered: set[str]) -> bool:
+    target = domain.lower().removeprefix("www.").removeprefix("m.")
+    return any(source == target or source.endswith(f".{target}") for source in covered)
+
+
+def split_queries_by_coverage(
+    queries: list[dict],
+    existing_results: list[dict],
+) -> tuple[list[dict], list[dict]]:
+    """Skip domain-scoped search queries already covered by RSS/direct/browser.
+
+    Broad queries remain active because they discover gaps outside configured
+    source URLs. Domain-scoped queries only run when at least one requested
+    include domain has no higher-priority result.
+    """
+    covered = covered_domains(existing_results)
+    active: list[dict] = []
+    skipped: list[dict] = []
+    for query in queries:
+        domains = _query_include_domains(query)
+        if domains and all(_domain_is_covered(domain, covered) for domain in domains):
+            skipped.append(query)
+        else:
+            active.append(query)
+    return active, skipped
+
+
+def merge_raw_results(primary_results: list[dict], secondary_results: list[dict]) -> list[dict]:
+    """Merge raw result dictionaries, keeping primary results on URL conflicts."""
+    merged: list[dict] = []
+    seen: set[str] = set()
+    for item in [*primary_results, *secondary_results]:
+        url = item.get("url", "")
+        canonical = item.get("canonical_url") or canonicalize_url(url)
+        if not url or canonical in seen:
+            continue
+        item["canonical_url"] = canonical
+        seen.add(canonical)
+        merged.append(item)
+    return merged
+
+
+def skipped_query_stats(skipped_queries: list[dict]) -> list[dict]:
+    """Stats records for search queries skipped due to higher-priority coverage."""
+    rows = []
+    for query in skipped_queries:
+        rows.append({
+            "query_id": query.get("id", ""),
+            "engine_used": "collector",
+            "status": "skipped_covered",
+            "results_count": 0,
+            "locale": query.get("locale", ""),
+            "intent": query.get("intent", "detection"),
+            "dimension": query.get("dimension", "general"),
+            "query_text": query.get("text", ""),
+            "retries": 0,
+            "latency_ms": 0.0,
+            "error": None,
+            "include_domains": _query_include_domains(query),
+        })
+    return rows
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="Deterministic search via stratum.subsystems.search"
@@ -250,6 +344,10 @@ def main() -> None:
     parser.add_argument("--db", help="Path to SQLite database; preferred when it has active queries")
     parser.add_argument("--output", "-o", required=True, help="Output raw.json path")
     parser.add_argument("--stats", help="Output stats.json path; default raw.stats.json")
+    parser.add_argument("--existing-raw",
+                        help="Higher-priority raw results from RSS/direct/browser to merge before Search")
+    parser.add_argument("--skip-covered-domain-queries", action="store_true",
+                        help="Skip include_domains queries already covered by --existing-raw")
     args = parser.parse_args()
 
     workspace = os.path.dirname(os.path.abspath(args.config))
@@ -261,10 +359,44 @@ def main() -> None:
     except FileNotFoundError as exc:
         print(f"❌ {exc}", file=sys.stderr)
         sys.exit(1)
+    existing_raw = load_existing_raw(args.existing_raw)
+    skipped_queries: list[dict] = []
+    if args.skip_covered_domain_queries and existing_raw:
+        queries, skipped_queries = split_queries_by_coverage(queries, existing_raw)
+        if skipped_queries:
+            print(
+                f"📋 Skipped {len(skipped_queries)} covered domain-scoped queries",
+                file=sys.stderr,
+            )
+
     print(f"📋 Loaded {len(queries)} queries from {query_source}", file=sys.stderr)
     if not queries:
-        print("❌ Search loaded zero queries; seed DB or provide queries.yaml", file=sys.stderr)
-        sys.exit(1)
+        if not existing_raw:
+            print("❌ Search loaded zero queries; seed DB or provide queries.yaml", file=sys.stderr)
+            sys.exit(1)
+        result_payload = merge_raw_results(existing_raw, [])
+        stats_payload = {
+            "date": args.date,
+            "total_raw": len(result_payload),
+            "total_curated": 0,
+            "by_engine": {},
+            "by_locale": {},
+            "by_source_type": {},
+            "diagnostics": {
+                "existing_raw": len(existing_raw),
+                "search_raw": 0,
+                "skipped_covered_queries": len(skipped_queries),
+            },
+            "queries": skipped_query_stats(skipped_queries),
+        }
+        os.makedirs(os.path.dirname(args.output) or ".", exist_ok=True)
+        with open(args.output, "w") as f:
+            json.dump(result_payload, f, ensure_ascii=False, indent=2)
+        stats_path = args.stats or args.output.replace(".json", ".stats.json")
+        with open(stats_path, "w") as f:
+            json.dump(stats_payload, f, ensure_ascii=False, indent=2)
+        print(f"✅ Search: 0 raw supplement; {len(result_payload)} total → {args.output}", file=sys.stderr)
+        return
 
     from stratum.subsystems.search import load_api_keys, load_search_config, run_search
 
@@ -272,17 +404,26 @@ def main() -> None:
     api_keys = load_api_keys()
     result_set = run_search(queries, config, api_keys, args.date)
 
+    search_raw = result_set.to_raw_json()
+    merged_raw = merge_raw_results(existing_raw, search_raw)
+
     os.makedirs(os.path.dirname(args.output) or ".", exist_ok=True)
     with open(args.output, "w") as f:
-        json.dump(result_set.to_raw_json(), f, ensure_ascii=False, indent=2)
+        json.dump(merged_raw, f, ensure_ascii=False, indent=2)
 
     stats_path = args.stats or args.output.replace(".json", ".stats.json")
+    stats_payload = result_set.to_stats_json()
+    stats_payload["total_raw"] = len(merged_raw)
+    stats_payload.setdefault("diagnostics", {})["existing_raw"] = len(existing_raw)
+    stats_payload.setdefault("diagnostics", {})["search_raw"] = len(search_raw)
+    stats_payload.setdefault("diagnostics", {})["skipped_covered_queries"] = len(skipped_queries)
+    stats_payload["queries"] = stats_payload.get("queries", []) + skipped_query_stats(skipped_queries)
     with open(stats_path, "w") as f:
-        json.dump(result_set.to_stats_json(), f, ensure_ascii=False, indent=2)
+        json.dump(stats_payload, f, ensure_ascii=False, indent=2)
 
     print(
-        f"✅ Search: {result_set.total_curated} curated "
-        f"(from {result_set.total_raw} raw) → {args.output}",
+        f"✅ Search: {len(search_raw)} raw supplement, {result_set.total_curated} curated diagnostics "
+        f"({len(merged_raw)} total raw) → {args.output}",
         file=sys.stderr,
     )
 

@@ -144,6 +144,46 @@ def test_resolve_paths_uses_render_artifact_basename(tmp_path):
     assert paths["verify_stats"].endswith("verified.stats.json")
 
 
+def test_run_collector_can_replace_existing_raw_for_priority_order(tmp_path, monkeypatch):
+    from stratum.orchestrator import pipeline
+    import stratum.collectors as collectors
+
+    raw_path = tmp_path / "raw.json"
+    raw_path.write_text(json.dumps([
+        {"url": "https://search.example.com/old", "title": "old search"}
+    ]))
+
+    class FakeResult:
+        def to_dict(self):
+            return {
+                "url": "https://rss.example.com/new",
+                "title": "new rss",
+                "source_type_hint": "official",
+                "locale": "en",
+            }
+
+    class FakeRun:
+        results = [FakeResult()]
+        source_stats = []
+
+        def stats_json(self, domain, run_date):
+            return {"domain": domain, "date": run_date, "sources": []}
+
+    monkeypatch.setattr(collectors, "collect_with_stats", lambda *args: FakeRun())
+
+    status = pipeline._run_collector(
+        "storage",
+        str(tmp_path),
+        "2026-05-30",
+        str(raw_path),
+        merge_existing=False,
+    )
+
+    raw = json.loads(raw_path.read_text())
+    assert status["status"] == "success"
+    assert [item["url"] for item in raw] == ["https://rss.example.com/new"]
+
+
 def test_db_ingest_modes_follow_fresh_artifacts():
     from stratum.orchestrator.pipeline import db_ingest_modes
 

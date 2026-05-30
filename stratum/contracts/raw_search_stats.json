@@ -78,7 +78,7 @@
         "engine_used": {"type": "string"},
         "status": {
           "type": "string",
-          "enum": ["success", "fallback", "failed", "rate_limited", "no_results"]
+          "enum": ["success", "fallback", "failed", "rate_limited", "no_results", "skipped_covered"]
         },
         "results_count": {"type": "integer", "minimum": 0},
         "locale": {"type": "string"},

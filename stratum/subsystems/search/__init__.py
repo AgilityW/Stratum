@@ -106,6 +106,7 @@ def run_search(
 
     return ResultSet(
         results=curated,
+        raw_results=raw_results,
         stats=query_stats,
         date=date,
         total_raw=total_raw,
