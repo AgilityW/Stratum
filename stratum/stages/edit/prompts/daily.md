@@ -56,7 +56,7 @@
 
 ## 要求
 
-1. 从 {{ article_count }} 篇文章中选出总计 {{ min_items }}-{{ max_items }} 条新闻写成简报；其中主线新闻 {{ main_min_items }}-{{ main_max_items }} 条，另加边缘信号 {{ edge_min_items }}-{{ edge_max_items }} 条，这些数量必须保证
+1. 从 {{ article_count }} 篇文章中选出总计 {{ min_items }}-{{ max_items }} 条新闻写成简报；其中主线新闻 {{ main_min_items }}-{{ main_max_items }} 条，另加边缘信号 {{ edge_min_items }}-{{ edge_max_items }} 条，这些数量必须保证。默认目标是 {{ main_min_items }} 条主线 + {{ edge_min_items }} 条边缘信号；如果素材足够，可增加但不要低于下限
 2. 优先覆盖集群化文章，其次是有增量价值的独立文章
 3. **严格遵循上方输出格式**——`### 今日要点` → `---` → N条 `### 新闻标题` → `---` → `### 关注` → `### 反向信号`
 4. 每条新闻必须引用来源和日期 — **source 必须严格来自下方“来源索引”或文章数据中的来源字段，禁止使用训练数据或外部知识中的其他来源**

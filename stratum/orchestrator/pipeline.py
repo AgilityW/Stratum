@@ -452,9 +452,9 @@ def main():
             "--config", CONFIG_PATH,
             "--output", paths["briefing_md"],
             "--timescale", "daily",
-        ], "6/8 Agent Edit (LLM)", timeout=300):
-            print("⚠️  Agent Edit failed — continuing with validate/render anyway", file=sys.stderr)
-            record("edit", "failed_nonblocking", paths["briefing_md"])
+        ], "6/8 Agent Edit (LLM)", timeout=720):
+            print("❌ Agent Edit failed — stopping before validate/render to avoid reusing stale briefing artifacts", file=sys.stderr)
+            fail("edit", paths["briefing_md"])
         else:
             record("edit", "success", paths["briefing_md"])
 
@@ -477,8 +477,8 @@ def main():
                 "--schemas-dir", schemas_dir,
             ]
         if not run_stage("validate", validate_args, "7/8 Validate briefing"):
-            print("⚠️  Validation failed — check violations above", file=sys.stderr)
-            record("validate", "failed_nonblocking", None)
+            print("❌ Validation failed — stopping before render/DB ingest to avoid publishing invalid artifacts", file=sys.stderr)
+            fail("validate", None)
         else:
             record("validate", "success", None)
     else:

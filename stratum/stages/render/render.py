@@ -154,15 +154,21 @@ def convert(md_text, tag_config=None):
         nonlocal item_lines, item_title, item_tag_text, in_item
         if not in_item:
             return
-        title_esc = esc(item_title)
-        tags_html = _render_tag_spans(detect_tags(
+        is_edge_signal = item_title.startswith("【边缘信号】")
+        display_title = item_title.replace("【边缘信号】", "", 1).strip() if is_edge_signal else item_title
+        title_esc = esc(display_title)
+        tags = detect_tags(
             item_title,
             " ".join(item_tag_text),
             tag_config,
             require_tag=True,
-        ))
+        )
+        if is_edge_signal:
+            tags = [("edge", "tag-edge")] + [(label, css) for label, css in tags if css != "tag-edge"]
+        tags_html = _render_tag_spans(tags)
+        item_class = "item edge-signal" if is_edge_signal else "item"
         body_parts.append(
-            '<div class="item">\n'
+            f'<div class="{item_class}">\n'
             f'<h3><span class="num">{item_num}</span>{title_esc}{tags_html}</h3>'
         )
         body_parts.append("\n".join(item_lines))

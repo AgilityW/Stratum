@@ -210,6 +210,22 @@ No configured keyword appears here.
         })
         assert '<span class="tag tag-new">new</span>' in html
 
+    def test_convert_marks_edge_signal_items(self):
+        md = """# Title
+
+---
+
+### 【边缘信号】Glass storage pilot line
+
+Worth watching, but not yet a main supply-chain signal.
+
+*Source: test.com · 2026年5月29日*"""
+        html = convert(md)
+        assert '<div class="item edge-signal">' in html
+        assert '<span class="tag tag-edge">edge</span>' in html
+        assert "【边缘信号】Glass storage pilot line" not in html
+        assert "Glass storage pilot line" in html
+
     def test_convert_strips_source_locale_tags(self):
         md = """# Title
 

@@ -304,6 +304,31 @@ def test_normalize_structured_data_coerces_structured_arrays():
     assert normalized["judgments"] == [{"hypothesis": "HBM demand lifts margins."}]
 
 
+def test_normalize_structured_data_drops_incomplete_causal_edges():
+    data = {
+        "threads": [{"thread_id": "et-storage-0001", "title": "DRAM prices"}],
+        "causal_edges": [
+            {
+                "cause_thread_id": "et-storage-0001",
+                "effect_thread_id": None,
+                "mechanism": "Demand destruction",
+                "confidence": "B",
+            },
+            {
+                "cause_thread_id": "et-storage-0001",
+                "effect_thread_id": "et-storage-0002",
+                "mechanism": "Capacity displacement",
+                "confidence": "B",
+            },
+        ],
+    }
+
+    normalized = normalize_structured_data(data, "storage", "2026-05-30")
+
+    assert len(normalized["causal_edges"]) == 1
+    assert normalized["causal_edges"][0]["effect_thread_id"] == "et-storage-0002"
+
+
 def test_threads_only_structured_data_is_written():
     data = {
         "threads": [
@@ -501,6 +526,34 @@ SK hynix iHBM thermal solution for HBM5.
     repaired = repair_source_line_dates(md, articles, "2026-05-30")
 
     assert "*trendforce.com · 2026年5月30日*" in repaired
+
+
+def test_repair_source_line_dates_filters_unsupported_sources():
+    md = """### Micron India facility ramps production
+
+Micron's India packaging facility started volume production for memory chips.
+
+*v.daum.net, investors.micron.com · 2026年5月30日*
+"""
+    articles = [
+        {
+            "title": "Samsung expands memory capacity in Korea",
+            "snippet": "Samsung and SK hynix plan additional DRAM cleanroom investments.",
+            "source": "v.daum.net",
+            "published_at": "2026-05-30",
+        },
+        {
+            "title": "Micron India packaging facility starts volume production",
+            "snippet": "Micron said its India memory packaging facility ramped production.",
+            "source": "investors.micron.com",
+            "published_at": "2026-05-30",
+        },
+    ]
+
+    repaired = repair_source_line_dates(md, articles, "2026-05-30")
+
+    assert "*investors.micron.com · 2026年5月30日*" in repaired
+    assert "v.daum.net" not in repaired
 
 
 def test_repair_missing_source_lines_keeps_existing_source_line():

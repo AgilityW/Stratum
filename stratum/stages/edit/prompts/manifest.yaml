@@ -34,6 +34,7 @@ daily:
     main_min_items: 16
     edge_max_items: 8
     edge_min_items: 5
+    retry_attempts: 2
     prompt_max_chars: 150000
     max_articles_per_cluster: 18
     max_low_confidence_articles_per_cluster: 6

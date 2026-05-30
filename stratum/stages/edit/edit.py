@@ -161,6 +161,12 @@ def normalize_structured_data(
             value = str(edge.get(key) or "").strip()
             if value in thread_id_map:
                 edge[key] = thread_id_map[value]
+    data["causal_edges"] = [
+        edge for edge in data.get("causal_edges", [])
+        if isinstance(edge, dict)
+        and str(edge.get("cause_thread_id") or "").strip()
+        and str(edge.get("effect_thread_id") or "").strip()
+    ]
     for judgment in data.get("judgments", []):
         if isinstance(judgment, dict) and "hypothesis" not in judgment and "mechanism" in judgment:
             judgment["hypothesis"] = judgment.pop("mechanism")
@@ -369,13 +375,16 @@ def repair_source_line_dates(markdown: str, articles: list[dict], run_date: str)
             parsed = re.match(r"^\*(.+?)·(.+?)\*$", line)
             if parsed:
                 sources = [src.strip() for src in parsed.group(1).split(",") if src.strip()]
-                supporting_articles = [
-                    article
+                supported_pairs = [
+                    (source, article)
                     for source in sources
                     if (article := _best_article_for_source_item(
                         source, current["title"], current["body"], articles
                     ))
                 ]
+                supporting_articles = [article for _source, article in supported_pairs]
+                if supporting_articles:
+                    sources = [source for source, _article in supported_pairs]
                 if not supporting_articles:
                     supporting_articles = [
                         article
@@ -551,13 +560,21 @@ def main():
     # ── Split output ──
     briefing, structured_data = prepare_llm_response(response, articles, args.date, args.domain)
     in_budget, budget_detail = item_count_within_budget(briefing, output_cfg)
-    if not in_budget:
-        print(f"⚠️  LLM output outside item budget: {budget_detail}; retrying once", file=sys.stderr)
+    max_retries = int(output_cfg.get("_budget", {}).get("retry_attempts", 1) or 1)
+    retry_count = 0
+    while not in_budget and retry_count < max_retries:
+        retry_count += 1
+        print(
+            f"⚠️  LLM output outside item budget: {budget_detail}; retrying "
+            f"{retry_count}/{max_retries}",
+            file=sys.stderr,
+        )
         retry_prompt = (
             user_prompt
             + "\n\n## 强制修正\n"
             + f"上一版不符合条数要求：{budget_detail}。\n"
             + "请重写完整简报，必须严格满足总条数、主线新闻条数、边缘信号条数要求；"
+            + "如果主线新闻不足，必须从来源索引中补充普通 `### 标题` 条目，不能用 `【边缘信号】` 抵扣主线数量；"
             + "保留 `---DATA---` 结构化 JSON；弱相关条目必须使用 `【边缘信号】` 前缀。\n"
             + "上一版标题如下：\n"
             + "\n".join(f"- {title}" for title in markdown_news_titles(briefing))
