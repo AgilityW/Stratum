@@ -1,6 +1,7 @@
 # Storage Domain — Seed Configuration
-# The ONLY file with domain-specific data. Everything else is engine logic.
-# To add a new industry: copy this file, change the values, done.
+# Domain metadata, entities, source registry, pipeline rules, and editorial policy.
+# Search query templates live in domains/storage/queries.yaml.
+# To add a new industry: copy this directory, change the values, done.
 
 domain:
   id: storage
@@ -212,98 +213,6 @@ channels:
     reliability: 0.9
     js_rendered: false
 
-# ── Seed Queries ──
-# PRINCIPLE: Event-focused, not company-focused.
-# "CXMT IPO" finds news. "CXMT 最新" finds the company homepage.
-# Every query targets WHAT happened, not WHO did it.
-# site: operators target proven high-signal news sources.
-seed_queries:
-  zh-CN:
-    # Breaking news / events
-    - "存储芯片 DRAM NAND 涨价 短缺"
-    - "长鑫存储 IPO 上会 科创板"
-    - "长江存储 扩产 产能 晶圆厂"
-    - "美光 SK海力士 三星 HBM4 量产"
-    - "NAND Flash 合约价 现货价"
-    - "三星 罢工 停产 存储"
-    # Targeted news sources
-    - "site:chinaflashmarket.com 存储 NAND SSD DRAM"
-    - "site:eet-china.com 存储 半导体 芯片"
-    - "site:digitimes.com 长鑫 长江存储 美光"
-    - "site:sina.com.cn 存储芯片 半导体"
-    - "site:stcn.com 存储 半导体 芯片"
-    - "site:21jingji.com 存储 芯片 半导体"
-
-  zh-TW:
-    - "記憶體 DRAM NAND 漲價 短缺"
-    - "長鑫存儲 IPO 科創板 上市"
-    - "長江存儲 擴產 產能 晶圓廠"
-    - "美光 SK海力士 三星 HBM4 量產"
-    - "NAND Flash 合約價 現貨價"
-    - "site:digitimes.com.tw 記憶體 半導體"
-    - "site:technews.tw 記憶體 半導體"
-    - "site:moneydj.com 記憶體 儲存"
-
-  en:
-    # Breaking news / events
-    - "memory chip DRAM NAND price hike shortage May 2026"
-    - "CXMT IPO listing Shanghai STAR market"
-    - "Micron SK Hynix Samsung HBM4 production certification"
-    - "NAND flash contract price spot price Q2 2026"
-    - "Samsung strike labor memory production"
-    - "YMTC fab expansion capacity NAND"
-    # Targeted news sources (proven to return results)
-    - "site:reuters.com memory chip DRAM NAND storage"
-    - "site:bloomberg.com Micron SK Hynix memory semiconductor"
-    - "site:digitimes.com memory HBM NAND DRAM"
-    - "site:trendforce.com DRAM NAND HBM memory price"
-    - "site:tomshardware.com SSD NAND DRAM HBM memory"
-    - "site:blocksandfiles.com storage SSD NAND"
-    - "site:semianalysis.com HBM NAND DRAM"
-    - "site:nikkei.com semiconductor memory chip storage"
-    - "site:koreaherald.com Samsung SK hynix semiconductor"
-
-  ja:
-    - "半導体 メモリ DRAM NAND 価格 高騰"
-    - "キオクシア サンディスク NAND 3D 積層"
-    - "サムスン SKハイニックス HBM4 量産"
-    - "マイクロン 広島 工場 メモリ"
-    - "site:nikkei.com 半導体 メモリ キオクシア"
-    - "site:xtech.nikkei.com 半導体 メモリ"
-    - "site:eetimes.jp 半導体 メモリ NAND"
-    - "site:pc.watch.impress.co.jp 半導体 メモリ SSD"
-    - "マイクロン メモリ AI"
-    - "TSMC 先端プロセス"
-    - "NAND フラッシュ 価格 ${CURRENT_YEAR}"
-    - "site:eetimes.jp 半導体 メモリ"
-
-  ko:
-    - "반도체 메모리 DRAM NAND 가격 상승 부족"
-    - "삼성전자 SK하이닉스 HBM4 양산 인증"
-    - "마이크론 메모리 공장 증설"
-    - "site:etnews.com 반도체 메모리"
-    - "site:mk.co.kr 반도체 메모리 삼성 SK하이닉스"
-    - "site:hankyung.com 반도체 메모리"
-
-# ── Gap Searches ──
-# Adversarial verification — queries designed to catch what main search might miss.
-# ${CURRENT_MONTH_EN} / ${CURRENT_YEAR} / ${CURRENT_MONTH_ZH} substituted at runtime.
-gap_searches:
-  - query: "Samsung SK hynix Micron latest ${CURRENT_MONTH_EN} ${CURRENT_YEAR}"
-    locale: en
-  - query: "Kioxia Western Digital WDC SanDisk latest ${CURRENT_MONTH_EN} ${CURRENT_YEAR}"
-    locale: en
-  - query: "NAND flash DRAM price ${CURRENT_MONTH_EN} ${CURRENT_YEAR}"
-    locale: en
-  - query: "YMTC CXMT 长江存储 长鑫存储 最新 ${CURRENT_YEAR}年${CURRENT_MONTH_ZH}"
-    locale: zh-CN
-  - query: "SK hynix iHBM cooling technology ${CURRENT_MONTH_EN} ${CURRENT_YEAR}"
-    locale: en
-  - query: "Samsung V-NAND CMB prototype ${CURRENT_MONTH_EN} ${CURRENT_YEAR}"
-    locale: en
-  - query: "Pure Storage NetApp Dell enterprise storage AI ${CURRENT_MONTH_EN} ${CURRENT_YEAR}"
-    locale: en
-
 # ── Platform Companies ──
 # Companies outside storage whose technology directly affects memory/storage architecture.
 # Content from these passes admission test if it changes storage/memory landscape judgment.
@@ -313,7 +222,7 @@ platform_companies:
 
 # ── Value Chain Exploration ──
 # 十一层探测模型。每层定义探测逻辑、信源种子、查询模板、覆盖告警阈值。
-# value-chain-monitor skill 读取此配置执行主动探测。
+# 引擎读取此配置执行主动探测。
 # 跨行业复用：只需替换此 section，框架逻辑不变。
 
 value_chain:
@@ -465,7 +374,7 @@ value_chain:
       probe_templates: []
       gap_indicators:
         - "1周无竞争动态 — 已有日频管线覆盖"
-      note: "covered by daily pipeline; value-chain-monitor only logs coverage"
+      note: "covered by daily pipeline"
 
     # ── Layer 7: 地缘/管制 ──
     - id: geopolitics
@@ -908,7 +817,9 @@ pipeline:
     wsj: "wsj.com"
     bloomberg: "bloomberg.com"
     reuters: "reuters.com"
-    digitimes: "digitimes.com"
+    digitimes:
+      - digitimes.com
+      - digitimes.com.tw
     forbes: "forbes.com"
     "yahoo finance": "finance.yahoo.com"
     marketwatch: "marketwatch.com"
@@ -987,6 +898,7 @@ source_registry:
       suppress_search: true
       max_articles: 10
       timeout: 30
+      resolve_article_dates: true
 
     - id: skhynix-newsroom
       name: "SK hynix Newsroom"
@@ -998,6 +910,7 @@ source_registry:
       fetch_interval_hours: 24
       status: active
       suppress_search: true
+      resolve_article_dates: true
 
     - id: micron-blog
       name: "Micron Technical Blog"
@@ -1009,6 +922,7 @@ source_registry:
       fetch_interval_hours: 24
       status: active
       suppress_search: true
+      resolve_article_dates: true
 
     - id: wd-blog
       name: "Western Digital Corporate Blog"
@@ -1020,6 +934,7 @@ source_registry:
       fetch_interval_hours: 24
       status: active
       suppress_search: true
+      resolve_article_dates: true
 
     - id: wd-newsroom
       name: "Western Digital Newsroom"
@@ -1127,6 +1042,7 @@ source_registry:
     browser:
       max_articles_per_url: 5
       timeout_seconds: 30
+      fallback_access: direct_fetch
 
 # ═══════════════════════════════════════════════════════════════
 # Editorial Configuration

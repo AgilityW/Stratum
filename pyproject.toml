@@ -1,29 +1,43 @@
 [project]
 name = "stratum"
-version = "4.1.0"
-description = "Multi-Scale Intelligence System"
+version = "5.0.0"
+description = "Domain-agnostic industry intelligence briefing pipeline"
 requires-python = ">=3.11"
+dependencies = [
+    "jsonschema>=4.20",
+    "pyyaml>=6.0",
+    "requests>=2.31",
+]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["stratum*"]
+exclude = ["domains*", "tests*"]
 
 [project.optional-dependencies]
+browser = [
+    "playwright>=1.40",
+]
 test = [
     "pytest>=8.0",
     "pytest-cov>=5.0",
-    "jsonschema>=4.20",
-    "pyyaml>=6.0",
 ]
 
 [tool.pytest.ini_options]
-testpaths = ["tests"]
-pythonpath = ["skills/source-graph-engine"]
+testpaths = ["tests", "stratum/stages", "stratum/subsystems"]
+pythonpath = ["."]
 markers = [
-    "unit: Python unit tests for source-graph-engine",
+    "unit: Python unit tests",
     "schema: JSON Schema validation tests",
     "data: Data integrity checks for pipeline outputs",
     "slow: Integration/E2E tests (requires file I/O)",
 ]
 
 [tool.coverage.run]
-source = ["skills/source-graph-engine"]
+source = ["stratum"]
 omit = [
     "*/test_*",
     "tests/*",

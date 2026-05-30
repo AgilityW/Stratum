@@ -1,102 +1,207 @@
-# Storage Domain — Search Queries
-# Used by Agent Search stage. Queries organized by locale.
+# Storage Domain - Search Queries
 # Placeholders: ${CURRENT_YEAR}, ${CURRENT_MONTH_EN}, ${CURRENT_MONTH_ZH}
-# Replaced at runtime by pipeline.
+#
+# Structure:
+#   queries:
+#     intent:
+#       dimension:
+#         locale:
+#           - query
+#
+# intent describes the search job; dimension describes the briefing coverage
+# surface. Search flattens this to {id, text, locale, intent, dimension}.
+# Use include_domains for source-scoped searches instead of embedding engine
+# operators such as site: in the query text.
 
-seed_queries:
-  zh-CN:
-    - "存储芯片 DRAM NAND 涨价 短缺"
-    - "长鑫存储 IPO 上会 科创板"
-    - "长江存储 扩产 产能 晶圆厂"
-    - "美光 SK海力士 三星 HBM4 量产"
-    - "NAND Flash 合约价 现货价"
-    - "三星 罢工 停产 存储"
-    - "site:chinaflashmarket.com 存储 NAND SSD DRAM"
-    - "site:eet-china.com 存储 半导体 芯片"
-    - "site:digitimes.com 长鑫 长江存储 美光"
-    - "site:sina.com.cn 存储芯片 半导体"
-    - "site:stcn.com 存储 半导体 芯片"
-    - "site:21jingji.com 存储 芯片 半导体"
+queries:
+  detection:
+    technology:
+      zh-CN:
+        - "HBM4 DRAM NAND CXL 先进封装 存储 技术 进展"
+        - "长江存储 3D NAND 先进制程 层数 量产"
+        - "长鑫存储 DRAM DDR5 LPDDR5X 技术 量产"
+        - text: "存储 半导体 DRAM NAND HBM"
+          include_domains: ["eet-china.com"]
+      zh-TW:
+        - "HBM4 DRAM NAND CXL 先進封裝 記憶體 技術"
+        - "長江存儲 3D NAND 長鑫存儲 DRAM 技術"
+      en:
+        - "HBM4 DRAM NAND CXL advanced packaging memory technology ${CURRENT_MONTH_EN} ${CURRENT_YEAR}"
+        - "Samsung SK hynix Micron HBM4 DRAM NAND technology roadmap ${CURRENT_MONTH_EN} ${CURRENT_YEAR}"
+        - text: "HBM NAND DRAM memory semiconductor"
+          include_domains: ["semianalysis.com"]
+        - text: "memory DRAM NAND semiconductor storage"
+          include_domains: ["eetimes.com"]
+      ja:
+        - "半導体 メモリ DRAM NAND HBM4 技術"
+        - "キオクシア NAND 3D 積層 技術"
+        - text: "半導体 メモリ NAND"
+          include_domains: ["eetimes.jp"]
+      ko:
+        - "삼성전자 SK하이닉스 HBM4 DRAM NAND 기술"
+        - "반도체 메모리 DRAM NAND 기술 개발"
 
-  zh-TW:
-    - "記憶體 DRAM NAND 漲價 短缺"
-    - "長鑫存儲 IPO 科創板 上市"
-    - "長江存儲 擴產 產能 晶圓廠"
-    - "美光 SK海力士 三星 HBM4 量產"
-    - "NAND Flash 合約價 現貨價"
-    - "site:digitimes.com.tw 記憶體 半導體"
-    - "site:technews.tw 記憶體 半導體"
-    - "site:moneydj.com 記憶體 儲存"
+    product:
+      zh-CN:
+        - "SSD 企业级 SSD DRAM 模组 HBM 产品 发布"
+        - "NAND Flash SSD 控制器 存储 产品 发布"
+      zh-TW:
+        - "SSD 企業級 SSD DRAM 模組 HBM 產品 發布"
+      en:
+        - "SSD DRAM NAND HBM product launch enterprise storage ${CURRENT_MONTH_EN} ${CURRENT_YEAR}"
+        - text: "SSD NAND DRAM HBM memory storage"
+          include_domains: ["tomshardware.com"]
+        - text: "storage SSD NAND enterprise"
+          include_domains: ["blocksandfiles.com"]
+        - text: "storage SSD NVMe enterprise NAND"
+          include_domains: ["servethehome.com"]
+        - text: "\"press release\" NAND flash SSD"
+          include_domains: ["kioxia.com", "kioxia-holdings.com"]
+        - text: "NAND flash SSD storage ${CURRENT_YEAR}"
+          include_domains: ["westerndigital.com"]
+      ja:
+        - "SSD NAND DRAM メモリ 製品 発表"
+        - text: "半導体 メモリ SSD"
+          include_domains: ["pc.watch.impress.co.jp"]
+      ko:
+        - "SSD DRAM NAND HBM 제품 출시"
 
-  # ── English locale: site-first strategy ──
-  # Principle (2026-05-30): manufacturer newsrooms + professional media first.
-  # Broad queries are discovery-only — they surface new sources, not primary intake.
-  # This design counters Tavily's index bias toward general financial/media outlets.
-  en:
-    # ── Broad discovery (keep 3 — find new sources) ──
-    - "memory chip DRAM NAND storage latest news ${CURRENT_MONTH_EN} ${CURRENT_YEAR}"
-    - "CXMT YMTC China memory semiconductor latest ${CURRENT_MONTH_EN} ${CURRENT_YEAR}"
-    - "Samsung SK Hynix Micron HBM DRAM NAND latest ${CURRENT_MONTH_EN} ${CURRENT_YEAR}"
+    platform_demand:
+      zh-CN:
+        - "英伟达 新架构 HBM 内存 带宽 需求"
+        - "NVIDIA Blackwell Rubin HBM4 内存 需求 供应链"
+        - "AI 服务器 机柜级 架构 HBM 存储 需求"
+        - "云厂商 AI 资本开支 HBM SSD 存储 需求"
+      zh-TW:
+        - "NVIDIA 新架構 HBM 記憶體 頻寬 需求"
+        - "AI 伺服器 機櫃級 架構 HBM 儲存 需求"
+      en:
+        - "NVIDIA new GPU architecture HBM memory bandwidth capacity demand"
+        - "NVIDIA Blackwell Rubin HBM4 memory demand supply chain"
+        - "AI server rack-scale architecture memory bandwidth storage demand"
+        - "AMD Instinct MI400 HBM memory demand"
+        - "Google TPU AWS Trainium HBM memory bandwidth AI accelerator"
+        - "cloud AI capex HBM SSD storage demand ${CURRENT_MONTH_EN} ${CURRENT_YEAR}"
+        - text: "AI server memory chip storage SSD"
+          include_domains: ["theregister.com"]
+      ja:
+        - "NVIDIA 新 GPU アーキテクチャ HBM メモリ 需要"
+        - "AI サーバー HBM SSD ストレージ 需要"
+      ko:
+        - "엔비디아 새 GPU 아키텍처 HBM 메모리 수요"
+        - "AI 서버 HBM SSD 스토리지 수요"
 
-    # ── Manufacturer newsrooms (原厂) ──
-    # NOTE: collector direct_fetch covers micron-newsroom + skhynix-newsroom.
-    # Removed site:investors.micron.com + site:skhynix.com (suppressed — redundant).
-    - "site:news.samsung.com memory DRAM NAND SSD semiconductor"
-    - "site:kioxia.com \"press release\" OR site:kioxia-holdings.com NAND flash SSD"
-    - "site:westerndigital.com NAND flash SSD storage 2026"
+    supply_chain:
+      zh-CN:
+        - "存储芯片 DRAM NAND 产能 扩产 短缺 库存"
+        - "长江存储 扩产 产能 晶圆厂"
+        - "长鑫存储 IPO 上会 科创板 扩产"
+        - "三星 SK海力士 美光 HBM4 量产 良率 供应链"
+        - text: "长鑫存储 长江存储 美光 DRAM NAND 供应链"
+          include_domains: ["digitimes.com", "digitimes.com.tw"]
+        - text: "存储 半导体 芯片 产能"
+          include_domains: ["stcn.com"]
+        - text: "存储 芯片 半导体 供应链"
+          include_domains: ["21jingji.com"]
+      zh-TW:
+        - "記憶體 DRAM NAND 產能 擴產 短缺 庫存"
+        - "長鑫存儲 IPO 科創板 上市"
+        - "長江存儲 擴產 產能 晶圓廠"
+        - text: "記憶體 半導體 供應鏈"
+          include_domains: ["digitimes.com.tw"]
+      en:
+        - "memory chip DRAM NAND capacity expansion shortage inventory ${CURRENT_MONTH_EN} ${CURRENT_YEAR}"
+        - "CXMT YMTC China memory semiconductor capacity latest ${CURRENT_MONTH_EN} ${CURRENT_YEAR}"
+        - "Samsung SK Hynix Micron HBM DRAM NAND production yield supply chain"
+        - text: "memory HBM NAND DRAM semiconductor supply chain"
+          include_domains: ["digitimes.com"]
+        - text: "Samsung SK hynix memory semiconductor supply chain"
+          include_domains: ["thelec.net"]
+      ja:
+        - "マイクロン 広島 工場 メモリ 増産"
+        - "半導体 メモリ DRAM NAND 供給 在庫"
+        - text: "半導体 メモリ キオクシア"
+          include_domains: ["nikkei.com"]
+      ko:
+        - "삼성전자 SK하이닉스 HBM4 양산 인증 공급"
+        - "마이크론 메모리 공장 증설"
+        - text: "반도체 메모리 공급"
+          include_domains: ["etnews.com"]
 
-    # ── Professional semiconductor media ──
-    - "site:tomshardware.com SSD NAND DRAM HBM memory storage"
-    - "site:blocksandfiles.com storage SSD NAND enterprise"
-    - "site:semianalysis.com HBM NAND DRAM memory semiconductor"
-    - "site:servethehome.com storage SSD NVMe enterprise NAND"
-    - "site:theregister.com memory chip semiconductor storage SSD"
-    - "site:eetimes.com memory DRAM NAND semiconductor storage"
+    market_pricing:
+      zh-CN:
+        - "NAND Flash 合约价 现货价 DRAM 涨价"
+        - "存储芯片 DRAM NAND 涨价 短缺"
+        - text: "存储 NAND SSD DRAM 价格"
+          include_domains: ["chinaflashmarket.com"]
+      zh-TW:
+        - "NAND Flash 合約價 現貨價 DRAM 漲價"
+        - text: "記憶體 儲存 價格"
+          include_domains: ["moneydj.com"]
+      en:
+        - "NAND flash DRAM contract price spot price ${CURRENT_MONTH_EN} ${CURRENT_YEAR}"
+        - text: "DRAM NAND HBM memory price forecast"
+          include_domains: ["trendforce.com"]
+        - text: "DRAM NAND memory semiconductor forecast"
+          include_domains: ["counterpointresearch.com"]
+      ja:
+        - "半導体 メモリ DRAM NAND 価格 高騰"
+        - "NAND フラッシュ 価格 ${CURRENT_YEAR}"
+      ko:
+        - "반도체 메모리 DRAM NAND 가격 상승 부족"
 
-    # ── Industry analysts ──
-    - "site:trendforce.com DRAM NAND HBM memory price forecast"
-    - "site:counterpointresearch.com DRAM NAND memory semiconductor"
+    financial:
+      zh-CN:
+        - "三星 SK海力士 美光 存储 财报 营收 毛利率"
+        - "长鑫存储 IPO 财务 营收 科创板"
+      zh-TW:
+        - "三星 SK海力士 美光 記憶體 財報 營收 毛利率"
+      en:
+        - "Micron Samsung SK hynix memory earnings revenue margin guidance ${CURRENT_MONTH_EN} ${CURRENT_YEAR}"
+        - "memory semiconductor capex inventory gross margin bit shipment"
+        - "Kioxia Western Digital SanDisk earnings NAND margin capex"
+      ja:
+        - "キオクシア サンディスク 決算 NAND メモリ"
+      ko:
+        - "삼성전자 SK하이닉스 메모리 실적 매출 영업이익"
 
-    # ── Asian English-language sources ──
-    - "site:digitimes.com memory HBM NAND DRAM semiconductor"
-    - "site:nikkei.com semiconductor memory chip storage"
-    - "site:koreaherald.com Samsung SK hynix semiconductor memory"
-    - "site:thelec.net Samsung SK hynix memory semiconductor"
+    company_strategy:
+      zh-CN:
+        - "三星 罢工 停产 存储"
+        - "存储 半导体 并购 合资 战略 投资"
+      en:
+        - "Samsung SK hynix Micron latest strategy investment memory ${CURRENT_MONTH_EN} ${CURRENT_YEAR}"
+        - "Kioxia Western Digital WDC SanDisk latest strategy ${CURRENT_MONTH_EN} ${CURRENT_YEAR}"
+        - "Pure Storage NetApp Dell enterprise storage AI ${CURRENT_MONTH_EN} ${CURRENT_YEAR}"
+        - text: "semiconductor memory chip storage"
+          include_domains: ["nikkei.com"]
+        - text: "Samsung SK hynix semiconductor memory"
+          include_domains: ["koreaherald.com"]
+      ja:
+        - "TSMC 先端プロセス メモリ 戦略"
+      ko:
+        - text: "반도체 메모리 삼성 SK하이닉스"
+          include_domains: ["mk.co.kr"]
+        - text: "반도체 메모리"
+          include_domains: ["hankyung.com"]
 
-  ja:
-    - "半導体 メモリ DRAM NAND 価格 高騰"
-    - "キオクシア サンディスク NAND 3D 積層"
-    - "サムスン SKハイニックス HBM4 量産"
-    - "マイクロン 広島 工場 メモリ"
-    - "site:nikkei.com 半導体 メモリ キオクシア"
-    - "site:xtech.nikkei.com 半導体 メモリ"
-    - "site:eetimes.jp 半導体 メモリ NAND"
-    - "site:pc.watch.impress.co.jp 半導体 メモリ SSD"
-    - "マイクロン メモリ AI"
-    - "TSMC 先端プロセス"
-    - "NAND フラッシュ 価格 ${CURRENT_YEAR}"
-    - "site:eetimes.jp 半導体 メモリ"
-
-  ko:
-    - "반도체 메모리 DRAM NAND 가격 상승 부족"
-    - "삼성전자 SK하이닉스 HBM4 양산 인증"
-    - "마이크론 메모리 공장 증설"
-    - "site:etnews.com 반도체 메모리"
-    - "site:mk.co.kr 반도체 메모리 삼성 SK하이닉스"
-    - "site:hankyung.com 반도체 메모리"
-
-gap_searches:
-  - query: "Samsung SK hynix Micron latest ${CURRENT_MONTH_EN} ${CURRENT_YEAR}"
-    locale: en
-  - query: "Kioxia Western Digital WDC SanDisk latest ${CURRENT_MONTH_EN} ${CURRENT_YEAR}"
-    locale: en
-  - query: "NAND flash DRAM price ${CURRENT_MONTH_EN} ${CURRENT_YEAR}"
-    locale: en
-  - query: "YMTC CXMT 长江存储 长鑫存储 最新 ${CURRENT_YEAR}年${CURRENT_MONTH_ZH}"
-    locale: zh-CN
-  - query: "SK hynix iHBM cooling technology ${CURRENT_MONTH_EN} ${CURRENT_YEAR}"
-    locale: en
-  - query: "Samsung V-NAND CMB prototype ${CURRENT_MONTH_EN} ${CURRENT_YEAR}"
-    locale: en
-  - query: "Pure Storage NetApp Dell enterprise storage AI ${CURRENT_MONTH_EN} ${CURRENT_YEAR}"
-    locale: en
+  verification:
+    technology:
+      en:
+        - "SK hynix iHBM cooling technology ${CURRENT_MONTH_EN} ${CURRENT_YEAR}"
+        - "Samsung V-NAND CMB prototype ${CURRENT_MONTH_EN} ${CURRENT_YEAR}"
+    platform_demand:
+      en:
+        - "NVIDIA Rubin HBM4 demand supply chain ${CURRENT_MONTH_EN} ${CURRENT_YEAR}"
+        - "AI rack-scale architecture HBM memory bandwidth storage demand ${CURRENT_MONTH_EN} ${CURRENT_YEAR}"
+      zh-CN:
+        - "英伟达 Rubin HBM4 需求 供应链 最新 ${CURRENT_YEAR}年${CURRENT_MONTH_ZH}"
+    supply_chain:
+      zh-CN:
+        - "YMTC CXMT 长江存储 长鑫存储 最新 ${CURRENT_YEAR}年${CURRENT_MONTH_ZH}"
+      en:
+        - "Samsung SK hynix Micron latest ${CURRENT_MONTH_EN} ${CURRENT_YEAR}"
+        - "Kioxia Western Digital WDC SanDisk latest ${CURRENT_MONTH_EN} ${CURRENT_YEAR}"
+    market_pricing:
+      en:
+        - "NAND flash DRAM price ${CURRENT_MONTH_EN} ${CURRENT_YEAR}"
