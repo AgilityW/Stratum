@@ -178,7 +178,7 @@ def test_daily_prompt_instructs_edge_signal_category():
 
     combined = system_prompt + user_prompt
     assert "【边缘信号】" in combined
-    assert "3-5 条" in combined
+    assert "5-8 条" in combined
     assert "Anthropic" in combined
     assert "为什么值得观察" in combined
 
