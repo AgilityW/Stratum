@@ -85,6 +85,21 @@ The wrapper exports:
 The pipeline writes these values into each `run_manifest.json`, so every report
 can be traced back to the deployed version and commit.
 
+## Production Delivery
+
+The Hermes production cron entrypoint must perform both delivery actions after a
+successful deployed daily run:
+
+- send the generated PDF from `paths.briefing_pdf` to the configured delivery
+  channel
+- copy the generated Markdown from `paths.briefing_md` into the Obsidian daily
+  briefing folder:
+  `/Users/ronnie/ObsidianSpace/RonnieVault/Wiki/DailyBrief/Storage`
+
+The Markdown archive step is part of the production cron wrapper, not the core
+pipeline. This keeps development and tests on local outputs while production
+adds the delivery-specific copy after the deployed run succeeds.
+
 ## Health Check
 
 ```bash
