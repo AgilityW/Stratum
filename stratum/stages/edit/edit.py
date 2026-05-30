@@ -40,7 +40,7 @@ from planner import build_block_plan, build_plan
 
 CST_WEEKDAYS = ["周一", "周二", "周三", "周四", "周五", "周六", "周日"]
 THREAD_ID_RE = re.compile(r"^et-[A-Za-z0-9][A-Za-z0-9_-]*$")
-NON_NEWS_SECTIONS = {"今日要点", "关注", "反向信号"}
+NON_NEWS_SECTIONS = {"今日要点", "行业要点", "产业信号", "特别关注", "关注", "反向信号"}
 EDGE_SIGNAL_KEYWORDS = (
     "anthropic",
     "模型公司",

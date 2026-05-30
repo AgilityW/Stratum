@@ -275,7 +275,7 @@ def _parse_source_line(line: str) -> tuple[list[str], str | None] | None:
     return sources, date_part
 
 
-NON_NEWS_SECTION_TITLES = {"今日要点", "关注", "反向信号"}
+NON_NEWS_SECTION_TITLES = {"今日要点", "行业要点", "产业信号", "特别关注", "关注", "反向信号"}
 
 
 def parse_markdown(path):

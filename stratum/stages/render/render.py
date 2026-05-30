@@ -135,7 +135,8 @@ def _clean_source_line_display(text: str) -> str:
     return re.sub(r"\s*\[(?:[A-Za-z]{2,3}(?:-[A-Za-z]{2,8}){0,2})\]", "", text).strip()
 
 
-NON_ITEM_SECTION_TITLES = {"关注", "反向信号", "今日要点"}
+MAJOR_SECTION_TITLES = {"今日要点", "行业要点", "产业信号", "特别关注", "反向信号"}
+NON_ITEM_SECTION_TITLES = MAJOR_SECTION_TITLES | {"关注"}
 
 
 def convert(md_text, tag_config=None):
@@ -196,7 +197,23 @@ def convert(md_text, tag_config=None):
             summary_collected = False
             continue
 
-        if s.startswith("# ") or s.startswith("## "):
+        if s.startswith("# "):
+            continue
+
+        if s.startswith("## "):
+            flush_item()
+            title = s[3:].strip()
+            title_esc = esc(title)
+            if "年" in title and "月" in title and "日" in title:
+                continue
+            if title in MAJOR_SECTION_TITLES:
+                in_section = True
+                section_kind = title if title == "今日要点" else ""
+                body_parts.append(f'<div class="major-section">{title_esc}</div>\n')
+            else:
+                in_section = False
+                section_kind = ""
+                body_parts.append(f'<div class="subsection-title">{title_esc}</div>\n')
             continue
 
         if s.startswith("### "):

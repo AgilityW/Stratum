@@ -287,6 +287,55 @@ Today's summary paragraph text here.
         assert '<div class="section-title">' in html
         assert '今日要点' in html
 
+    def test_convert_daily_major_chunks_and_dynamic_subsections(self):
+        md = """# Title
+## 2026年5月30日 · 周六
+
+## 今日要点
+
+Daily summary.
+
+---
+
+## 行业要点
+
+## HBM4 供应攻防
+
+### SK hynix HBM4 supply update
+
+Body.
+
+*Source: test.com · 2026年5月30日*
+
+---
+
+## 产业信号
+
+### 【边缘信号】Glass storage pilot line
+
+Worth watching.
+
+*Source: test.com · 2026年5月30日*
+
+---
+
+## 特别关注
+
+- HBM4 validation
+
+## 反向信号
+
+- Demand risk
+"""
+        html = convert(md)
+        assert '<div class="major-section">今日要点</div>' in html
+        assert '<div class="major-section">行业要点</div>' in html
+        assert '<div class="major-section">产业信号</div>' in html
+        assert '<div class="major-section">特别关注</div>' in html
+        assert '<div class="major-section">反向信号</div>' in html
+        assert '<div class="subsection-title">HBM4 供应攻防</div>' in html
+        assert "2026年5月30日 · 周六" not in html
+
     def test_convert_keeps_item_title_containing_section_word(self):
         md = """# Title
 

@@ -375,8 +375,9 @@ def test_run_block_edit_uses_template_and_category_blocks(monkeypatch, tmp_path)
         {"system": {"template": "daily.md"}},
     )
 
-    assert "## 主线" in briefing
-    assert "## 边缘信号" in briefing
+    assert "## 行业要点" in briefing
+    assert "## 产业信号" in briefing
+    assert "## 特别关注" in briefing
     assert "### Samsung HBM4 sample shipment" in briefing
     assert "### 【边缘信号】WD appoints Manuvir Das to board" in briefing
     assert artifacts["plan"]["version"] == 3

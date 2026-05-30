@@ -50,6 +50,9 @@ DRAM and NAND prices continue upward trend.
 ### 关注
 - Follow HBM4 certification progress
 
+### 特别关注
+- Watch HBM4 validation
+
 ### 反向信号
 - If hyperscaler capex drops sharply
 
@@ -71,6 +74,7 @@ class TestParseMarkdown:
         items = parse_markdown_from_str(SAMPLE_BRIEFING)
         titles = [i["title"] for i in items]
         assert "关注" not in titles
+        assert "特别关注" not in titles
         assert "反向信号" not in titles
 
     def test_keeps_news_titles_that_contain_section_words(self):

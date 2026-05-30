@@ -1,25 +1,25 @@
 # {{ title }}
 ## {{ date_label }}
 
-### 今日要点
+## 今日要点
 
 {{ summary }}
 
 ---
 
-## 主线
+## 行业要点
 
 {{ main_categories }}
 
 ---
 
-## 边缘信号
+## 产业信号
 
 {{ edge_items }}
 
 ---
 
-## 关注
+## 特别关注
 
 {{ focus }}
 
