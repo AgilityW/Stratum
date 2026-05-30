@@ -163,3 +163,8 @@ templates from `stratum/stages/edit/templates/`; legacy prompt fragments remain
 available for profiles that do not opt into v3. Domain prompt files under
 `domains/{id}/prompts/` are reserved assets for future override support; the
 current pipeline does not read them.
+
+The daily Markdown template is organized into five major chunks: `今日要点`,
+`行业要点`, `产业信号`, `特别关注`, and `反向信号`. Render turns those major
+chunks into visually prominent section headers and renders dynamic categories
+inside `行业要点` as lower-level subsection headers.

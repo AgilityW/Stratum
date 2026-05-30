@@ -83,6 +83,11 @@ Stage 8:    Render     → HTML + PDF       (template-driven)
 
 The orchestrator is currently daily-first (`make weekly/monthly/quarterly/yearly` intentionally exits), but the Edit engine has manifest profiles and Markdown templates for `daily`, `weekly`, `monthly`, `quarterly`, and `yearly`.
 
+The active daily report template uses five fixed major chunks: `今日要点`,
+`行业要点`, `产业信号`, `特别关注`, and `反向信号`. Dynamic evidence categories
+are rendered as subsections under `行业要点`; weak/edge items are grouped under
+`产业信号` and keep the `【边缘信号】` title prefix for machine counting.
+
 ## Quick Start
 
 ```bash

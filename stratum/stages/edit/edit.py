@@ -421,6 +421,11 @@ def repair_source_line_dates(markdown: str, articles: list[dict], run_date: str)
         repaired.extend(current["lines"])
 
     for line in lines:
+        if line.strip().startswith("## "):
+            flush_current()
+            current = None
+            repaired.append(line)
+            continue
         if line.strip().startswith("### "):
             flush_current()
             current = {
@@ -464,6 +469,11 @@ def repair_missing_source_lines(markdown: str, articles: list[dict], run_date: s
                     repaired.append(f"*{source} · {_article_date_label(article, run_date)}*")
 
     for line in lines:
+        if line.startswith("## "):
+            flush_current()
+            current = None
+            repaired.append(line)
+            continue
         if line.startswith("### "):
             flush_current()
             current = {
@@ -942,16 +952,33 @@ def fallback_contrarian(titles: list[str]) -> list[str]:
     ]
 
 
+def split_main_and_edge_markdown(item_markdown: str) -> tuple[str, str]:
+    main_blocks = []
+    edge_blocks = []
+    for block in re.split(r"\n---\n", item_markdown.strip()):
+        cleaned = block.strip()
+        if not cleaned:
+            continue
+        if cleaned.startswith("### 【边缘信号】"):
+            edge_blocks.append(cleaned)
+        else:
+            main_blocks.append(cleaned)
+    return "\n\n".join(main_blocks), "\n\n".join(edge_blocks)
+
+
 def assemble_full_markdown(title: str, run_date: str, sections: dict, item_markdown: str) -> str:
     cn_date = _format_cn_date(run_date)
+    main_markdown, edge_markdown = split_main_and_edge_markdown(item_markdown)
     parts = [f"# {title}\n## {cn_date}\n\n"]
-    parts.append("### 今日要点\n\n")
+    parts.append("## 今日要点\n\n")
     parts.append("".join(f"{sentence}\n" for sentence in sections["summary"]))
-    parts.append("\n---\n\n")
-    parts.append(item_markdown.strip())
-    parts.append("\n\n---\n\n### 关注\n\n")
+    parts.append("\n---\n\n## 行业要点\n\n")
+    parts.append(main_markdown.strip())
+    parts.append("\n\n---\n\n## 产业信号\n\n")
+    parts.append(edge_markdown.strip())
+    parts.append("\n\n---\n\n## 特别关注\n\n")
     parts.extend(f"- {item}\n" for item in sections["focus"])
-    parts.append("\n### 反向信号\n\n")
+    parts.append("\n## 反向信号\n\n")
     parts.extend(f"- {item}\n" for item in sections["contrarian"])
     parts.append("\n---\n\n*由 AI Agent 自动生成 · 每日 7:30 CST*\n")
     return "".join(parts)

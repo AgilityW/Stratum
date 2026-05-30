@@ -288,7 +288,13 @@ Important boundary:
 - Before writing, Edit applies a deterministic source-line repair: if a news
   item has no source/date line and clearly matches one input article, it adds
   that article's source and date. It does not invent sources for weak matches
-  and skips structural sections such as `今日要点`, `关注`, and `反向信号`.
+  and skips structural sections such as `今日要点`, `行业要点`, `产业信号`,
+  `特别关注`, and `反向信号`.
+- The active daily template has five major chunks: `今日要点`, `行业要点`,
+  `产业信号`, `特别关注`, and `反向信号`. `行业要点` contains the dynamic
+  evidence-derived category subsections; `产业信号` contains weak/edge signals
+  whose item titles still carry the `【边缘信号】` prefix for downstream
+  counting and validation compatibility.
 
 ### 8. validate
 

@@ -544,8 +544,15 @@ def test_run_daily_v2_writes_plan_driven_report(monkeypatch, tmp_path):
         }},
     )
 
+    assert "## 今日要点" in briefing
+    assert "## 行业要点" in briefing
+    assert "## 产业信号" in briefing
+    assert "## 特别关注" in briefing
+    assert "## 反向信号" in briefing
     assert "### Samsung HBM4 sample shipment" in briefing
     assert "### 【边缘信号】WD appoints Manuvir Das to board" in briefing
+    assert briefing.index("## 行业要点") < briefing.index("### Samsung HBM4 sample shipment")
+    assert briefing.index("## 产业信号") < briefing.index("### 【边缘信号】WD appoints Manuvir Das to board")
     assert artifacts["plan"]["counts"]["total_items"] == 3
     assert structured["threads"]
 
@@ -756,19 +763,35 @@ Samsung HBM4 samples moved forward for Nvidia qualification.
 
 
 def test_repair_missing_source_lines_skips_structural_sections():
-    md = """### 今日要点
+    md = """## 今日要点
 
 Samsung HBM4 samples moved forward for Nvidia qualification.
 
 ---
 
-### 关注
+## 行业要点
+
+### Samsung HBM4 samples move forward
+
+Samsung HBM4 samples moved forward for Nvidia qualification.
+
+---
+
+## 产业信号
+
+### 【边缘信号】Anthropic investment update
+
+Samsung HBM4 samples moved forward for Nvidia qualification.
+
+---
+
+## 特别关注
 
 - Samsung HBM4 samples moved forward for Nvidia qualification.
 
 ---
 
-### 反向信号
+## 反向信号
 
 - Samsung HBM4 samples moved forward for Nvidia qualification.
 """
@@ -783,7 +806,9 @@ Samsung HBM4 samples moved forward for Nvidia qualification.
 
     repaired = repair_missing_source_lines(md, articles, "2026-05-30")
 
-    assert "reuters.com" not in repaired
+    assert repaired.count("*reuters.com · 2026年5月30日*") == 2
+    assert "## 今日要点\n\nSamsung HBM4 samples moved forward" in repaired
+    assert "## 特别关注\n\n- Samsung HBM4 samples moved forward" in repaired
 
 
 def test_normalize_edge_signal_headings_prefixes_weak_titles():
