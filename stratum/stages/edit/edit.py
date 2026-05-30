@@ -252,13 +252,27 @@ def item_count_within_budget(markdown: str, output_cfg: dict) -> tuple[bool, str
     budget = output_cfg.get("_budget", {}) if isinstance(output_cfg, dict) else {}
     min_items = int(budget.get("min_items", 0) or 0)
     max_items = int(budget.get("max_items", 0) or 0)
+    main_min_items = int(budget.get("main_min_items", 0) or 0)
+    main_max_items = int(budget.get("main_max_items", 0) or 0)
+    edge_min_items = int(budget.get("edge_min_items", 0) or 0)
+    edge_max_items = int(budget.get("edge_max_items", 0) or 0)
     titles = markdown_news_titles(markdown)
     count = len(titles)
+    edge_count = sum(1 for title in titles if title.startswith("【边缘信号】"))
+    main_count = count - edge_count
     if min_items and count < min_items:
-        return False, f"generated {count} news items; minimum is {min_items}"
+        return False, f"generated {count} news items; total minimum is {min_items}"
     if max_items and count > max_items:
-        return False, f"generated {count} news items; maximum is {max_items}"
-    return True, f"generated {count} news items"
+        return False, f"generated {count} news items; total maximum is {max_items}"
+    if main_min_items and main_count < main_min_items:
+        return False, f"generated {main_count} main news items; main minimum is {main_min_items}"
+    if main_max_items and main_count > main_max_items:
+        return False, f"generated {main_count} main news items; main maximum is {main_max_items}"
+    if edge_min_items and edge_count < edge_min_items:
+        return False, f"generated {edge_count} edge-signal items; edge minimum is {edge_min_items}"
+    if edge_max_items and edge_count > edge_max_items:
+        return False, f"generated {edge_count} edge-signal items; edge maximum is {edge_max_items}"
+    return True, f"generated {count} news items ({main_count} main, {edge_count} edge-signal)"
 
 
 def _article_source_label(article: dict) -> str:
@@ -543,7 +557,7 @@ def main():
             user_prompt
             + "\n\n## 强制修正\n"
             + f"上一版不符合条数要求：{budget_detail}。\n"
-            + "请重写完整简报，必须严格满足 min/max item 数量；"
+            + "请重写完整简报，必须严格满足总条数、主线新闻条数、边缘信号条数要求；"
             + "保留 `---DATA---` 结构化 JSON；弱相关条目必须使用 `【边缘信号】` 前缀。\n"
             + "上一版标题如下：\n"
             + "\n".join(f"- {title}" for title in markdown_news_titles(briefing))

@@ -392,6 +392,10 @@ def assemble(
         "article_count": str(len(articles)),
         "min_items": str(budget.get("min_items", 6)),
         "max_items": str(budget.get("max_items", 10)),
+        "main_min_items": str(budget.get("main_min_items", 0)),
+        "main_max_items": str(budget.get("main_max_items", 0)),
+        "edge_min_items": str(budget.get("edge_min_items", 0)),
+        "edge_max_items": str(budget.get("edge_max_items", 0)),
     })
     system_parts.append(template)
 
@@ -400,7 +404,11 @@ def assemble(
     # ── Build user prompt: data section ──
     user_prompt = _build_data_section(articles, clusters, context, run_date, cfg.get("budget", {}))
     user_prompt += f"\n## 指令\n请生成 {cn_date} 的{title}。\n"
-    user_prompt += f"共 {len(articles)} 篇文章，选出 {budget.get('min_items', 6)}-{budget.get('max_items', 10)} 条最重要的新闻。\n"
+    user_prompt += (
+        f"共 {len(articles)} 篇文章，选出总计 {budget.get('min_items', 6)}-{budget.get('max_items', 10)} 条新闻；"
+        f"其中主线新闻 {budget.get('main_min_items', 0)}-{budget.get('main_max_items', 0)} 条，"
+        f"边缘信号 {budget.get('edge_min_items', 0)}-{budget.get('edge_max_items', 0)} 条。\n"
+    )
 
     # ── Structured output instructions ──
     output_cfg = dict(cfg["output"])

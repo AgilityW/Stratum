@@ -178,6 +178,8 @@ def test_daily_prompt_instructs_edge_signal_category():
 
     combined = system_prompt + user_prompt
     assert "【边缘信号】" in combined
+    assert "20-30 条" in combined
+    assert "16-18 条" in combined
     assert "5-8 条" in combined
     assert "Anthropic" in combined
     assert "为什么值得观察" in combined
@@ -432,6 +434,52 @@ Body.
     ok, detail = item_count_within_budget(md, {"_budget": {"min_items": 3, "max_items": 4}})
     assert not ok
     assert "minimum" in detail
+
+
+def test_item_count_within_budget_checks_main_and_edge_ranges():
+    md = """### 今日要点
+
+Summary.
+
+### Item 1
+
+Body.
+
+### Item 2
+
+Body.
+
+### 【边缘信号】Item 3
+
+Body.
+
+### 【边缘信号】Item 4
+
+Body.
+"""
+
+    budget = {
+        "_budget": {
+            "min_items": 4,
+            "max_items": 6,
+            "main_min_items": 2,
+            "main_max_items": 3,
+            "edge_min_items": 2,
+            "edge_max_items": 3,
+        },
+    }
+    ok, detail = item_count_within_budget(md, budget)
+    assert ok, detail
+
+    low_edge_budget = {"_budget": dict(budget["_budget"], edge_min_items=3)}
+    ok, detail = item_count_within_budget(md, low_edge_budget)
+    assert not ok
+    assert "edge minimum" in detail
+
+    low_main_budget = {"_budget": dict(budget["_budget"], main_min_items=3)}
+    ok, detail = item_count_within_budget(md, low_main_budget)
+    assert not ok
+    assert "main minimum" in detail
 
 
 def test_repair_source_line_dates_uses_matching_article_date():
