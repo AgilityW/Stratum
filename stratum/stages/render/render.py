@@ -135,6 +135,9 @@ def _clean_source_line_display(text: str) -> str:
     return re.sub(r"\s*\[(?:[A-Za-z]{2,3}(?:-[A-Za-z]{2,8}){0,2})\]", "", text).strip()
 
 
+NON_ITEM_SECTION_TITLES = {"关注", "反向信号", "今日要点"}
+
+
 def convert(md_text, tag_config=None):
     """Convert Stratum briefing markdown to HTML body. Domain-agnostic."""
     tag_config = tag_config or {}
@@ -202,7 +205,7 @@ def convert(md_text, tag_config=None):
             title = s[4:].strip()
             title_esc = esc(title)
 
-            if any(kw in title for kw in ["关注", "反向信号", "今日要点"]):
+            if title in NON_ITEM_SECTION_TITLES:
                 in_section = True
                 section_kind = title if title == "今日要点" else ""
                 body_parts.append(f'<div class="section-title">{title_esc}</div>\n')

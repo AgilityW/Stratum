@@ -287,6 +287,34 @@ Today's summary paragraph text here.
         assert '<div class="section-title">' in html
         assert '今日要点' in html
 
+    def test_convert_keeps_item_title_containing_section_word(self):
+        md = """# Title
+
+---
+
+### Sandisk demand remains strong
+
+Body for the ninth item.
+
+*Source: test.com · 2026年5月30日*
+
+### HBM 供应受关注
+
+Body for the tenth item.
+
+*Source: test.com · 2026年5月30日*
+
+### 四十年一遇的存储短缺
+
+Body for the eleventh item.
+
+*Source: test.com · 2026年5月30日*"""
+        html = convert(md)
+        assert '<span class="num">1</span>Sandisk demand remains strong' in html
+        assert '<span class="num">2</span>HBM 供应受关注' in html
+        assert '<span class="num">3</span>四十年一遇的存储短缺' in html
+        assert '<div class="section-title">HBM 供应受关注</div>' not in html
+
     def test_convert_bullet_in_body(self):
         md = """# Title
 
