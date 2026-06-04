@@ -65,6 +65,7 @@ ACTIVE_DOC_FILES = [
     "DEPLOYMENT.md",
     "ENGINEERING_RULES.md",
     "MCP_ADAPTER.md",
+    "STORAGE_BASELINE.md",
     "STORAGE_ARCHITECTURE.md",
     "TODO.md",
 ]
@@ -822,6 +823,38 @@ def test_storage_daily_architecture_documents_module_stage_data_flow():
     ]
     for phrase in required_phrases:
         assert phrase in text
+
+
+def test_storage_baseline_documents_explicit_zero_point_one_release_checklist():
+    text = (PROJECT_ROOT / "docs" / "STORAGE_BASELINE.md").read_text()
+    required_phrases = [
+        "explicit `0.1` baseline",
+        "Canonical Run Commands",
+        "Required Artifacts",
+        "Validate And Repair Expectations",
+        "Deployment Path",
+        "Rollback Rule",
+        "make daily DOMAIN=storage DATE=2026-05-30",
+        "make run-deployed-daily",
+        "run_manifest.json",
+        "validate_report.json",
+        "repair_report.json",
+        "Storage_Daily_Briefing_{date}.md",
+        "Storage_Daily_Briefing_{date}.html",
+        "Storage_Daily_Briefing_{date}.pdf",
+    ]
+    for phrase in required_phrases:
+        assert phrase in text
+
+
+def test_active_runtime_docs_reference_storage_baseline():
+    deployment = (PROJECT_ROOT / "docs" / "DEPLOYMENT.md").read_text()
+    orchestrator = (PROJECT_ROOT / "stratum" / "orchestrator" / "SCOPE.md").read_text()
+    docs_map = (PROJECT_ROOT / "docs" / "README.md").read_text()
+
+    assert "`STORAGE_BASELINE.md`" in docs_map
+    assert "STORAGE_BASELINE.md" in deployment
+    assert "docs/STORAGE_BASELINE.md" in orchestrator
 
 
 def test_deployment_docs_separate_report_artifacts_from_database_state():

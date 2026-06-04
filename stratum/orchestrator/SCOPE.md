@@ -9,6 +9,8 @@ tracking, and temporal profiles into one complete pipeline run.
 The current code entrypoint is `pipeline.py`. Daily runs are orchestrated
 directly through the 8-stage chain; weekly/monthly/quarterly/yearly runs are
 delegated to the DB-native timescale temporal runner in `stratum/temporal`.
+The canonical Storage daily `0.1` release checklist lives in
+`docs/STORAGE_BASELINE.md`.
 
 ## Modules
 

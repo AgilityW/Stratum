@@ -159,6 +159,13 @@ def _write_golden_run_dir(run_dir: Path) -> Path:
     with open(run_dir / "verified.jsonl", "w") as f:
         for row in verified_rows:
             f.write(json.dumps(row, ensure_ascii=False) + "\n")
+    _write_json(run_dir / "verified.stats.json", {
+        "domain": "storage",
+        "date": "2026-05-30",
+        "total": 2,
+        "verified": 2,
+        "rejected": 0,
+    })
 
     articles = [
         {
@@ -329,6 +336,54 @@ def _write_golden_run_dir(run_dir: Path) -> Path:
         "causal_edges": [],
         "judgments": [],
     })
+    _write_json(run_dir / "story_context.json", {
+        "domain": "storage",
+        "generated_at": "2026-05-30T12:00:00+08:00",
+        "threads": [],
+        "entities": [],
+        "judgments": [],
+    })
+    _write_json(run_dir / "briefing_plan.json", {
+        "domain": "storage",
+        "date": "2026-05-30",
+        "selected_items": [
+            {"id": "main-1", "title": "HBM4 Production Milestones", "cluster_ids": ["sc-storage-0001"]}
+        ],
+        "omitted_items": [],
+    })
+    _write_json(run_dir / "briefing_chunks.json", [
+        {
+            "section": "industry-highlights",
+            "status": "ok",
+            "items": [
+                {"id": "main-1", "title": "HBM4 Production Milestones"}
+            ],
+        }
+    ])
+    _write_json(run_dir / "edit_trace.json", {
+        "domain": "storage",
+        "date": "2026-05-30",
+        "timescale": "daily",
+        "block_count": 1,
+        "fallbacks": [],
+    })
+    _write_json(run_dir / "validate_report.json", {
+        "status": "ok",
+        "items": 1,
+        "violations": 0,
+        "summary": {"invalid_items": 0},
+        "details": [],
+    })
+    _write_json(run_dir / "repair_report.json", {
+        "status": "no_changes",
+        "input_status": "ok",
+        "input_violations": 0,
+        "validate_rounds": 1,
+        "rewritten_items": 0,
+        "dropped_items": 0,
+        "unchanged_invalid_items": 0,
+        "item_actions": [],
+    })
     (run_dir / f"{artifact_base}.md").write_text(
         "# Storage Daily Briefing\n\nGenerated sample briefing.\n"
     )
@@ -343,11 +398,16 @@ def _write_golden_run_dir(run_dir: Path) -> Path:
         "date": "2026-05-30",
         "status": "ok",
         "stages": [
+            {"stage": "watchlist", "status": "success", "output": str(run_dir / "watchlist_stats.json")},
             {"stage": "search", "status": "success", "output": str(run_dir / "raw.json")},
             {"stage": "enrich", "status": "success", "output": str(run_dir / "enriched.json")},
             {"stage": "verify", "status": "success", "output": str(run_dir / "verified.jsonl")},
             {"stage": "normalize", "status": "success", "output": str(run_dir / "articles.jsonl")},
             {"stage": "cluster", "status": "success", "output": str(run_dir / "clusters.json")},
+            {"stage": "edit", "status": "success", "output": str(run_dir / f"{artifact_base}.md")},
+            {"stage": "validate", "status": "success", "output": str(run_dir / "validate_report.json")},
+            {"stage": "repair", "status": "skipped", "output": str(run_dir / "repair_report.json")},
+            {"stage": "validate_recheck", "status": "success", "output": str(run_dir / "validate_report.json")},
             {"stage": "render", "status": "success", "output": str(run_dir / f"{artifact_base}.html")},
             {"stage": "manifest", "status": "success", "output": str(manifest_path)},
         ],
@@ -357,9 +417,16 @@ def _write_golden_run_dir(run_dir: Path) -> Path:
             "verified": str(run_dir / "verified.jsonl"),
             "articles": str(run_dir / "articles.jsonl"),
             "clusters": str(run_dir / "clusters.json"),
+            "story_context": str(run_dir / "story_context.json"),
+            "briefing_plan": str(run_dir / "briefing_plan.json"),
+            "briefing_chunks": str(run_dir / "briefing_chunks.json"),
+            "edit_trace": str(run_dir / "edit_trace.json"),
             "briefing_md": str(run_dir / f"{artifact_base}.md"),
             "briefing_html": str(run_dir / f"{artifact_base}.html"),
             "briefing_pdf": str(run_dir / f"{artifact_base}.pdf"),
+            "validate_report": str(run_dir / "validate_report.json"),
+            "repair_report": str(run_dir / "repair_report.json"),
+            "watchlist_stats": str(run_dir / "watchlist_stats.json"),
             "run_manifest": str(manifest_path),
         },
         "summary": {"articles": 2, "clusters": 1},
@@ -373,6 +440,18 @@ def current_run_dir(tmp_path) -> Path:
     if run_dir is None:
         return _write_golden_run_dir(tmp_path / "storage" / "data" / "2026-05-30")
     return run_dir
+
+
+@pytest.fixture
+def baseline_run_dir(tmp_path, current_run_dir) -> Path:
+    required = {
+        "watchlist_stats.json",
+        "validate_report.json",
+        "repair_report.json",
+    }
+    if all((current_run_dir / name).exists() for name in required):
+        return current_run_dir
+    return _write_golden_run_dir(tmp_path / "storage-baseline" / "data" / "2026-05-30")
 
 
 class TestPathDiscovery:
@@ -506,6 +585,46 @@ class TestCrossReferenceIntegrity:
                     missing.append(f"{stage.get('stage')}: {output}")
 
         assert not missing, "Manifest points at missing outputs:\n" + "\n".join(missing)
+
+    def test_storage_daily_baseline_required_artifacts_exist_if_manifest_present(self, baseline_run_dir):
+        run_dir = baseline_run_dir
+        if not (run_dir / "run_manifest.json").exists():
+            pytest.skip("No run_manifest.json")
+
+        required = [
+            "raw.json",
+            "raw.stats.json",
+            "watchlist_stats.json",
+            "verified.jsonl",
+            "verified.stats.json",
+            "articles.jsonl",
+            "clusters.json",
+            "story_context.json",
+            "briefing_plan.json",
+            "briefing_chunks.json",
+            "edit_trace.json",
+            "validate_report.json",
+            "repair_report.json",
+            "run_manifest.json",
+            f"Storage_Daily_Briefing_{run_dir.name}.md",
+            f"Storage_Daily_Briefing_{run_dir.name}.html",
+            f"Storage_Daily_Briefing_{run_dir.name}.pdf",
+        ]
+        missing = [name for name in required if not (run_dir / name).exists()]
+        assert not missing, "Storage daily 0.1 baseline artifacts missing:\n" + "\n".join(missing)
+
+    def test_storage_daily_baseline_manifest_records_clean_delivery_state(self, baseline_run_dir):
+        path = baseline_run_dir / "run_manifest.json"
+        if not path.exists():
+            pytest.skip("No run_manifest.json")
+
+        manifest = json.loads(path.read_text())
+        assert manifest.get("status") == "ok"
+        stages = {stage.get("stage"): stage for stage in manifest.get("stages", [])}
+
+        assert stages["validate"]["status"] == "success"
+        assert stages["render"]["status"] == "success"
+        assert stages["repair"]["status"] in {"success", "skipped"}
 
 
 class TestWatchlistStatsConsistency:

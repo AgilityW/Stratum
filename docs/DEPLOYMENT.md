@@ -42,6 +42,9 @@ Production and testing should use different `db_dir` roots. Both can still
 share the same domain namespace, for example `storage/storage.db`, but they
 must not point at the same physical database.
 
+For the canonical Storage daily `0.1` release checklist, required artifacts,
+validate/repair expectations, and rollback rule, see `STORAGE_BASELINE.md`.
+
 ## Release
 
 Create a release from a clean development tree:
