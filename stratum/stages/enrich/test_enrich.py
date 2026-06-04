@@ -1,12 +1,8 @@
 """Tests for enrich stage — date extraction from raw search results."""
 import json
 import pytest
-import sys
-import os
 
-# Add stages to path
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../../.."))
-from stratum.stages.enrich.enrich import extract_date, enrich_article
+from stratum.stages.enrich import enrich_article, extract_date
 
 
 class TestEnrichExtractDate:
@@ -61,6 +57,12 @@ class TestEnrichExtractDate:
 
 class TestEnrichArticle:
     """Article-level enrichment."""
+
+    def test_package_exports_stable_enrich_surface(self):
+        from stratum.stages import enrich as enrich_pkg
+
+        assert enrich_pkg.extract_date is extract_date
+        assert enrich_pkg.enrich_article is enrich_article
 
     def test_respects_existing_date(self):
         article = {

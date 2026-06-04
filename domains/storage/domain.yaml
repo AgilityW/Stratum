@@ -620,6 +620,7 @@ pipeline:
       - tomsguide.com
       - tomshardware.com
       - tomshardware.jp
+      - tomshardware.co.jp
       - anandtech.com
       - blocksandfiles.com
       - eet-china.com
@@ -628,6 +629,11 @@ pipeline:
       - eetimes.jp
       - digitimes.com
       - digitimes.com.tw
+      - techpowerup.com
+      - wccftech.com
+      - businesskorea.co.kr
+      - kedglobal.com
+      - chinastarmarket.cn
       - moneydj.com
       - ithome.com
       - ithome.com.tw
@@ -862,6 +868,16 @@ pipeline:
     搜狐: "sohu.com"
     aastocks: "aastocks.com"
     tradingkey: "tradingkey.com"
+    techpowerup: "techpowerup.com"
+    wccftech: "wccftech.com"
+    businesskorea: "businesskorea.co.kr"
+    kedglobal: "kedglobal.com"
+    "korea economic daily": "kedglobal.com"
+    "chinastarmarket": "chinastarmarket.cn"
+    "科创板日报": "chinastarmarket.cn"
+    anandtech: "anandtech.com"
+    "tom's hardware": "tomshardware.com"
+    tomshardware: "tomshardware.com"
 
   # ── Fiscal Year Mappings ──
   fiscal_year_mappings:
@@ -1055,6 +1071,166 @@ source_registry:
       category: media
       fetch_interval_hours: 12
       status: active
+
+    # ── RSS: Storage media (2026-06-01 expansion) ──
+    - id: anandtech-rss
+      name: "AnandTech RSS"
+      urls:
+        - "https://www.anandtech.com/rss"
+      access: rss
+      locale: en
+      category: media
+      fetch_interval_hours: 12
+      status: inactive
+      note: "Site acquired by Future PLC, merged into Tom's Hardware — RSS endpoint times out. Use Tom's Hardware RSS instead."
+
+    - id: tomshardware-rss
+      name: "Tom's Hardware RSS"
+      urls:
+        - "https://www.tomshardware.com/feeds/all"
+      access: rss
+      locale: en
+      category: media
+      fetch_interval_hours: 12
+      status: active
+      note: "Memory/SSD reviews, pricing news, high frequency"
+
+    - id: blocksandfiles-rss
+      name: "Blocks & Files RSS"
+      urls:
+        - "https://blocksandfiles.com/feed/"
+      access: rss
+      locale: en
+      category: media
+      fetch_interval_hours: 12
+      status: active
+      note: "Enterprise storage, AI infra storage"
+
+    - id: theregister-rss
+      name: "The Register RSS"
+      urls:
+        - "https://www.theregister.com/headlines/enterprise/"
+      access: rss
+      locale: en
+      category: media
+      fetch_interval_hours: 12
+      status: active
+      note: "Enterprise IT storage, data center"
+
+    - id: digitimes-rss
+      name: "Digitimes RSS"
+      urls:
+        - "https://www.digitimes.com/rss/dailynews.xml"
+      access: rss
+      locale: en
+      category: media
+      fetch_interval_hours: 12
+      status: active
+      note: "Taiwan semiconductor supply chain — DRAM/NAND fabs"
+
+    - id: techpowerup-rss
+      name: "TechPowerUp RSS"
+      urls:
+        - "https://www.techpowerup.com/rss/"
+      access: rss
+      locale: en
+      category: media
+      fetch_interval_hours: 12
+      status: active
+      note: "SSD/DRAM new products, memory reviews"
+
+    - id: wccftech-rss
+      name: "WCCFTech RSS"
+      urls:
+        - "https://wccftech.com/feed/"
+      access: rss
+      locale: en
+      category: media
+      fetch_interval_hours: 12
+      status: inactive
+      note: "403 Cloudflare blocking — RSS collector cannot bypass. Covered by Bocha/Tavily search."
+
+    - id: tomshardware-jp-rss
+      name: "Tom's Hardware JP RSS"
+      urls:
+        - "https://www.tomshardware.co.jp/feed/"
+      access: rss
+      locale: ja
+      category: media
+      fetch_interval_hours: 24
+      status: inactive
+      note: "RSS endpoint times out. Covered by Bocha/Tavily search with include_domains: [tomshardware.jp]."
+
+    - id: pcwatch-rss
+      name: "PC Watch RSS"
+      urls:
+        - "https://pc.watch.impress.co.jp/data/rss/1.0/pcw/feed.rdf"
+      access: rss
+      locale: ja
+      category: media
+      fetch_interval_hours: 24
+      status: active
+      note: "Japanese semiconductor industry news"
+
+    # ── RSS: Korea semiconductor ──
+    - id: businesskorea-rss
+      name: "BusinessKorea RSS"
+      urls:
+        - "https://www.businesskorea.co.kr/rss/gns_allArticle.xml"
+      access: rss
+      locale: en
+      category: media
+      fetch_interval_hours: 24
+      status: active
+      note: "Korean semiconductor industry English coverage — Samsung, SK hynix"
+
+    - id: kedglobal-rss
+      name: "Korea Economic Daily Global RSS"
+      urls:
+        - "https://www.kedglobal.com/rss/kedGlobalEnglish.xml"
+      access: rss
+      locale: en
+      category: media
+      fetch_interval_hours: 24
+      status: active
+      note: "KED Global English — Korean semiconductor policy, investment"
+
+    # ── URL search: supplementary domain-scoped probes ──
+    - id: semianalysis-probe
+      name: "SemiAnalysis (URL search supplement)"
+      urls: []
+      access: search
+      locale: en
+      category: analyst
+      fetch_interval_hours: 24
+      status: review
+      suppress_collect: true
+      note: "Covered by site:semianalysis.com queries — RSS not available"
+
+    - id: chinastarmarket-probe
+      name: "China Star Market (URL search supplement)"
+      urls: []
+      access: search
+      locale: zh-CN
+      category: media
+      fetch_interval_hours: 24
+      status: review
+      suppress_collect: true
+      note: "Covered by site:chinastarmarket.cn queries for CXMT/YMTC IPO updates"
+
+  candidate_sources:
+    - id: semianalysis-rss-review
+      name: "SemiAnalysis RSS / feed discovery"
+      urls:
+        - "https://semianalysis.com/"
+      access: sitemap
+      locale: en
+      category: analyst
+      status: review
+      expected_yield: medium
+      date_quality: medium
+      channel_owner: sourcing-watchlist
+      note: "Review whether SemiAnalysis exposes a stable feed or sitemap-backed listing worth promoting."
 
   # ── Per-access-type settings ──
   defaults:

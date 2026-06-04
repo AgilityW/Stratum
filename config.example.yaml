@@ -101,14 +101,21 @@ llm:
   endpoint: "https://api.deepseek.com/v1/chat/completions"
   model: "deepseek-v4-pro"
 
-# ── Paths (edit for your machine) ──
-output_dir: "$HOME/WorkSpace/Stratum"
-health_data_dir: "$HOME/WorkSpace/Stratum/health-data"
+# ── Runtime roots (edit for your machine) ──
+# `reports_dir` is the artifact store: Markdown, HTML, PDF, raw/stage sidecars,
+# and run manifests are written under {reports_dir}/{domain}/data/...
+# `db_dir` is the state store: SQLite lives under {db_dir}/{domain}/{domain}.db.
+# Keep reports_dir and db_dir separate so report retention, DB backups,
+# migrations, and production permissions can be managed independently.
+output_dir: "$HOME/stratum"
+reports_dir: "$HOME/stratum/reports"
+db_dir: "$HOME/stratum/db"
+health_data_dir: "$HOME/stratum/health"
 chrome_path: "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
 
 # ── Deployment defaults ──
 # Deployment is separate from development. Production runs should be launched
 # through scripts/run_deployed_daily.sh from a tag-locked release directory.
 deployment:
-  root: "$HOME/WorkSpace/Stratum/deployments"
+  root: "$HOME/stratum/deployments"
   environment: "production"

@@ -7,9 +7,9 @@ usage() {
   cat <<'USAGE'
 Usage:
   scripts/deploy.sh --version v0.7.0 --env production --domain storage \
-    --root "$HOME/WorkSpace/Stratum/deployments" \
+    --root "$HOME/stratum/deployments" \
     --config /secure/stratum/config.yaml \
-    --output-dir "$HOME/WorkSpace/Stratum/Reports"
+    --output-dir "$HOME/stratum/reports"
 
 Required:
   --version     Existing Git tag to deploy. Branches and bare commits are rejected.
@@ -144,4 +144,4 @@ echo "   current:    $CURRENT_LINK -> $RELEASE_DIR"
 echo "   manifest:   $MANIFEST"
 echo ""
 echo "Run:"
-echo "   scripts/run_deployed_daily.sh --root \"$DEPLOY_ROOT\" --env \"$ENV_NAME\" --domain \"$DOMAIN\" --date YYYY-MM-DD"
+echo "   scripts/run_daily.sh --root \"$DEPLOY_ROOT\" --env \"$ENV_NAME\" --domain \"$DOMAIN\" --date YYYY-MM-DD"

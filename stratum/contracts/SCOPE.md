@@ -1,80 +1,149 @@
-# contracts - 共享数据契约
+# contracts - shared data contracts
 
 ## Purpose
 
-`stratum/contracts` 放跨模块共享的数据模型和 JSON Schema。它的职责是让 stage、subsystem、测试对同一批结构有共同名字和字段预期。
+`stratum/contracts` stores shared data models and JSON Schemas used across
+modules. Its job is to give stages, subsystems, and tests common names and
+field expectations for shared structures.
+
+Project-wide contract boundary rules live in `docs/ENGINEERING_RULES.md`. This
+module is not the whole contract system. It owns shared contracts only; local
+contracts can stay with their producing module when the data shape is local to
+that boundary.
 
 ## Current Contents
 
 | File | Role |
 |:---|:---|
-| `raw_search_result.json` | Search and collector raw discovery result contract |
-| `raw_search_stats.json` | Search execution stats and diagnostics sidecar contract |
-| `collector_stats.json` | Collector sidecar and source-health handoff contract |
+| `search_result.json` | Search and watchlist raw discovery result contract |
+| `search_stats.json` | Search execution stats and diagnostics sidecar contract |
+| `watchlist_stats.json` | Watchlist sidecar and source-health handoff contract |
 | `verified_article.json` | Verify stage output contract |
 | `article_record.json` | Normalize stage article contract, including lineage fields used by downstream stages |
 | `story_cluster.json` | Cluster stage output contract |
+| `validate_report.json` | Validate stage item-level findings and sidecar contract |
+| `repair_report.json` | Repair stage action telemetry and sidecar contract |
+| `signal_awareness.json` | Independent signal-awareness detection payload contract |
+| `signal_plan.json` | Independent signal-awareness preparation plan contract |
+| `capability_invocation.json` | Capability-layer MCP-ready invocation envelope contract |
+| `capability_result.json` | Capability-layer MCP-ready result envelope contract |
+| `agent_task.json` | Agent-facing task invocation envelope contract |
+| `task_result.json` | Agent-facing task result envelope contract |
 | `event_thread.py` | cross-temporal event-thread dataclasses and scale helpers |
+| `report_window.py` | shared report profile + concrete date-window contract |
+| `pipeline_artifacts.py` | stable stage artifact filename and artifact-type contract |
 | `__init__.py` | re-export for `event_thread.py` |
 
 ## Boundaries
 
-### 做什么
+### Owns
 
-- 定义可被多个模块共享的数据形状。
-- 提供轻量 helper，例如 scale order 查询。
-- 为 pytest schema/integrity tests 提供稳定文件位置。
-- 记录跨 stage 需要保留的来源线索，例如 `engine`、`source_type_hint`、`canonical_url`、`date_source`。
+- Define data shapes shared by multiple modules.
+- Provide lightweight helpers such as scale-order lookup.
+- Provide stable file locations for pytest schema and integrity tests.
+- Preserve lineage fields that must cross stages, such as `engine`,
+  `source_type_hint`, `canonical_url`, and `date_source`.
+- Provide testable public structures for module-to-module and stage-to-stage
+  handoffs.
 
-### 不做什么
+### Does Not Own
 
-- 不包含领域知识。
-- 不访问网络、DB 或文件系统运行时数据。
-- 不实现 pipeline stage 算法。
+- Does not contain domain knowledge.
+- Does not access network, DB, or runtime filesystem data.
+- Does not implement pipeline stage algorithms.
 
 ## Import Rule
 
-Python dataclass 契约优先通过顶层导入：
+Python dataclass contracts should be imported through the package root:
 
 ```python
 from stratum.contracts import CrossTemporalState, BriefingRef
 ```
 
-JSON Schema 由测试和 stage 通过路径读取。
+JSON Schemas are read by tests and stages through file paths.
+
+`report_window.py` is the shared contract that keeps report scale/profile
+separate from the actual covered date range. Standard periods such as
+`2026-W22` still resolve normally, while custom user-selected windows use
+stable ids such as `custom-2026-05-01_to_2026-07-31`.
 
 ## Discovery Contract Notes
 
-`raw_search_result.json` 同时覆盖 Search API 结果和 collectors sidecar 结果。`engine` 是自由字符串，因为实际来源可能是 `bocha`、`tavily`，也可能是 `rss:<source>`、`direct_fetch:<source>` 等采集策略 ID。
+`search_result.json` covers both Search API results and watchlist sidecar
+results. `engine` is a free string because the actual source can be `bocha`,
+`tavily`, or watchlist strategy IDs such as `rss:<source>` and
+`direct_fetch:<source>`.
 
-`raw_search_stats.json` 覆盖 `raw.stats.json`，也就是 Search 的执行与质量诊断
-sidecar。它要求 `queries` 保留每个 `QueryStats` 的 `query_id`、engine、
-status、result count、locale/intent/dimension、latency/error 和可选
-`include_domains`；`diagnostics` 覆盖 locale/source-type/dimension 产出、
-source-type floor gaps、domain-filter coverage、top source domains 和低产出
-queries。这个契约保护 DB query-stat ingest、Search recall debug 和后续
-coverage 调优不被字段漂移破坏。
+`search_stats.json` covers `raw.stats.json`, the Search execution and
+quality diagnostics sidecar. It requires `queries` to preserve each
+`QueryStats` record's `query_id`, engine, status, result count,
+locale/intent/dimension, latency/error, and optional `include_domains`.
+`diagnostics` covers locale/source-type/dimension output, source-type floor
+gaps, domain-filter coverage, top source domains, and low-yield queries. This
+contract protects DB query-stat ingest, Search recall debugging, and later
+coverage tuning from field drift.
 
-`collector_stats.json` 覆盖 collector source-level health sidecar。它是
-Collectors 与 Monitoring 之间的共享契约，包含每个 source 的 access、status、
-hits、duration、dated count 和可选 error。未知采集方式使用
-`access: unknown` 与 `status: unsupported`，错误文本保留原始配置值。
+`watchlist_stats.json` covers the watchlist source-level health sidecar. It is
+the shared contract between Watchlists and Monitoring, with each source's
+access, status, hits, duration, dated count, and optional error. Unknown
+watchlist access methods use `access: unknown` and `status: unsupported`, while
+the error text preserves the original config value.
 
-`date_source` 表示日期从哪里来，当前允许 `search_api`、`web_extract`、`snippet_regex`、`url_path`、`freshness_window`、`none`。Verify 和 Normalize 应保留这个字段。
-`date_confidence` 是 Verify 对该 lineage 的质量解释：`search_api`、`web_extract`、`url_path` 为 high，`freshness_window` 为 medium，`snippet_regex` 为 low，`none` 为 none。低置信但仍通过默认策略的记录会带 `quality_flags`，让下游能审计弱日期证据。
+`date_source` records where the date came from. Current allowed values are
+`search_api`, `web_extract`, `snippet_regex`, `url_path`, `freshness_window`,
+and `none`. Verify and Normalize should preserve this field.
+`date_confidence` is Verify's quality explanation for that lineage:
+`search_api`, `web_extract`, and `url_path` are high; `freshness_window` is
+medium; `snippet_regex` is low; `none` is none. Low-confidence records that
+still pass the default policy carry `quality_flags` so downstream stages can
+inspect the risk.
 
-`canonical_url` 是跨 Search、Collectors、Verify、Normalize 的稳定文章身份键。原始 `url` 应保留用于溯源和打开页面，但去重、ArticleRecord `id`、`content_hash` 应优先使用 canonical URL。
+VerifiedArticle may carry `corroboration_score`, `corroboration_level`, and
+`corroborating_sources`. These fields are evidence-strength annotations from
+Verify's acceptance policy; they are not a default rejection gate.
+
+`article_record.json` keeps display labels in `entities` and `terms` while
+adding canonical `entity_ids` and `term_ids` for algorithm consumers. It also
+keeps legacy `numeric_claims` as string snippets for compatibility and adds
+`typed_numeric_claims`. Typed claims include `claim_type`, text, numeric value,
+unit, direction, and metric, with current claim types covering price changes,
+ASP, yield, capacity, CAPEX, shipments, and revenue.
+
+`canonical_url` is the stable article identity key across Search, Watchlists,
+Verify, and Normalize. The original `url` should remain available for lineage
+and page opening, but dedupe, ArticleRecord `id`, and `content_hash` should
+prefer the canonical URL.
 
 ArticleRecord `source_locale` uses the same BCP47-style boundary as Search
 query locales: language tags plus optional script/region subtags such as `en`,
 `en-US`, `zh-CN`, `zh-cn`, or `zh-Hans-CN`.
 
-`query_dimension` 是 Search 配置传入 Normalize 的意图标签，例如 `baseline`、`verification`、`supply_chain`。它必须随 ArticleRecord 保留，方便后续分析哪些新闻来自基线搜索、验证搜索或专项维度。
+`query_dimension` is the intent/dimension label passed from Search config into
+Normalize, such as `baseline`, `verification`, or `supply_chain`. It must be
+preserved on ArticleRecord so later analysis can identify which items came from
+baseline search, verification search, or a dedicated coverage dimension.
 
-`story_cluster.json` 以 `article_ids` 作为主 join key，同时允许 `source_domains` 和 `canonical_urls` 作为审计字段。它们不替代 `articles.jsonl`，只用于快速检查来源混合、重复 URL 和聚类解释性。
+`story_cluster.json` uses `article_ids` as the primary join key and also allows
+`source_domains` and `canonical_urls` as audit fields. Those fields do not
+replace `articles.jsonl`; they only support quick checks of source mix,
+duplicate URLs, and cluster explainability.
 StoryCluster id follows `sc-{domain_id}-{seq:04d}`. The `domain_id` part is
 the domain directory id, so the schema allows lowercase letters, digits,
 underscores, and hyphens.
 
 ## Pending Consolidation
 
-`stratum/subsystems/story-tracking/story_contracts.py` 目前仍是 story-tracking 的本地契约。以后如果多个 subsystem 同时依赖 EventRecord/CausalEdge/Judgment，再迁入 `stratum/contracts`。
+`stratum/subsystems/story_tracking/story_contracts.py` remains a local
+`stratum.subsystems.story_tracking` contract for now. If multiple subsystems depend on
+EventRecord/CausalEdge/Judgment later, move those structures into
+`stratum/contracts`.
+
+`capability_invocation.json` and `capability_result.json` are additive
+capability-layer transport-neutral envelopes for future MCP adapters. They do
+not replace the underlying stage, subsystem, or DB contracts returned inside
+the payload.
+
+`agent_task.json` and `task_result.json` are additive task-layer
+envelopes for future agent orchestrators. They are intentionally narrow and
+must remain downstream of `stratum.capabilities`, not upstream of production
+pipeline control.

@@ -38,7 +38,7 @@ def _resolve_workspace() -> str:
             return os.path.expandvars(os.path.expanduser(db_dir))
 
     # Fallback
-    return os.path.expanduser('~/WorkSpace/Stratum/DataBase')
+    return os.path.expanduser('~/stratum/db')
 
 
 def get_db_path(domain: str) -> str:
@@ -80,3 +80,9 @@ def _ensure_migrations(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE queries ADD COLUMN dimension TEXT DEFAULT 'general'")
     if "include_domains" not in query_columns:
         conn.execute("ALTER TABLE queries ADD COLUMN include_domains TEXT")
+
+    event_columns = {row["name"] for row in conn.execute("PRAGMA table_info(events)").fetchall()}
+    if "status" not in event_columns:
+        conn.execute("ALTER TABLE events ADD COLUMN status TEXT DEFAULT 'emerging'")
+    if "priority" not in event_columns:
+        conn.execute("ALTER TABLE events ADD COLUMN priority INTEGER DEFAULT 3")

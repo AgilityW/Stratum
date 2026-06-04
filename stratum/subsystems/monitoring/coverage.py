@@ -9,6 +9,8 @@ import os
 from collections import defaultdict
 from datetime import datetime, timezone, timedelta
 
+from stratum.subsystems.monitoring.engine_health import score_search_engine_health
+
 CST = timezone(timedelta(hours=8))
 
 IDEAL_TYPES = {"official", "analyst", "media"}

@@ -18,13 +18,13 @@ daily:
       enabled: true
       schema: _schemas/judgment.schema.json
   budget:
-    max_items: 30
-    min_items: 20
+    max_items: 24
+    min_items: 16
     main_max_items: 18
-    main_min_items: 16
+    main_min_items: 12
     edge_max_items: 8
-    edge_min_items: 5
-    target_main_items: 18
+    edge_min_items: 3
+    target_main_items: 16
     target_edge_items: 6
     block_parallelism: 4
     evidence_articles_per_item: 2

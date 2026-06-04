@@ -1,11 +1,10 @@
 """Tests for verify stage — domain-agnostic article verification."""
 import json
 import pytest
-import sys
-import os
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../../.."))
-from stratum.stages.verify.verify import (
+from stratum.stages.verify import (
+    EvidenceAcceptancePolicy,
+    FreshnessPolicy,
     verify_article, is_blocklisted, validate_date,
     check_magnitude, extract_domain, check_duplicate,
     date_confidence_for_source, date_confidence_meets_minimum,
@@ -78,6 +77,65 @@ class TestLowPriority:
         assert not is_low_priority_domain("https://notgoogle.com/search?q=hbm", {"google.com"})
 
 
+def test_package_exports_stable_verify_surface():
+    from stratum.stages import verify as verify_pkg
+
+    assert verify_pkg.verify_article is verify_article
+    assert verify_pkg.EvidenceAcceptancePolicy is EvidenceAcceptancePolicy
+    assert verify_pkg.FreshnessPolicy is FreshnessPolicy
+
+
+class TestEvidenceAcceptancePolicy:
+    def test_acceptance_policy_owns_blocklist_and_duplicate_gates(self):
+        policy = EvidenceAcceptancePolicy(
+            blocklist={"social": ["youtube.com"]},
+            low_priority_domains=["google.com"],
+        )
+
+        blocked = policy.evaluate(
+            {"url": "https://m.youtube.com/watch?v=1", "title": "Video"},
+            seen_urls=set(),
+            seen_titles={},
+        )
+        duplicate = policy.evaluate(
+            {"url": "https://m.example.com/story/?utm_source=x", "title": "Different"},
+            seen_urls={"https://example.com/story"},
+            seen_titles={},
+        )
+
+        assert blocked.accepted is False
+        assert blocked.rejection_reason == "BLOCKED: youtube.com"
+        assert duplicate.accepted is False
+        assert duplicate.rejection_reason == "DUPLICATE_URL"
+
+    def test_acceptance_policy_scores_independent_corroboration(self):
+        policy = EvidenceAcceptancePolicy()
+
+        decision = policy.evaluate(
+            {
+                "url": "https://reuters.com/technology/hbm",
+                "title": "Samsung HBM4 qualification advances",
+                "snippet": "NVIDIA customer qualification moves forward.",
+                "source_type_hint": "media",
+            },
+            seen_urls=set(),
+            seen_titles={},
+            accepted_articles=[
+                {
+                    "url": "https://trendforce.com/report/hbm",
+                    "source": "trendforce.com",
+                    "title": "Samsung HBM4 qualification advances",
+                    "snippet": "NVIDIA customer qualification moves forward.",
+                    "source_type": "analyst",
+                }
+            ],
+        )
+
+        assert decision.accepted is True
+        assert decision.corroboration_level == "high"
+        assert decision.corroborating_sources == ["trendforce.com"]
+
+
 class TestVerifyArticle:
     def test_blocklisted_article_rejected(self):
         article = {"url": "https://youtube.com/watch?v=123", "title": "Test", "snippet": ""}
@@ -104,7 +162,7 @@ class TestVerifyArticle:
         assert result["rejection_reason"] == "NO_DATE"
         assert result["date_source"] == "none"
 
-    def test_no_date_official_collector_can_be_background_evidence(self):
+    def test_no_date_official_watchlist_can_be_background_evidence(self):
         article = {
             "url": "https://news.skhynix.com/hbm4",
             "title": "SK hynix HBM4 update",
@@ -151,6 +209,48 @@ class TestVerifyArticle:
         assert result["published_at"].startswith("2026-05-20")
         assert result["quality_flags"] == ["BACKGROUND_STALE"]
 
+    def test_source_type_specific_stale_window_keeps_official_evidence_fresh(self):
+        article = {
+            "url": "https://investors.micron.com/news",
+            "title": "Micron earnings release",
+            "snippet": "Micron reports HBM revenue growth.",
+            "datePublished": "2026-05-23",
+            "source_type_hint": "official",
+        }
+        config = {
+            **MOCK_PIPELINE_CONFIG,
+            "date_window": {
+                **MOCK_PIPELINE_CONFIG["date_window"],
+                "source_type_stale_days": {"official": 7},
+            },
+        }
+
+        result = verify_article(article, "2026-05-28", 0, config)
+
+        assert result["verification_status"] == "verified"
+        assert result.get("quality_flags") is None
+
+    def test_source_type_specific_stale_window_does_not_apply_to_other_types(self):
+        article = {
+            "url": "https://example.com/news",
+            "title": "Market commentary",
+            "snippet": "Market commentary.",
+            "datePublished": "2026-05-23",
+            "source_type_hint": "media",
+        }
+        config = {
+            **MOCK_PIPELINE_CONFIG,
+            "date_window": {
+                **MOCK_PIPELINE_CONFIG["date_window"],
+                "source_type_stale_days": {"official": 7},
+            },
+        }
+
+        result = verify_article(article, "2026-05-28", 0, config)
+
+        assert result["verification_status"] == "rejected"
+        assert result["rejection_reason"] == "STALE"
+
     def test_valid_article_verified(self):
         article = {
             "url": "https://reuters.com/technology/memory-chip",
@@ -162,6 +262,49 @@ class TestVerifyArticle:
         assert result["verification_status"] == "verified"
         assert result["rejection_reason"] is None
         assert result["canonical_url"] == "https://reuters.com/technology/memory-chip"
+        assert result["corroboration_level"] == "low"
+
+    def test_verify_article_emits_corroboration_fields_from_prior_accepted_articles(self):
+        seen_urls = set()
+        seen_titles = {}
+        accepted_articles = []
+        first = {
+            "url": "https://trendforce.com/report/hbm",
+            "title": "Samsung HBM4 qualification advances",
+            "snippet": "NVIDIA customer qualification moves forward.",
+            "source_type_hint": "analyst",
+            "datePublished": "2026-05-28",
+        }
+        second = {
+            "url": "https://reuters.com/technology/hbm",
+            "title": "Reuters says Samsung HBM4 customer qualification moves forward",
+            "snippet": "NVIDIA customer qualification moves forward.",
+            "source_type_hint": "media",
+            "datePublished": "2026-05-28",
+        }
+
+        verify_article(
+            first,
+            "2026-05-28",
+            0,
+            MOCK_PIPELINE_CONFIG,
+            seen_urls=seen_urls,
+            seen_titles=seen_titles,
+            accepted_articles=accepted_articles,
+        )
+        result = verify_article(
+            second,
+            "2026-05-28",
+            1,
+            MOCK_PIPELINE_CONFIG,
+            seen_urls=seen_urls,
+            seen_titles=seen_titles,
+            accepted_articles=accepted_articles,
+        )
+
+        assert result["verification_status"] == "verified"
+        assert result["corroboration_level"] == "high"
+        assert result["corroborating_sources"] == ["trendforce.com"]
 
     def test_preserves_date_source_lineage(self):
         article = {
@@ -291,6 +434,27 @@ class TestDateConfidence:
         assert date_confidence_meets_minimum("medium", "medium")
         assert not date_confidence_meets_minimum("low", "medium")
 
+    def test_freshness_policy_owns_background_no_date_admission(self):
+        policy = FreshnessPolicy({
+            "stale_days": 2,
+            "max_future_days": 1,
+            "background_no_date_source_types": ["official"],
+            "background_no_date_engines": ["direct_fetch"],
+        })
+
+        decision = policy.evaluate({
+            "title": "Official HBM update",
+            "snippet": "No publication date on the page",
+            "source_type_hint": "official",
+            "engine": "direct_fetch:official-source",
+        }, "2026-05-28")
+
+        assert decision.passed is True
+        assert decision.status == "verified"
+        assert decision.date_source == "freshness_window"
+        assert decision.date_confidence == "medium"
+        assert decision.quality_flags == ["BACKGROUND_NO_DATE"]
+
 
 class TestVerificationStats:
     def test_default_stats_path(self):
@@ -326,6 +490,7 @@ class TestVerificationStats:
         assert stats["rejected"] == 2
         assert stats["date_confidence"] == {"high": 1, "low": 1}
         assert stats["quality_flags"] == {"LOW_CONFIDENCE_DATE": 1}
+        assert stats["corroboration"] == {"none": 2}
         assert stats["reasons"] == {"BLOCKED: youtube.com": 1, "DUPLICATE_URL": 1}
         assert stats["blocklisted"] == 1
         assert stats["duplicates"] == 1

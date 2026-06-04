@@ -1,0 +1,41 @@
+{
+  "type": "object",
+  "required": [
+    "status",
+    "input_status",
+    "input_violations",
+    "validate_rounds",
+    "rewritten_items",
+    "dropped_items",
+    "unchanged_invalid_items",
+    "item_actions"
+  ],
+  "properties": {
+    "status": {"type": "string", "enum": ["repaired", "no_changes"]},
+    "input_status": {"type": ["string", "null"]},
+    "input_violations": {"type": "integer", "minimum": 0},
+    "validate_rounds": {"type": "integer", "minimum": 1},
+    "rewritten_items": {"type": "integer", "minimum": 0},
+    "dropped_items": {"type": "integer", "minimum": 0},
+    "unchanged_invalid_items": {"type": "integer", "minimum": 0},
+    "item_actions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["item", "section", "title", "action", "reason", "violations"],
+        "properties": {
+          "item": {"type": "integer", "minimum": 1},
+          "section": {"type": "string"},
+          "title": {"type": "string"},
+          "action": {"type": "string", "enum": ["rewrite", "drop", "unchanged"]},
+          "reason": {"type": "string"},
+          "violations": {"type": "array", "items": {"type": "string"}},
+          "support_article_id": {"type": ["string", "null"]},
+          "support_source": {"type": ["string", "null"]}
+        },
+        "additionalProperties": true
+      }
+    }
+  },
+  "additionalProperties": true
+}

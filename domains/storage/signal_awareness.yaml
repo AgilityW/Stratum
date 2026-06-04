@@ -1,0 +1,88 @@
+topic_rules:
+  - id: memory
+    label: Memory And Storage
+    keywords:
+      - hbm
+      - dram
+      - nand
+      - ssd
+      - flash
+      - memory
+      - storage
+      - controller
+      - pcie
+      - cxl
+  - id: manufacturing
+    label: Manufacturing And Capacity
+    keywords:
+      - fab
+      - packaging
+      - wafer
+      - capacity
+      - yield
+      - ramp
+      - node
+      - production
+  - id: market
+    label: Market And Pricing
+    keywords:
+      - pricing
+      - price
+      - contract price
+      - spot price
+      - demand
+      - inventory
+      - shipment
+
+anchors:
+  - id: computex_2026
+    name: Computex 2026
+    aliases: [COMPUTEX, Computex 2026]
+    topics: [memory]
+    locations: [Taipei]
+    start_date: "2026-06-02"
+    end_date: "2026-06-05"
+    lead_days: 21
+    teardown_days: 5
+    query_terms:
+      - computex 2026 storage
+      - computex 2026 ssd
+      - computex 2026 hbm
+    temporary_sources:
+      - computex-rss
+    direct_fetch_targets:
+      - https://www.computextaipei.com.tw/en/index.html
+  - id: fms_2026
+    name: Flash Memory Summit 2026
+    aliases: [FMS 2026, Flash Memory Summit]
+    topics: [memory, manufacturing]
+    locations: [Santa Clara]
+    start_date: "2026-08-04"
+    end_date: "2026-08-06"
+    lead_days: 45
+    teardown_days: 5
+    query_terms:
+      - fms 2026 nand
+      - fms 2026 flash memory
+      - fms 2026 ssd
+    temporary_sources:
+      - fms-rss
+    direct_fetch_targets:
+      - https://flashmemorysummit.com/
+  - id: cfms_2026
+    name: China Flash Market Summit 2026
+    aliases: [CFMS 2026, China Flash Market Summit]
+    topics: [memory, market]
+    locations: [Shenzhen]
+    start_date: "2026-03-12"
+    end_date: "2026-03-13"
+    lead_days: 30
+    teardown_days: 5
+    query_terms:
+      - cfms 2026 nand
+      - cfms 2026 flash market
+      - cfms 2026 storage
+    temporary_sources:
+      - cfms-rss
+    direct_fetch_targets:
+      - https://www.chinaflashmarket.com/

@@ -21,224 +21,28 @@ import argparse
 import json
 import os
 import sys
-from collections import defaultdict
 from datetime import datetime, timezone, timedelta
 from typing import Optional
 
-PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
-if PROJECT_ROOT not in sys.path:
-    sys.path.insert(0, PROJECT_ROOT)
-
-from stratum.subsystems.search.models import canonicalize_url
+from stratum.sourcing.discovery import canonicalize_url
+try:
+    from .story_clusterer import (
+        ClusterConfidenceScorer,
+        StoryClusterer,
+        cluster_articles,
+        jaccard_similarity,
+        weighted_overlap_similarity,
+    )
+except ImportError:  # pragma: no cover - direct script/test fallback
+    from stratum.stages.cluster.story_clusterer import (
+        ClusterConfidenceScorer,
+        StoryClusterer,
+        cluster_articles,
+        jaccard_similarity,
+        weighted_overlap_similarity,
+    )
 
 CST = timezone(timedelta(hours=8))
-
-
-def jaccard_similarity(set_a: set, set_b: set) -> float:
-    """Jaccard similarity between two sets."""
-    if not set_a or not set_b:
-        return 0.0
-    intersection = set_a & set_b
-    union = set_a | set_b
-    return len(intersection) / len(union) if union else 0.0
-
-
-def weighted_overlap_similarity(article_a: dict, article_b: dict) -> float:
-    """Weighted entity/term overlap for story clustering.
-
-    Entities are more specific than terms, and the first entity is treated as
-    the article's best available subject hint. This reduces over-merging on
-    broad terms like HBM/NAND while still clustering cross-source reports about
-    the same entity + topic.
-    """
-    entities_a = set(article_a.get("entities", []))
-    entities_b = set(article_b.get("entities", []))
-    terms_a = set(article_a.get("terms", []))
-    terms_b = set(article_b.get("terms", []))
-    primary_a = _primary_entity(article_a)
-    primary_b = _primary_entity(article_b)
-
-    entity_sim = jaccard_similarity(entities_a, entities_b)
-    term_sim = jaccard_similarity(terms_a, terms_b)
-    primary_sim = 1.0 if primary_a and primary_a == primary_b else 0.0
-
-    if not entities_a and not entities_b:
-        return round(term_sim * 0.7, 3)
-    if not terms_a and not terms_b:
-        return round(entity_sim * 0.45 + primary_sim * 0.25, 3)
-
-    score = entity_sim * 0.35 + primary_sim * 0.2 + term_sim * 0.3
-    if entities_a & entities_b and not primary_sim:
-        score -= 0.08
-    return round(max(0.0, score), 3)
-
-
-def _cluster_by_jaccard(articles: list[dict], threshold: float) -> list[list[int]]:
-    """Union-Find clustering by weighted entity/term overlap.
-
-    Internal helper — called by cluster_articles for Phase 1 (orphans)
-    and Phase 2 (oversized split). Always returns only groups with ≥2 articles.
-    """
-    n = len(articles)
-    if n < 2:
-        return []
-
-    pairs = []
-    for i in range(n):
-        for j in range(i + 1, n):
-            sim = weighted_overlap_similarity(articles[i], articles[j])
-            if sim >= threshold:
-                pairs.append((sim, i, j))
-
-    pairs.sort(reverse=True)
-
-    parent = list(range(n))
-
-    def find(x):
-        while parent[x] != x:
-            parent[x] = parent[parent[x]]
-            x = parent[x]
-        return x
-
-    def union(x, y):
-        px, py = find(x), find(y)
-        if px != py:
-            parent[py] = px
-
-    for sim, i, j in pairs:
-        union(i, j)
-
-    clusters_map = defaultdict(list)
-    for i in range(n):
-        root = find(i)
-        clusters_map[root].append(i)
-
-    return [sorted(indices) for indices in clusters_map.values()
-            if len(indices) >= 2]
-
-
-def _primary_entity(article: dict) -> str | None:
-    entities = article.get("entities") or []
-    return str(entities[0]) if entities else None
-
-
-def _shared_entities(articles: list[dict]) -> set:
-    entity_sets = [set(a.get("entities") or []) for a in articles if a.get("entities")]
-    if not entity_sets:
-        return set()
-    common = set(entity_sets[0])
-    for entity_set in entity_sets[1:]:
-        common &= entity_set
-    return common
-
-
-def _split_bridge_cluster(cluster_indices: list[int], articles: list[dict]) -> list[list[int]]:
-    """Split orphan clusters that only exist through bridge articles.
-
-    Union-Find is intentionally good at recall, but it can connect A-B-C when
-    B overlaps both A and C while A and C are actually different subjects. If
-    a cluster has no entity shared by every article, primary-entity groups keep
-    adjacent topics from collapsing into one story.
-    """
-    if len(cluster_indices) <= 2:
-        return [cluster_indices]
-
-    cluster_articles = [articles[i] for i in cluster_indices]
-    if _shared_entities(cluster_articles):
-        return [cluster_indices]
-
-    groups: dict[str, list[int]] = defaultdict(list)
-    ungrouped: list[int] = []
-    for idx in cluster_indices:
-        primary = _primary_entity(articles[idx])
-        if primary:
-            groups[primary].append(idx)
-        else:
-            ungrouped.append(idx)
-
-    split = [sorted(indices) for indices in groups.values() if len(indices) >= 2]
-    if len(ungrouped) >= 2:
-        split.append(sorted(ungrouped))
-    return split or [cluster_indices]
-
-
-def cluster_articles(articles: list[dict], threshold: float = 0.35,
-                     max_size: int = 10) -> list[list[int]]:
-    """Group articles by entity/term overlap using Jaccard similarity (Union-Find).
-
-    Three-phase clustering:
-      Phase 0: Same event_thread_id → forced merge (thread anchoring).
-      Phase 1: Remaining orphans → Union-Find Jaccard ≥ threshold.
-      Phase 2: Oversized clusters (>max_size) → re-split at threshold+0.1.
-
-    Args:
-        threshold: Minimum Jaccard similarity to connect articles (default 0.35).
-                   Higher = tighter clusters. Storage domain tuned at 0.35.
-        max_size: Maximum articles per cluster. Oversized clusters are re-split
-                  at threshold + 0.1 recursively. 0 = no limit.
-    """
-    n = len(articles)
-    if n < 2:
-        return []
-
-    # Phase 0: thread_id anchoring — same event_thread_id → forced merge
-    thread_groups = defaultdict(list)
-    orphan_indices = []
-    for i, a in enumerate(articles):
-        tid = a.get("event_thread_id")
-        if tid:
-            thread_groups[tid].append(i)
-        else:
-            orphan_indices.append(i)
-
-    # Phase 1: Union-Find on remaining (orphan) articles
-    orphan_clusters = []
-    remaining_singletons = []
-    if len(orphan_indices) >= 2:
-        orphans = [articles[i] for i in orphan_indices]
-        orphan_result = _cluster_by_jaccard(orphans, threshold)
-        accounted = set()
-        for oc in orphan_result:
-            orphan_clusters.append([orphan_indices[idx] for idx in oc])
-            accounted.update(oc)
-        remaining_singletons = [orphan_indices[i] for i in range(len(orphan_indices))
-                                if i not in accounted]
-    else:
-        remaining_singletons = list(orphan_indices)
-
-    # Combine: thread_groups + orphan_clusters. Thread-anchored clusters are a
-    # continuity contract with Story Tracking, so they stay intact even when
-    # they exceed the generic orphan-cluster display size.
-    clusters = []
-    anchored_clusters = set()
-    for tid, indices in thread_groups.items():
-        if len(indices) >= 2:
-            clusters.append(sorted(indices))
-            anchored_clusters.add(len(clusters) - 1)
-        else:
-            remaining_singletons.extend(indices)
-    for cluster in orphan_clusters:
-        clusters.extend(_split_bridge_cluster(cluster, articles))
-    # Singletons (1-article) are NOT clusters — silently excluded
-
-    # Phase 2: Split oversized clusters recursively
-    if max_size > 0:
-        final_clusters = []
-        for cluster_pos, cluster_indices in enumerate(clusters):
-            if len(cluster_indices) > max_size and cluster_pos not in anchored_clusters:
-                sub_articles = [articles[i] for i in cluster_indices]
-                split_threshold = max(threshold + 0.1, 0.35)
-                sub_clusters = _cluster_by_jaccard(sub_articles, split_threshold)
-                if sub_clusters:
-                    for sub in sub_clusters:
-                        final_clusters.append([cluster_indices[i] for i in sub])
-                else:
-                    final_clusters.append(cluster_indices)
-            else:
-                final_clusters.append(cluster_indices)
-        clusters = final_clusters
-
-    return clusters
 
 
 def build_cluster_object(cluster_indices: list[int], articles: list[dict],
@@ -290,20 +94,12 @@ def build_cluster_object(cluster_indices: list[int], articles: list[dict],
     num_source_types = len(source_types)
     num_locales = len(locales)
 
-    if num_source_types >= 3 and num_articles >= 5:
-        confidence = "high"
-    elif num_source_types >= 2 and num_articles >= 3:
-        confidence = "medium"
-    elif num_articles >= 2:
-        confidence = "low"
-    else:
-        confidence = "low"
-
-    confidence_score = min(1.0,
-                           0.3 * min(num_articles / 10, 1.0) +
-                           0.3 * min(num_source_types / 3, 1.0) +
-                           0.2 * min(num_locales / 3, 1.0) +
-                           0.2 * min(len(entities) / 10, 1.0))
+    confidence = ClusterConfidenceScorer().score(
+        article_count=num_articles,
+        source_type_count=num_source_types,
+        locale_count=num_locales,
+        entity_count=len(entities),
+    )
 
     best_title = max(titles, key=lambda t: sum(1 for e in entities if e.lower() in t.lower()))
     if len(best_title) > 100:
@@ -316,8 +112,8 @@ def build_cluster_object(cluster_indices: list[int], articles: list[dict],
         "id": f"sc-{domain_id}-{seq:04d}",
         "canonical_title": best_title,
         "canonical_summary": canonical_summary,
-        "confidence": confidence,
-        "confidence_score": round(confidence_score, 3),
+        "confidence": confidence.label,
+        "confidence_score": confidence.score,
         "article_ids": article_ids,
         "article_count": num_articles,
         "source_types": sorted(source_types),

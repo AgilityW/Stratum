@@ -5,10 +5,7 @@ import tempfile
 import pytest
 from pathlib import Path
 
-# Import render functions
-import sys
-sys.path.insert(0, str(Path(__file__).parent.parent))
-from render import (
+from stratum.stages.render import (
     esc, detect_tags, load_render_tags, load_template, render_html, convert,
     render_pdf, artifact_basename,
 )
@@ -31,6 +28,19 @@ class TestEsc:
 
     def test_esc_plain_text(self):
         assert esc("hello world") == "hello world"
+
+
+def test_render_package_exports_stable_surface():
+    import stratum.stages.render as render
+
+    assert "artifact_basename" in render.__all__
+    assert "convert" in render.__all__
+    assert "detect_tags" in render.__all__
+    assert "esc" in render.__all__
+    assert "load_render_tags" in render.__all__
+    assert "load_template" in render.__all__
+    assert "render_html" in render.__all__
+    assert "render_pdf" in render.__all__
 
 
 class TestDetectTags:
@@ -534,7 +544,7 @@ class TestRenderPdf:
     """PDF rendering shell-out behavior."""
 
     def test_skips_when_chrome_missing(self, monkeypatch):
-        import render
+        from stratum.stages.render import render
 
         with tempfile.TemporaryDirectory() as tmpdir:
             html_path = os.path.join(tmpdir, "briefing.html")

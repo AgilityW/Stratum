@@ -33,8 +33,28 @@
     "extracted_summary": {"type": "string"},
     "content_hash": {"type": "string"},
     "entities": {"type": "array", "items": {"type": "string"}},
+    "entity_ids": {"type": "array", "items": {"type": "string"}},
     "terms": {"type": "array", "items": {"type": "string"}},
+    "term_ids": {"type": "array", "items": {"type": "string"}},
     "numeric_claims": {"type": "array", "items": {"type": "string"}},
+    "typed_numeric_claims": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["claim_type", "text", "value", "unit", "direction", "metric"],
+        "properties": {
+          "claim_type": {
+            "type": "string",
+            "enum": ["price_change", "asp_change", "yield_rate", "capacity", "capex", "shipment", "revenue"]
+          },
+          "text": {"type": "string"},
+          "value": {"type": "number"},
+          "unit": {"type": "string"},
+          "direction": {"type": "string", "enum": ["up", "down", "neutral"]},
+          "metric": {"type": "string"}
+        }
+      }
+    },
     "quality_flags": {"type": "array", "items": {"type": "string"}},
     "verification_status": {"type": "string", "enum": ["verified"]},
     "rejection_reason": {"type": "null"},

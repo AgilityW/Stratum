@@ -1,10 +1,11 @@
 """Tests for normalize stage — domain-agnostic article normalization."""
 import pytest
-import sys
-import os
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../../.."))
-from stratum.stages.normalize.normalize import (
+from stratum.stages.normalize import (
+    ClaimExtractor,
+    EntityResolver,
+    TermResolver,
+    ThreadKeywordMatcher,
     classify_source_type, classify_artifact_type, extract_entities,
     extract_terms, extract_numeric_claims, normalize_article,
     determine_source_locale, resolve_source_locale, content_hash,
@@ -25,6 +26,19 @@ MOCK_PIPELINE_CONFIG = {
     },
     "flat_entities": ["Samsung", "Micron", "SK hynix", "NVIDIA"],
     "flat_terms": ["HBM", "DRAM", "NAND", "DDR5", "SSD"],
+    "entity_records": [
+        {"id": "samsung", "label": "Samsung Electronics", "aliases": ["Samsung", "三星电子"]},
+        {"id": "micron", "label": "Micron Technology", "aliases": ["Micron"]},
+        {"id": "sk-hynix", "label": "SK hynix", "aliases": ["SK hynix", "SK Hynix"]},
+        {"id": "nvidia", "label": "NVIDIA", "aliases": ["NVIDIA"]},
+    ],
+    "term_records": [
+        {"id": "hbm", "label": "HBM", "aliases": ["HBM"]},
+        {"id": "dram", "label": "DRAM", "aliases": ["DRAM"]},
+        {"id": "nand", "label": "NAND", "aliases": ["NAND"]},
+        {"id": "ddr5", "label": "DDR5", "aliases": ["DDR5"]},
+        {"id": "ssd", "label": "SSD", "aliases": ["SSD"]},
+    ],
     "numeric_patterns": [
         r'(\+\d+(?:\.\d+)?%\s*(?:QoQ|YoY))',
         r'(\$\d+(?:\.\d+)?\s*(?:billion|million)\b)',
@@ -108,6 +122,26 @@ class TestEntityExtraction:
                                      MOCK_PIPELINE_CONFIG["flat_entities"])
         assert len(entities) == 0
 
+    def test_entity_resolver_owns_entity_matching(self):
+        resolver = EntityResolver(["Samsung", "SK hynix"])
+
+        assert resolver.resolve("Samsung HBM update", "SK hynix follows") == ["Samsung", "SK hynix"]
+
+    def test_entity_resolver_emits_canonical_ids_from_records(self):
+        resolver = EntityResolver([
+            {"id": "samsung", "label": "Samsung Electronics", "aliases": ["Samsung", "三星电子"]},
+            {"id": "sk-hynix", "label": "SK hynix", "aliases": ["SK Hynix"]},
+        ])
+
+        assert resolver.resolve("Samsung HBM update", "SK Hynix follows") == [
+            "Samsung Electronics",
+            "SK hynix",
+        ]
+        assert resolver.resolve_ids("Samsung HBM update", "SK Hynix follows") == [
+            "samsung",
+            "sk-hynix",
+        ]
+
 
 class TestTermExtraction:
     def test_extracts_terms(self):
@@ -116,6 +150,33 @@ class TestTermExtraction:
         assert "HBM" in terms
         assert "DRAM" in terms
         assert "DDR5" in terms
+
+    def test_term_resolver_merges_static_title_and_thread_terms(self):
+        resolver = TermResolver(["HBM", "DRAM"])
+
+        terms = resolver.resolve("Samsung HBM4E roadmap", "DRAM output", ["samsung"])
+
+        assert "HBM" in terms
+        assert "DRAM" in terms
+        assert any("HBM4E" in term for term in terms)
+        assert "samsung" in terms
+        assert terms.count("samsung") == 1
+
+    def test_term_resolver_emits_canonical_ids_from_records(self):
+        resolver = TermResolver([
+            {"id": "hbm", "label": "HBM", "aliases": ["HBM"]},
+            {"id": "dram", "label": "DRAM", "aliases": ["DRAM"]},
+        ])
+
+        terms = resolver.resolve("Samsung HBM4E roadmap", "DRAM output", ["customer qualification"])
+        assert "HBM" in terms
+        assert "DRAM" in terms
+        assert "customer qualification" in terms
+        assert resolver.resolve_ids("Samsung HBM4E roadmap", "DRAM output", ["customer qualification"]) == [
+            "hbm",
+            "dram",
+            "customer-qualification",
+        ]
 
 
 class TestNumericExtraction:
@@ -128,6 +189,26 @@ class TestNumericExtraction:
         claims = extract_numeric_claims("Revenue reached $3.2 billion",
                                          MOCK_PIPELINE_CONFIG["numeric_patterns"])
         assert "$3.2 billion" in claims
+
+    def test_claim_extractor_owns_numeric_claim_matching(self):
+        extractor = ClaimExtractor([r"(\+\d+(?:\.\d+)?%\s*(?:QoQ|YoY))"])
+
+        assert extractor.extract_numeric_claims("Revenue up +15% QoQ and +15% QoQ") == ["+15% QoQ"]
+
+    def test_claim_extractor_extracts_typed_numeric_claims(self):
+        extractor = ClaimExtractor([])
+
+        claims = extractor.extract_typed_numeric_claims(
+            "DRAM contract prices increased 15% QoQ, HBM yield reached 72%, "
+            "capex rose to $4.5 billion, and SSD shipments reached 12 million units."
+        )
+
+        by_type = {claim["claim_type"]: claim for claim in claims}
+        assert by_type["price_change"]["value"] == 15
+        assert by_type["price_change"]["direction"] == "up"
+        assert by_type["yield_rate"]["value"] == 72
+        assert by_type["capex"]["unit"] == "usd_billion"
+        assert by_type["shipment"]["unit"] == "million_units"
 
 
 class TestLocaleRouting:
@@ -153,6 +234,15 @@ class TestLocaleRouting:
 
 
 class TestNormalizeArticle:
+    def test_package_exports_stable_normalize_surface(self):
+        from stratum.stages import normalize as normalize_pkg
+
+        assert normalize_pkg.normalize_article is normalize_article
+        assert normalize_pkg.EntityResolver is EntityResolver
+        assert normalize_pkg.TermResolver is TermResolver
+        assert normalize_pkg.ClaimExtractor is ClaimExtractor
+        assert normalize_pkg.ThreadKeywordMatcher is ThreadKeywordMatcher
+
     def test_verified_article_normalized(self):
         article = {
             "verification_status": "verified",
@@ -176,9 +266,12 @@ class TestNormalizeArticle:
         assert result is not None
         assert result["source_type"] == "official"
         assert result["source_locale"] == "en"
-        assert "Samsung" in result["entities"]
+        assert "Samsung Electronics" in result["entities"]
+        assert "samsung" in result["entity_ids"]
         assert "HBM" in result["terms"]
+        assert "hbm" in result["term_ids"]
         assert "NVIDIA" in result["entities"]
+        assert "nvidia" in result["entity_ids"]
         assert result["date_source"] == "snippet_regex"
         assert result["date_confidence"] == "low"
         assert result["quality_flags"] == ["LOW_CONFIDENCE_DATE"]
@@ -187,6 +280,24 @@ class TestNormalizeArticle:
         assert result["query_dimension"] == "verification"
         assert result["engine"] == "tavily"
         assert result["discovery_mode"] == "coverage_gap"
+        assert result["typed_numeric_claims"] == []
+
+    def test_normalize_article_emits_typed_numeric_claims(self):
+        article = {
+            "verification_status": "verified",
+            "url": "https://trendforce.com/report/dram-price",
+            "title": "DRAM prices rise as HBM capacity expands",
+            "snippet": "DRAM contract prices increased 15% QoQ while HBM capacity reached 120k wpm.",
+            "published_at": "2026-05-28T00:00:00+08:00",
+            "source": "trendforce.com",
+        }
+
+        result = normalize_article(article, MOCK_PIPELINE_CONFIG, 0)
+
+        assert [claim["claim_type"] for claim in result["typed_numeric_claims"]] == [
+            "price_change",
+            "capacity",
+        ]
 
     def test_canonical_url_controls_id_and_hash(self):
         base = {
@@ -255,6 +366,28 @@ class TestThreadKeywordMatching:
 
         assert thread_id == "et-storage-0001"
         assert tokens == ["samsung", "hbm4"]
+
+    def test_thread_keyword_matcher_exposes_score_and_tokens(self):
+        matcher = ThreadKeywordMatcher({
+            "threads": [
+                {
+                    "thread_id": "et-hbm",
+                    "keywords": ["samsung", "hbm4"],
+                    "topics": [],
+                },
+                {
+                    "thread_id": "et-price",
+                    "keywords": ["dram price"],
+                    "topics": [],
+                },
+            ]
+        })
+
+        decision = matcher.match("Samsung HBM4 production", "HBM4 ships to customers")
+
+        assert decision.thread_id == "et-hbm"
+        assert decision.matched_tokens == ["samsung", "hbm4"]
+        assert decision.score > 0
 
 
 class TestContentHash:

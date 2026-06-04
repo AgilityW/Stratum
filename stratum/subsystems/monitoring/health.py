@@ -82,7 +82,7 @@ def _latest_record_per_source_date(records: list[dict]) -> list[dict]:
 
 
 def _record_status(record: dict) -> str:
-    """Return a health record status when collector metadata/tags provide one."""
+    """Return a health record status when watchlist metadata/tags provide one."""
     metadata = record.get("metadata") or {}
     if metadata.get("status"):
         return str(metadata["status"])
@@ -90,6 +90,16 @@ def _record_status(record: dict) -> str:
     if tags:
         return str(tags[-1])
     return ""
+
+
+def _int_value(value, default: int = 0) -> int:
+    """Coerce historical nullable counters into integer health stats."""
+    if value is None:
+        return default
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
 
 
 def rebuild_stats(channel_dir: str) -> dict:
@@ -128,14 +138,15 @@ def rebuild_stats(channel_dir: str) -> dict:
         stats["source"] = src
 
         for r in source_records:
-            selected = r.get("selected", r.get("hits", 0))
+            hits = _int_value(r.get("hits", 0))
+            selected = _int_value(r.get("selected", hits))
             status = _record_status(r)
             scanned = r.get("scanned", True) and status != "unsupported"
             if scanned:
                 stats["total_scans"] += 1
-                stats["total_hits"] += r.get("hits", 0)
+                stats["total_hits"] += hits
                 stats["total_selected"] += selected
-                stats["total_rejected"] += r.get("rejected", 0)
+                stats["total_rejected"] += _int_value(r.get("rejected", 0))
 
                 if _is_error_record(r):
                     stats["http_errors"] += 1
@@ -147,10 +158,10 @@ def rebuild_stats(channel_dir: str) -> dict:
                 dated = metadata.get("dated", r.get("dated"))
                 if dated is not None:
                     stats["dated_observations"] += 1
-                    stats["dated_hits_observed"] += r.get("hits", 0)
-                    stats["total_dated"] += dated
+                    stats["dated_hits_observed"] += hits
+                    stats["total_dated"] += _int_value(dated)
 
-                if r.get("hits", 0) > 0:
+                if hits > 0:
                     dry_streak = 0
                 else:
                     dry_streak += 1
@@ -246,7 +257,7 @@ def get_source_alerts(
                 "value": dry_streak,
                 "threshold": dry_streak_days,
                 "last_seen": source_stats["last_seen"],
-                "message": f"{source} has no collector/search hits for {dry_streak} scanned days",
+                "message": f"{source} has no watchlist/search hits for {dry_streak} scanned days",
             })
 
         selected_dry_streak = source_stats["selected_dry_streak"]
@@ -310,6 +321,6 @@ def _alert_severity(value: int, threshold: int) -> str:
 
 def _is_error_record(record: dict) -> bool:
     """Return True when a scanned health record represents a source error."""
-    if record.get("http_code", 200) >= 400:
+    if _int_value(record.get("http_code", 200), 200) >= 400:
         return True
     return _record_status(record) == "error"

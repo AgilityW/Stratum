@@ -1,18 +1,25 @@
 """Tests for monitoring subsystem — health tracker."""
-import sys, os
-sys.path.insert(0, os.path.dirname(__file__))
 import pytest
 import json
 import os
 import tempfile
 from pathlib import Path
 
-from health import (
-    write_daily_record, load_daily_records, rebuild_stats,
-    get_dry_sources, get_top_contributors, ensure_channel_dir,
-    get_non_contributing_sources, get_source_alerts,
+from stratum.subsystems.monitoring import (
+    EngineHealthScorer,
+    detect_gaps,
+    ensure_channel_dir,
+    generate_followup_queries,
+    get_dry_sources,
+    get_non_contributing_sources,
+    get_source_alerts,
+    get_top_contributors,
+    load_daily_records,
+    rebuild_stats,
+    run_coverage_check,
+    score_search_engine_health,
+    write_daily_record,
 )
-from coverage import detect_gaps, generate_followup_queries, run_coverage_check
 
 
 class TestHealthTracker:
@@ -116,7 +123,7 @@ class TestHealthTracker:
             hits=0,
             selected=0,
             http_code=500,
-            tags=["collector", "browser", "unsupported"],
+            tags=["watchlist", "browser", "unsupported"],
         )
         write_daily_record(
             str(tmp_path),
@@ -184,18 +191,18 @@ class TestHealthTracker:
         write_daily_record(
             str(tmp_path),
             "2026-05-28",
-            "collector-error.com",
+            "watchlist-error.com",
             hits=0,
             metadata={"status": "error"},
         )
 
         stats = rebuild_stats(str(tmp_path))
-        source = stats["sources"]["collector-error.com"]
+        source = stats["sources"]["watchlist-error.com"]
 
         assert source["http_errors"] == 1
         assert source["http_error_streak"] == 1
 
-    def test_dated_rate_uses_collector_metadata(self, tmp_path):
+    def test_dated_rate_uses_watchlist_metadata(self, tmp_path):
         write_daily_record(str(tmp_path), "2026-05-28", "source.com", hits=4, selected=3, metadata={"dated": 2})
         write_daily_record(str(tmp_path), "2026-05-29", "source.com", hits=2, selected=2, metadata={"dated": 1})
 
@@ -252,6 +259,77 @@ class TestHealthTracker:
         alerts = get_source_alerts(str(tmp_path), min_scans_for_quality=3)
 
         assert alerts == []
+
+
+class TestSearchEngineHealth:
+    def test_search_engine_health_uses_attempt_chains(self):
+        stats = [
+            {
+                "query_id": "q1",
+                "engine_used": "tavily",
+                "status": "fallback",
+                "engine_attempts": [
+                    {
+                        "engine": "bocha",
+                        "status": "failed",
+                        "error": "bocha: RuntimeError: down",
+                    },
+                    {
+                        "engine": "tavily",
+                        "status": "success",
+                        "results_count": 2,
+                    },
+                ],
+            },
+            {
+                "query_id": "q2",
+                "engine_used": "tavily",
+                "status": "failed",
+                "engine_attempts": [
+                    {
+                        "engine": "bocha",
+                        "status": "rate_limited",
+                        "error": "bocha: rate limited",
+                    },
+                    {
+                        "engine": "tavily",
+                        "status": "failed",
+                        "error": "tavily: quota",
+                    },
+                ],
+            },
+        ]
+
+        health = score_search_engine_health(stats)
+
+        assert health["bocha"]["attempts"] == 2
+        assert health["bocha"]["failure_rate"] == 1.0
+        assert health["bocha"]["recommendation"] == "avoid"
+        assert health["tavily"]["successes"] == 1
+        assert health["tavily"]["recommendation"] == "deprioritize"
+
+    def test_search_engine_health_supports_legacy_query_stats(self):
+        health = score_search_engine_health([
+            {"engine_used": "tavily", "status": "success", "results_count": 3}
+        ])
+
+        assert health["tavily"]["health_score"] == 1.0
+        assert health["tavily"]["recommendation"] == "healthy"
+
+    def test_engine_health_scorer_owns_recommendation_policy(self):
+        scorer = EngineHealthScorer()
+
+        health = scorer.score([
+            {
+                "engine_attempts": [
+                    {"engine": "bocha", "status": "no_results", "results_count": 0},
+                    {"engine": "bocha", "status": "success", "results_count": 1},
+                ]
+            }
+        ])
+
+        assert health["bocha"]["health_score"] == 0.75
+        assert health["bocha"]["recommendation"] == "healthy"
 
 
 class TestCoverageMonitor:

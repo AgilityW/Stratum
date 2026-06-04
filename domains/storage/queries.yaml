@@ -103,6 +103,8 @@ queries:
           include_domains: ["stcn.com"]
         - text: "存储 芯片 半导体 供应链"
           include_domains: ["21jingji.com"]
+        - text: "CXMT YMTC NAND DRAM 半导体"
+          include_domains: ["chinastarmarket.cn"]
       zh-TW:
         - "記憶體 DRAM NAND 產能 擴產 短缺 庫存"
         - "長鑫存儲 IPO 科創板 上市"

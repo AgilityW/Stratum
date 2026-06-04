@@ -1,0 +1,34 @@
+{
+  "type": "object",
+  "required": ["version", "capability", "status", "payload", "error"],
+  "properties": {
+    "version": {
+      "type": "string"
+    },
+    "capability": {
+      "type": "string",
+      "minLength": 1
+    },
+    "status": {
+      "type": "string",
+      "enum": ["ok", "error"]
+    },
+    "payload": {
+      "type": ["object", "array", "string", "number", "boolean", "null"]
+    },
+    "error": {
+      "type": ["object", "null"],
+      "required": ["type", "message"],
+      "properties": {
+        "type": {
+          "type": "string"
+        },
+        "message": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

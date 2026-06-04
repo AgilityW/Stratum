@@ -14,9 +14,11 @@ import re
 from datetime import datetime, timezone, timedelta
 
 from stratum.db.connection import get_db
-from stratum.subsystems.search.models import normalize_include_domains
+from stratum.db.judgment_lifecycle import JudgmentLifecyclePolicy
+from stratum.sourcing.discovery import normalize_include_domains
 
 CST = timezone(timedelta(hours=8))
+_JUDGMENT_LIFECYCLE = JudgmentLifecyclePolicy()
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -207,6 +209,7 @@ def ingest_daily_events(event_threads_path: str, domain: str, run_date: str) -> 
                 "SELECT verified, verified_at, verified_by_scale FROM causal_edges WHERE id = ?",
                 (ce_id,),
             ).fetchone()
+            preserved = _JUDGMENT_LIFECYCLE.preserve_causal_edge_verification(existing_ce)
             conn.execute('''
                 INSERT OR REPLACE INTO causal_edges (id, cause_thread_id, effect_thread_id, mechanism, confidence, scale,
                                                      source_briefing, verified, verified_at, verified_by_scale, created_at)
@@ -218,9 +221,9 @@ def ingest_daily_events(event_threads_path: str, domain: str, run_date: str) -> 
                 ce.get('mechanism', ''),
                 ce.get('confidence', 'B'),
                 source_briefing,
-                existing_ce['verified'] if existing_ce else None,
-                existing_ce['verified_at'] if existing_ce else None,
-                existing_ce['verified_by_scale'] if existing_ce else None,
+                preserved["verified"],
+                preserved["verified_at"],
+                preserved["verified_by_scale"],
                 now,
             ))
             stats['causal_edges'] += 1
@@ -232,6 +235,7 @@ def ingest_daily_events(event_threads_path: str, domain: str, run_date: str) -> 
                 "SELECT result, verified_at, verified_by_scale, actual_outcome FROM judgments WHERE id = ?",
                 (jd_id,),
             ).fetchone()
+            preserved = _JUDGMENT_LIFECYCLE.preserve_judgment_verification(existing_jd)
             conn.execute('''
                 INSERT OR REPLACE INTO judgments (id, target_type, target_entity_ids, target_thread_ids, hypothesis,
                                                   confidence, expected_verification, scale, source_briefing, result,
@@ -246,10 +250,10 @@ def ingest_daily_events(event_threads_path: str, domain: str, run_date: str) -> 
                 jd.get('confidence', 'B'),
                 jd.get('expected_verification', ''),
                 source_briefing,
-                existing_jd['result'] if existing_jd else None,
-                existing_jd['verified_at'] if existing_jd else None,
-                existing_jd['verified_by_scale'] if existing_jd else None,
-                existing_jd['actual_outcome'] if existing_jd else None,
+                preserved["result"],
+                preserved["verified_at"],
+                preserved["verified_by_scale"],
+                preserved["actual_outcome"],
                 now,
             ))
             stats['judgments'] += 1
@@ -440,10 +444,15 @@ def _refresh_entity_rollups(
     )
 
 
-def update_query_stats(domain: str, query_stats: list[dict], run_date: str | None = None) -> int:
+def update_query_stats(
+    domain: str,
+    query_stats: list[dict],
+    run_date: str | None = None,
+    engine_health: dict[str, dict] | None = None,
+) -> int:
     """Update query stats after a pipeline run.
 
-    query_stats accepts legacy or Search subsystem shape:
+    query_stats accepts legacy or discovery subsystem shape:
     [{'id': 'q-detection-001', 'articles_found': 3}, ...]
     [{'query_id': 'q-detection-001', 'results_count': 3}, ...]
     Returns number of queries updated.
@@ -465,6 +474,25 @@ def update_query_stats(domain: str, query_stats: list[dict], run_date: str | Non
                 PRIMARY KEY (query_id, run_date)
             )
         ''')
+        conn.execute('''
+            CREATE TABLE IF NOT EXISTS search_engine_health (
+                engine TEXT NOT NULL,
+                run_date TEXT NOT NULL,
+                attempts INTEGER DEFAULT 0,
+                successes INTEGER DEFAULT 0,
+                no_results INTEGER DEFAULT 0,
+                failures INTEGER DEFAULT 0,
+                rate_limited INTEGER DEFAULT 0,
+                not_configured INTEGER DEFAULT 0,
+                unsupported INTEGER DEFAULT 0,
+                health_score REAL DEFAULT 0,
+                failure_rate REAL DEFAULT 0,
+                recommendation TEXT,
+                errors TEXT,
+                updated_at TEXT,
+                PRIMARY KEY (engine, run_date)
+            )
+        ''')
         for qs in query_stats:
             query_id = qs.get('id') or qs.get('query_id')
             if not query_id:
@@ -479,6 +507,7 @@ def update_query_stats(domain: str, query_stats: list[dict], run_date: str | Non
                 ''', (query_id, today, articles_found, qs.get('status'), now))
                 _refresh_query_rollups(conn, query_id, today, query_columns)
                 count += 1
+        _upsert_search_engine_health(conn, query_stats, today, now, engine_health)
         conn.commit()
     except Exception as e:
         conn.rollback()
@@ -489,8 +518,46 @@ def update_query_stats(domain: str, query_stats: list[dict], run_date: str | Non
     return count
 
 
+def _upsert_search_engine_health(
+    conn,
+    query_stats: list[dict],
+    run_date: str,
+    updated_at: str,
+    engine_health: dict[str, dict] | None = None,
+) -> None:
+    if engine_health is None:
+        from stratum.subsystems.monitoring import score_search_engine_health
+
+        engine_health = score_search_engine_health(query_stats)
+    for engine, health in (engine_health or {}).items():
+        engine_name = str(health.get("engine") or engine)
+        conn.execute('''
+            INSERT OR REPLACE INTO search_engine_health (
+                engine, run_date, attempts, successes, no_results, failures,
+                rate_limited, not_configured, unsupported, health_score,
+                failure_rate, recommendation, errors, updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ''', (
+            engine_name,
+            run_date,
+            int(health.get("attempts", 0) or 0),
+            int(health.get("successes", 0) or 0),
+            int(health.get("no_results", 0) or 0),
+            int(health.get("failures", 0) or 0),
+            int(health.get("rate_limited", 0) or 0),
+            int(health.get("not_configured", 0) or 0),
+            int(health.get("unsupported", 0) or 0),
+            float(health.get("health_score", 0) or 0),
+            float(health.get("failure_rate", 0) or 0),
+            health.get("recommendation"),
+            json.dumps(health.get("errors", []), ensure_ascii=False),
+            updated_at,
+        ))
+
+
 def upsert_watch_queries(domain: str, watch_queries: list[dict], run_date: str | None = None) -> int:
-    """Persist event-thread watch queries into the active Search query table."""
+    """Persist event-thread watch queries into the active discovery query table."""
     conn = get_db(domain)
     count = 0
     now = datetime.now(CST).isoformat()

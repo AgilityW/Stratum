@@ -6,7 +6,6 @@
    - `domain.yaml` — domain metadata, companies, terms, source registry, validation rules, editorial policy, and optional value-chain taxonomy
    - `queries.yaml` — structured Search query templates by intent, dimension, and locale
    - `templates/daily.html` — domain render template
-   - `prompts/daily.md` — reserved future domain prompt override asset
 2. Run `./install.sh --dev`
 3. Test with the pipeline:
    `python3 stratum/orchestrator/pipeline.py --domain {channel} --date YYYY-MM-DD`
@@ -19,15 +18,15 @@ Domains may define an industry-specific `value_chain` section in `domains/{chann
 value_chain:
   layers:
     - id: upstream_equipment
-      label: 上游设备/材料
-      question: 能不能造？
+      label: Upstream equipment/materials
+      question: Can the industry build it?
       criticality: critical          # critical | high | medium
       frequency: weekly               # daily | weekly | biweekly | monthly
-      coverage_alert_weeks: 2         # 连续N周无覆盖 → 告警
-      seed_sources: [...]             # 该层已知信源
-      watch_patterns: [...]           # 该层关心的信号类型
-      probe_templates: [...]          # 主动探测查询模板 {company} {year} {quarter}
-      gap_indicators: [...]           # 覆盖缺失判定规则
+      coverage_alert_weeks: 2         # alert after N uncovered weeks
+      seed_sources: [...]             # known sources for this layer
+      watch_patterns: [...]           # signal types this layer watches
+      probe_templates: [...]          # proactive query templates
+      gap_indicators: [...]           # missing-coverage rules
 ```
 
 **Rules:**
@@ -105,15 +104,10 @@ Make sure at least one engine covers your language. If not, add an engine first.
 
 ## Adding a Module
 
-Create `skills/{module-name}/SKILL.md` with a `contract` frontmatter:
-```yaml
-contract:
-  input: "what it reads"
-  output: "what it produces"
-  role: "pure function description"
-```
-
-Modules are domain-agnostic and language-agnostic. Domain configuration lives in `domains/{channel}/`.
+Add framework modules under `stratum/`, document ownership in the nearest
+`SCOPE.md`, and update `docs/CONTRACT_INVENTORY.yaml` for every new structured
+data handoff. Modules are domain-agnostic and language-agnostic. Domain
+configuration lives in `domains/{channel}/`.
 
 ## Pull Requests
 

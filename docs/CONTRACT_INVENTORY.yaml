@@ -1,0 +1,539 @@
+version: "0.1"
+purpose: >
+  Machine-readable inventory of Stratum's structured data contracts. A contract
+  is any structured data exchanged across a dependency boundary, regardless of
+  whether the carrier is JSON, JSONL, SQLite records, Python objects, or files.
+
+contracts:
+  - id: domain-config
+    boundary: domain-to-framework
+    producer: domains/{domain}/domain.yaml
+    consumers: [watchlist, discovery, sourcing.policy, verify, normalize, render, orchestrator, db.seed]
+    carrier: YAML
+    data_shape: >
+      domain metadata, companies, terms, source_registry, editorial rules,
+      source_registry budget parameters, and pipeline policy including
+      date_window source-type stale windows
+    owner: domain
+    validation: tests/test_domains.py
+
+  - id: domain-queries
+    boundary: domain-to-web-search
+    producer: domains/{domain}/queries.yaml
+    consumers: [stages.acquisition, db.seed]
+    carrier: YAML
+    data_shape: intent/dimension/locale query records with include_domains
+    owner: domain
+    validation: tests/test_domains.py, tests/test_search.py
+
+  - id: watchlist-results
+    boundary: watchlist-to-orchestrator
+    producer: watchlist
+    consumers: [orchestrator.watchlist_runtime, stages.acquisition, stages.enrich, operators]
+    carrier: Python records and JSON sidecar
+    artifact: watchlist_results.json
+    artifact_key: watchlist_results
+    data_shape: SearchResult-shaped records compatible with search_result.json
+    owner: stratum.sourcing.watchlist
+    validation: stratum/contracts/search_result.json, tests/test_watchlist.py
+
+  - id: watchlist-observations
+    boundary: watchlist-parser-to-operators-and-admission
+    producer: watchlist
+    consumers: [orchestrator.watchlist_runtime, operators, watchlist.admission]
+    carrier: JSONL sidecar
+    artifact: watchlist_observations.jsonl
+    artifact_key: watchlist_observations
+    data_shape: >
+      Pre-admission structured observations emitted by RSS, direct URL, and
+      browser parsers after fetch and extraction, before scoring, ranking,
+      dedupe, or admission decisions
+    owner: stratum.sourcing.watchlist
+    validation: tests/test_watchlist.py, tests/test_pipeline.py
+
+  - id: watchlist-candidates
+    boundary: watchlist-to-operators-and-algorithm-tuning
+    producer: orchestrator.watchlist_runtime
+    consumers: [operators, sourcing.policy, watchlist.admission]
+    carrier: JSONL sidecar
+    artifact: watchlist_candidates.jsonl
+    artifact_key: watchlist_candidates
+    data_shape: >
+      RSS, direct URL, and browser watchlist candidate records with admission
+      status, score, matched keywords, accepted flag, source id, and reason
+    owner: stratum.sourcing.watchlist
+    validation: tests/test_pipeline.py, tests/test_watchlist.py
+
+  - id: watchlist-stats
+    boundary: watchlist-to-monitoring
+    producer: orchestrator.watchlist_runtime
+    consumers: [subsystems.monitoring]
+    carrier: JSON sidecar
+    artifact: watchlist_stats.json
+    data_shape: source-level health stats
+    owner: stratum.sourcing.watchlist
+    validation: stratum/contracts/watchlist_stats.json, tests/test_watchlist.py
+
+  - id: search-execution
+    boundary: acquisition-stage-to-web-search
+    producer: stages.acquisition
+    consumers: [sourcing.discovery]
+    carrier: Python query/result records
+    data_shape: >
+      normalized query records, engine results, curation diagnostics,
+      curation source-quality/freshness/relevance/novelty scoring,
+      per-query performance recommendations, and query low-yield/gap
+      candidates
+    owner: stratum.sourcing.discovery
+    validation: tests/test_search.py
+
+  - id: raw-results
+    boundary: acquisition-to-enrich
+    producer: stages.acquisition
+    consumers: [stages.enrich, stages.verify, orchestrator, db.persistence]
+    carrier: JSON
+    artifact: raw.json
+    artifact_key: raw
+    data_shape: deduped downstream raw evidence pool from accepted watchlist and broad discovery records
+    owner: stratum.stages.acquisition
+    validation: stratum/contracts/search_result.json, tests/test_contracts.py
+
+  - id: discovery-candidates
+    boundary: acquisition-to-operators-and-algorithm-tuning
+    producer: stages.acquisition
+    consumers: [operators, sourcing.discovery, sourcing.policy]
+    carrier: JSONL sidecar
+    artifact: discovery_candidates.jsonl
+    artifact_key: discovery_candidates
+    data_shape: >
+      Broad discovery normalized raw candidates with curator selected/rejected
+      status, canonical URL, source metadata, score, and rejection reason
+    owner: stratum.stages.acquisition
+    validation: tests/test_search.py, tests/test_docs.py
+
+  - id: discovery-observations
+    boundary: discovery-provider-to-acquisition-and-curation
+    producer: sourcing.discovery
+    consumers: [stages.acquisition, operators, sourcing.discovery]
+    carrier: JSONL sidecar
+    artifact: discovery_observations.jsonl
+    artifact_key: discovery_observations
+    data_shape: >
+      Pre-curation normalized provider observations emitted after Bocha/Tavily
+      result normalization and before discovery scoring, ranking, pruning, or
+      selected/rejected candidate status
+    owner: stratum.sourcing.discovery
+    validation: tests/test_search.py, tests/test_docs.py
+
+  - id: raw-stats
+    boundary: acquisition-to-db-and-diagnostics
+    producer: stages.acquisition
+    consumers: [orchestrator.db_runtime, db.ingest]
+    carrier: JSON sidecar
+    artifact: raw.stats.json
+    artifact_key: search_stats
+    data_shape: query stats with per-engine attempt diagnostics, engine health recommendations, coverage diagnostics, source-type diagnostics, query performance records, and rewrite_hint guidance
+    owner: stratum.stages.acquisition
+    validation: stratum/contracts/search_stats.json, tests/test_contracts.py
+
+  - id: enriched-results
+    boundary: enrich-to-verify
+    producer: stages.enrich
+    consumers: [stages.verify]
+    carrier: JSON
+    artifact: enriched.json
+    data_shape: raw result records with publication date lineage fields
+    owner: stratum.stages.enrich
+    validation: stratum/stages/enrich/test_enrich.py
+
+  - id: verified-articles
+    boundary: verify-to-normalize
+    producer: stages.verify
+    consumers: [stages.normalize, stages.validate]
+    carrier: JSONL
+    artifact: verified.jsonl
+    artifact_key: verified
+    data_shape: >
+      verified article records with freshness, source gates, and
+      corroboration annotations applied
+    owner: stratum.stages.verify
+    validation: stratum/contracts/verified_article.json, stratum/stages/verify/test_verify.py
+
+  - id: verification-stats
+    boundary: verify-to-diagnostics
+    producer: stages.verify
+    consumers: [orchestrator, operators]
+    carrier: JSON sidecar
+    artifact: verified.stats.json
+    artifact_key: verify_stats
+    data_shape: verification pass/reject counts and rejection diagnostics
+    owner: stratum.stages.verify
+    validation: stratum/stages/verify/test_verify.py
+
+  - id: normalized-articles
+    boundary: normalize-to-cluster-edit-db
+    producer: stages.normalize
+    consumers: [stages.cluster, stages.edit, stages.validate, db.persistence]
+    carrier: JSONL
+    artifact: articles.jsonl
+    artifact_key: articles
+    data_shape: >
+      ArticleRecord rows with entity, term, legacy numeric claim snippets,
+      canonical entity/term ids, typed numeric claims, source, and lineage fields
+    owner: stratum.stages.normalize
+    validation: stratum/contracts/article_record.json, stratum/stages/normalize/test_normalize.py
+
+  - id: story-clusters
+    boundary: cluster-to-edit-monitoring
+    producer: stages.cluster
+    consumers: [stages.edit, subsystems.monitoring]
+    carrier: JSON
+    artifact: clusters.json
+    artifact_key: clusters
+    data_shape: story cluster records keyed by article_ids and optional thread anchors
+    owner: stratum.stages.cluster
+    validation: stratum/contracts/story_cluster.json, stratum/stages/cluster/test_cluster.py
+
+  - id: story-context
+    boundary: db-story-tracking-to-edit
+    producer: orchestrator.story_runtime
+    consumers: [subsystems.story_tracking, stages.edit]
+    carrier: JSON
+    artifact: story_context.json
+    data_shape: carried_forward stories, due judgments, coverage gaps, causal chains
+    owner: stratum.orchestrator.story_runtime
+    validation: stratum/subsystems/story_tracking/test_briefing.py
+
+  - id: edit-plan
+    boundary: edit-to-db-debug
+    producer: stages.edit
+    consumers: [db.persistence, orchestrator.db_foundation]
+    carrier: JSON sidecar
+    artifact: briefing_plan.json
+    artifact_key: briefing_plan
+    data_shape: selected report items, categories, article_ids, thread_ids
+    owner: stratum.stages.edit
+    validation: stratum/stages/edit/test_edit.py
+
+  - id: edit-chunks
+    boundary: edit-to-db-debug
+    producer: stages.edit
+    consumers: [db.persistence, orchestrator.db_foundation]
+    carrier: JSON sidecar
+    artifact: briefing_chunks.json
+    artifact_key: briefing_chunks
+    data_shape: edited category block outputs and item text
+    owner: stratum.stages.edit
+    validation: stratum/stages/edit/test_edit.py
+
+  - id: edit-trace
+    boundary: edit-to-debug
+    producer: stages.edit
+    consumers: [orchestrator, tests]
+    carrier: JSON sidecar
+    artifact: edit_trace.json
+    artifact_key: edit_trace
+    data_shape: LLM prompts, block diagnostics, boilerplate quality metrics
+    owner: stratum.stages.edit
+    validation: stratum/stages/edit/test_edit.py
+
+  - id: briefing-markdown
+    boundary: edit-to-validate-repair-render
+    producer: stages.edit
+    consumers: [stages.validate, stages.repair, stages.render, deployment, obsidian-storage]
+    carrier: Markdown file
+    data_shape: rendered report following timescale template sections
+    owner: stratum.stages.edit
+    validation: stratum/stages/validate/test_validate.py, stratum/stages/render/tests/test_render.py
+
+  - id: validate-report
+    boundary: validate-to-repair-or-render
+    producer: stages.validate
+    consumers: [stages.repair, orchestrator, operators]
+    carrier: JSON sidecar
+    artifact: validate_report.json
+    artifact_key: validate_report
+    data_shape: item-level validation findings, counts, cited sources, dates, and boilerplate/schema diagnostics
+    owner: stratum.stages.validate
+    validation: stratum/contracts/validate_report.json, stratum/stages/validate/test_validate.py
+
+  - id: repair-report
+    boundary: repair-to-orchestrator-and-review
+    producer: stages.repair
+    consumers: [orchestrator, operators, tests]
+    carrier: JSON sidecar
+    artifact: repair_report.json
+    artifact_key: repair_report
+    data_shape: per-item rewrite or drop actions, support article lineage, and repair summary counters
+    owner: stratum.stages.repair
+    validation: stratum/contracts/repair_report.json, stratum/stages/edit/test_edit.py
+
+  - id: event-threads
+    boundary: edit-to-db-story-tracking
+    producer: stages.edit
+    consumers: [stages.validate, db.ingest, orchestrator.db_runtime]
+    carrier: JSON
+    artifact: event-threads.json
+    artifact_key: event_threads
+    data_shape: threads, causal_edges, judgments
+    owner: stratum.stages.edit
+    validation: stratum/stages/edit/prompts/_schemas, stratum/stages/validate/test_validate.py
+
+  - id: event-thread-lifecycle-diagnostics
+    boundary: event-thread-to-review-and-synthesis
+    producer: subsystems.event_thread
+    consumers: [orchestrator.db_runtime, db.synthesis, reviewer-feedback]
+    carrier: Python records / JSON-compatible dicts
+    data_shape: thread_id, previous_status, status, momentum, lifecycle_score, days_since_last, observed_updates, should_archive, reason
+    owner: stratum.subsystems.event_thread
+    validation: stratum/subsystems/event_thread/test_thread.py
+
+  - id: rendered-html-pdf
+    boundary: render-to-user-delivery
+    producer: stages.render
+    consumers: [deployment, mobile-push, report-storage]
+    carrier: HTML/PDF files
+    data_shape: template-backed rendered artifacts
+    owner: stratum.stages.render
+    validation: stratum/stages/render/tests/test_render.py
+
+  - id: run-manifest
+    boundary: orchestrator-to-deployment-audit
+    producer: orchestrator.run_context
+    consumers: [deployment, db.persistence, operators]
+    carrier: JSON sidecar
+    artifact: run_manifest.json
+    artifact_key: run_manifest
+    data_shape: stage statuses, runtime identity, artifact paths
+    owner: stratum.orchestrator
+    validation: tests/test_pipeline.py
+
+  - id: db-event-store-write
+    boundary: orchestrator-to-db
+    producer: orchestrator.db_runtime
+    consumers: [db.ingest]
+    carrier: Python call records and SQLite writes
+    data_shape: event threads, entity snapshots, query stats, search engine health, watch queries
+    owner: stratum.db.ingest
+    validation: tests/test_pipeline.py, tests/test_timelines.py
+
+  - id: db-foundation-write
+    boundary: orchestrator-to-db-foundation
+    producer: orchestrator.db_foundation
+    consumers: [db.persistence]
+    carrier: Python dict records and SQLite tables
+    data_shape: reports, sections, items, item evidence links, report artifacts
+    owner: stratum.db.persistence
+    validation: tests/test_pipeline.py, tests/test_migration.py
+
+  - id: exploring
+    boundary: temporal-to-watchlist-discovery-and-db
+    producer: temporal.exploring
+    consumers: [watchlist, stages.acquisition, stages.enrich, stages.verify, stages.normalize, db.persistence, db.synthesis]
+    carrier: stage artifact files and SQLite article rows
+    data_shape: >
+      project-level fresh evidence acquisition: watchlist-seeded raw results
+      from configured RSS/direct URL/browser sources, broad discovery
+      supplements from Bocha/Tavily, enriched records, verified article
+      records, normalized article JSONL, and persisted articles with
+      same-scale run_date. Weekly, monthly, quarterly, and yearly run
+      through temporal Exploring, while the source priority remains
+      domain-independent and timescale-independent.
+      Prior watchlist source health may reorder sources inside the same access
+      tier, while preserving RSS/direct/browser before broad search.
+      Failures are nonblocking and recorded in the run manifest; all-query
+      search failure with zero raw results is a nonblocking fresh-stage
+      failure, not a successful zero-evidence run. Integration emits
+      a structured IntegrationDecision with include_same_scale_fresh,
+      use_db_memory, role, and reason fields. Integration happens only after
+      normalize plus DB persistence, when db.synthesis reads same-scale fresh
+      evidence alongside persisted lower-scale DB state and records theme-level
+      integration judgments.
+    owner: stratum.temporal
+    validation: tests/test_pipeline.py, tests/test_search.py
+
+  - id: db-semantic-read
+    boundary: db-to-temporal-and-agents
+    producer: db.service
+    consumers: [temporal.timescale, db.synthesis, orchestrator.story_runtime, stages.acquisition]
+    carrier: Python dict/list records from service APIs
+    data_shape: report context, cascade inputs, story context records, timelines, search queries
+    owner: stratum.db.service
+    validation: tests/test_service.py, tests/test_synthesis.py, tests/test_search.py
+
+  - id: capability-invocation
+    boundary: mcp-wrapper-to-capability-layer
+    producer: capabilities.runtime
+    consumers: [future-mcp-layer, future-agent-layer, tests]
+    carrier: JSON and Python dict envelopes
+    data_shape: version, capability name, arguments payload
+    owner: stratum.capabilities
+    validation: tests/test_contracts.py, tests/test_capabilities.py
+
+  - id: capability-result
+    boundary: capability-layer-to-mcp-wrapper
+    producer: capabilities.runtime
+    consumers: [future-mcp-layer, future-agent-layer, tests]
+    carrier: JSON and Python dict envelopes
+    data_shape: version, capability name, status, payload, structured error
+    owner: stratum.capabilities
+    validation: tests/test_contracts.py, tests/test_capabilities.py
+
+  - id: agent-task
+    boundary: agent-wrapper-to-capability-composition
+    producer: capabilities.agent_tasks
+    consumers: [future-agent-layer, tests]
+    carrier: JSON and Python dict envelopes
+    data_shape: version, task name, arguments payload
+    owner: stratum.capabilities
+    validation: tests/test_contracts.py, tests/test_capabilities.py
+
+  - id: agent-task-result
+    boundary: capability-composition-to-agent-wrapper
+    producer: capabilities.agent_tasks
+    consumers: [future-agent-layer, tests]
+    carrier: JSON and Python dict envelopes
+    data_shape: version, task name, status, capability steps, result payload, structured error
+    owner: stratum.capabilities
+    validation: tests/test_contracts.py, tests/test_capabilities.py
+
+  - id: evaluation-cases
+    boundary: benchmark-fixtures-to-evaluation
+    producer: tests/fixtures/evaluation
+    consumers: [evaluation.harness, tests]
+    carrier: JSON
+    data_shape: report benchmark cases with scale, domain, report_markdown, deterministic expectations, traceability/citation/confidence fields, and executive implication checks
+    owner: stratum.evaluation
+    validation: tests/test_evaluation.py
+
+  - id: evaluation-summary
+    boundary: evaluation-to-regression-feedback
+    producer: evaluation.harness
+    consumers: [tests, future-ci, algorithm-review]
+    carrier: Python records and optional JSON output
+    data_shape: total cases, pass/fail counts, average score, check-level metric averages, and per-case check details
+    owner: stratum.evaluation
+    validation: tests/test_evaluation.py
+
+  - id: db-synthesis-output
+    boundary: db-synthesis-to-render
+    producer: db.synthesis
+    consumers: [temporal.timescale, db.persistence]
+    carrier: Python dict records, Markdown, SQLite writes
+    data_shape: >
+      higher-scale report bundle and synthesized scale-level events. Weekly
+      bundles use executive briefing sections: executive_summary, core_themes,
+      signal_noise, judgment_tracker, fresh_coverage, watchlist, and
+      source_boundary; core theme items separate daily database signals from
+      weekly exploring evidence. All higher scales use the shared
+      synthesis policy to assess lower-scale baseline strength, same-scale
+      fresh evidence quality, domain-specific evidence classes, directionality,
+      conflict level, scale-specific synthesis thresholds, and the integration role before confidence or
+      placement is written. Trend report_items persist that policy output in
+      policy_decision so review, validation, and future calibration can inspect
+      baseline/fresh/decision fields without reparsing report body text.
+    owner: stratum.db.synthesis
+    validation: tests/test_synthesis.py, tests/test_cascade.py
+
+  - id: temporal-profile
+    boundary: orchestrator-to-temporal
+    producer: temporal.profiles
+    consumers: [orchestrator.pipeline, temporal.timescale]
+    carrier: Python profile objects
+    data_shape: >
+      timescale labels, templates, stage order, DB input flags, and
+      synthesis_policy_profile names for higher-scale reports
+    owner: stratum.temporal
+    validation: tests/test_pipeline.py
+
+  - id: report-window
+    boundary: cli-temporal-db
+    producer: contracts.report_window
+    consumers: [orchestrator.pipeline, temporal.timescale, db.service, db.synthesis]
+    carrier: Python dataclass and period ids
+    data_shape: scale, period, window_start, window_end, custom period id
+    owner: stratum.contracts.report_window
+    validation: tests/test_pipeline.py, tests/test_service.py
+
+  - id: thread-keywords
+    boundary: db-to-next-normalize
+    producer: orchestrator.story_runtime
+    consumers: [stages.normalize]
+    carrier: JSON
+    artifact: thread_keywords.json
+    artifact_key: thread_keywords
+    data_shape: thread_id, label, status, keyword list
+    owner: stratum.orchestrator.story_runtime
+    validation: tests/test_pipeline.py, stratum/stages/normalize/test_normalize.py
+
+  - id: monitoring-health
+    boundary: orchestrator-to-monitoring
+    producer: orchestrator.watchlist_runtime
+    consumers: [subsystems.monitoring]
+    carrier: NDJSON records
+    data_shape: source daily health records
+    owner: stratum.subsystems.monitoring
+    validation: stratum/subsystems/monitoring/test_monitoring.py
+
+  - id: source-trace-output-bundle
+    boundary: source-trace-to-analysis-and-review
+    producer: source_trace.runner
+    consumers: [signal_bursts, operators]
+    carrier: JSON and Markdown files
+    artifact: source_trace/
+    data_shape: >
+      SourceTrace observability bundle including source_trace_summary,
+      source_quality, missed_signals, dedupe_loss, thread_attribution,
+      report_impact, temporal_profile, policy_recommendations,
+      observation_health, issues, and source_trace_charts outputs
+    owner: stratum.source_trace
+    validation: stratum/source_trace/test_trace.py
+
+  - id: signal-bursts-output
+    boundary: signal-bursts-to-review-and-synthesis
+    producer: signal_bursts.runner
+    consumers: [operators]
+    carrier: JSON file
+    artifact: signal_bursts.json
+    data_shape: >
+      burst-detection payload with term telemetry, co_occurrence,
+      burst_candidates, scored bursts, report_handoff, recommendations,
+      and run diagnostics
+    owner: stratum.signal_bursts
+    validation: stratum/signal_bursts/test_bursts.py
+
+  - id: signal-awareness-output
+    boundary: signal-awareness-to-operators-and-future-orchestrator
+    producer: stratum.subsystems.signal_awareness
+    consumers: [operators, future.orchestrator, sourcing.policy]
+    carrier: JSON artifact
+    artifact: signal_awareness.json
+    data_shape: >
+      run snapshot, topic z-score signals, anchor evidence summaries,
+      unanchored event clusters, and run diagnostics for dry-run signal
+      awareness analysis
+    owner: stratum.subsystems.signal_awareness
+    validation: stratum/subsystems/signal_awareness/test_awareness.py, tests/test_contracts.py
+
+  - id: signal-activation-plan
+    boundary: signal-awareness-to-future-runtime-planning
+    producer: stratum.subsystems.signal_awareness
+    consumers: [operators, future.orchestrator, sourcing.policy]
+    carrier: JSON artifact
+    artifact: signal_plan.json
+    data_shape: >
+      activate, maintain, archive, or observe actions with proposed temporary
+      sources, direct-fetch targets, query injections, and daily-target changes
+    owner: stratum.subsystems.signal_awareness
+    validation: stratum/subsystems/signal_awareness/test_awareness.py, tests/test_contracts.py
+
+  - id: domain-signal-awareness-config
+    boundary: domain-to-signal-awareness
+    producer: domains/{domain}/signal_awareness.yaml
+    consumers: [subsystems.signal_awareness, orchestrator.signal_attach]
+    carrier: YAML
+    data_shape: >
+      domain-owned topic rules and signal anchors used for dry-run signal
+      sensing and collection-readiness planning
+    owner: domain
+    validation: tests/test_domains.py

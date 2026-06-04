@@ -1,4 +1,4 @@
-"""Cross-temporal event linkage contracts — v5.0.
+"""Cross-temporal event linkage contracts — v0.1.0.
 
 Links event threads across briefing time scales:
   daily → weekly → monthly → quarterly → yearly

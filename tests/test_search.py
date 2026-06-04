@@ -1,4 +1,4 @@
-"""Unit tests for the search subsystem.
+"""Unit tests for the discovery subsystem.
 
 Covers all pure-function components:
 - models: SearchResult parsing, domain extraction, source classification, scoring
@@ -11,11 +11,11 @@ Does NOT cover executor (requires live API keys) — use integration tests for t
 
 import os
 import sqlite3
-import sys
 import tempfile
+from pathlib import Path
 
-WORKSPACE = os.path.expanduser("~/ProjectSpace/Stratum")
-sys.path.insert(0, WORKSPACE)
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 
 # ============================================================
@@ -23,7 +23,7 @@ sys.path.insert(0, WORKSPACE)
 # ============================================================
 
 def test_result_from_bocha():
-    from stratum.subsystems.search.models import SearchResult
+    from stratum.sourcing.discovery import SearchResult
 
     raw = {
         "url": "https://example.com/article",
@@ -41,8 +41,42 @@ def test_result_from_bocha():
     print("  ✓ SearchResult.from_bocha")
 
 
+def test_discovery_package_exports_stable_surface():
+    import stratum.sourcing.discovery as discovery
+
+    assert "run_search" in discovery.__all__
+    assert "load_search_config" in discovery.__all__
+    assert "load_api_keys" in discovery.__all__
+    assert "build_diagnostics" in discovery.__all__
+    assert "Query" in discovery.__all__
+    assert "ResultSet" in discovery.__all__
+
+
+def test_acquisition_package_exports_stable_surface():
+    import stratum.stages.acquisition as acquisition
+
+    assert "load_queries_flat" in acquisition.__all__
+    assert "load_queries_from_db" in acquisition.__all__
+    assert "resolve_queries" in acquisition.__all__
+    assert "merge_raw_results" in acquisition.__all__
+    assert "discovery_candidate_rows" in acquisition.__all__
+    assert "skipped_query_stats" in acquisition.__all__
+
+
+def test_search_package_exports_compatibility_surface():
+    import stratum.stages.search as search
+
+    assert "load_queries_flat" in search.__all__
+    assert "load_queries_from_db" in search.__all__
+    assert "resolve_queries" in search.__all__
+    assert "merge_raw_results" in search.__all__
+    assert "discovery_candidate_rows" in search.__all__
+    assert "skipped_query_stats" in search.__all__
+    assert "split_queries_by_coverage" in search.__all__
+
+
 def test_result_from_tavily():
-    from stratum.subsystems.search.models import SearchResult
+    from stratum.sourcing.discovery import SearchResult
 
     raw = {
         "url": "https://nikkei.com/article/123",
@@ -59,7 +93,7 @@ def test_result_from_tavily():
 
 
 def test_result_with_domain():
-    from stratum.subsystems.search.models import SearchResult
+    from stratum.sourcing.discovery import SearchResult
 
     r = SearchResult(url="https://www.nikkei.com/article/123?utm_source=x#top", title="Test", snippet="",
                      locale="ja", engine="tavily", query_id="q-001")
@@ -70,7 +104,7 @@ def test_result_with_domain():
 
 
 def test_canonicalize_url_normalizes_tracking_and_mobile_hosts():
-    from stratum.subsystems.search.models import canonicalize_url
+    from stratum.sourcing.discovery import canonicalize_url
 
     assert canonicalize_url(
         "HTTPS://www.example.com/path/?utm_source=news&b=2&a=1#frag"
@@ -79,7 +113,7 @@ def test_canonicalize_url_normalizes_tracking_and_mobile_hosts():
 
 
 def test_result_with_source_hint():
-    from stratum.subsystems.search.models import SearchResult
+    from stratum.sourcing.discovery import SearchResult
 
     classifications = {
         "official": ["samsung.com/semiconductor"],
@@ -104,7 +138,7 @@ def test_result_with_source_hint():
 
 
 def test_source_hint_respects_domain_boundaries():
-    from stratum.subsystems.search.models import SearchResult, source_pattern_matches
+    from stratum.sourcing.discovery import SearchResult, source_pattern_matches
 
     classifications = {
         "official": ["samsung.com/semiconductor"],
@@ -138,7 +172,7 @@ def test_source_hint_respects_domain_boundaries():
 
 
 def test_query_substitution():
-    from stratum.subsystems.search.models import Query
+    from stratum.sourcing.discovery import Query
 
     q = Query(id="q-001", text="memory chip ${CURRENT_YEAR}", locale="en")
     sub = q.with_substitutions("2026-05-29")
@@ -148,7 +182,7 @@ def test_query_substitution():
 
 
 def test_normalize_include_domains_accepts_urls_and_dedupes():
-    from stratum.subsystems.search.models import normalize_include_domains
+    from stratum.sourcing.discovery import normalize_include_domains
 
     assert normalize_include_domains([
         "https://www.Semiconductor.Samsung.com/newsroom/",
@@ -158,7 +192,7 @@ def test_normalize_include_domains_accepts_urls_and_dedupes():
 
 
 def test_normalize_include_domains_rejects_invalid_shape():
-    from stratum.subsystems.search.models import normalize_include_domains
+    from stratum.sourcing.discovery import normalize_include_domains
     import pytest
 
     with pytest.raises(ValueError, match="include_domains"):
@@ -166,7 +200,7 @@ def test_normalize_include_domains_rejects_invalid_shape():
 
 
 def test_result_set_stats():
-    from stratum.subsystems.search.models import ResultSet, SearchResult
+    from stratum.sourcing.discovery import ResultSet, SearchResult
 
     rs = ResultSet(
         results=[
@@ -192,7 +226,7 @@ def test_result_set_stats():
 
 
 def test_result_set_raw_json_prefers_full_raw_results():
-    from stratum.subsystems.search.models import ResultSet, SearchResult
+    from stratum.sourcing.discovery import ResultSet, SearchResult
 
     curated = SearchResult(
         url="https://a.com",
@@ -227,7 +261,7 @@ def test_result_set_raw_json_prefers_full_raw_results():
 
 
 def test_split_queries_by_coverage_skips_covered_domain_queries():
-    from stratum.stages.search.search import split_queries_by_coverage
+    from stratum.stages.search import split_queries_by_coverage
 
     existing_raw = [
         {"url": "https://www.reuters.com/technology/article", "source_domain": "reuters.com"},
@@ -261,8 +295,152 @@ def test_split_queries_by_coverage_skips_covered_domain_queries():
     assert [q["id"] for q in active] == ["q-uncovered", "q-broad"]
 
 
+def test_query_planner_explains_covered_query_decision():
+    from stratum.sourcing.discovery.query_planner import QueryPlanner
+
+    planner = QueryPlanner([
+        {"url": "https://news.samsung.com/article", "source_domain": "news.samsung.com"}
+    ])
+
+    decision = planner.coverage_decision({
+        "id": "q-samsung",
+        "include_domains": ["samsung.com"],
+    })
+
+    assert decision.query_id == "q-samsung"
+    assert decision.skipped is True
+    assert decision.reason == "covered_by_higher_priority_raw"
+
+
+def test_search_supplement_policy_skips_and_explains_covered_queries():
+    from stratum.sourcing.discovery.query_planner import SearchSupplementPolicy
+
+    policy = SearchSupplementPolicy([
+        {"url": "https://news.samsung.com/article", "source_domain": "news.samsung.com"}
+    ])
+    queries = [
+        {"id": "q-samsung", "text": "Samsung news", "locale": "en", "include_domains": ["samsung.com"]},
+        {"id": "q-micron", "text": "Micron news", "locale": "en", "include_domains": ["micron.com"]},
+    ]
+
+    active, skipped = policy.prepare_queries(queries, skip_covered_domain_queries=True)
+    stats = policy.skipped_query_stats(skipped)
+
+    assert [query["id"] for query in active] == ["q-micron"]
+    assert [query["id"] for query in skipped] == ["q-samsung"]
+    assert stats[0]["status"] == "skipped_covered"
+    assert stats[0]["engine_used"] == "collector"
+    assert stats[0]["include_domains"] == ["samsung.com"]
+
+
+def test_search_supplement_policy_keeps_existing_raw_before_search_supplement():
+    from stratum.sourcing.discovery.query_planner import SearchSupplementPolicy
+
+    policy = SearchSupplementPolicy([
+        {"url": "https://www.example.com/a?utm_source=x", "title": "collector"}
+    ])
+
+    merged = policy.merge_results([
+        {"url": "https://example.com/a", "title": "duplicate search"},
+        {"url": "https://example.com/b", "title": "search supplement"},
+    ])
+
+    assert [item["title"] for item in merged] == ["collector", "search supplement"]
+    assert merged[0]["canonical_url"] == "https://example.com/a"
+
+
+def test_search_supplement_policy_builds_zero_query_stats_payload():
+    from stratum.sourcing.discovery.query_planner import SearchSupplementPolicy
+
+    policy = SearchSupplementPolicy([{"url": "https://example.com/a", "title": "collector"}])
+    payload = policy.zero_query_stats_payload(
+        run_date="2026-05-30",
+        merged_results=policy.merge_results([]),
+        skipped_queries=[{"id": "q-covered", "locale": "en", "include_domains": ["example.com"]}],
+    )
+
+    assert payload["date"] == "2026-05-30"
+    assert payload["total_raw"] == 1
+    assert payload["diagnostics"] == {
+        "existing_raw": 1,
+        "search_raw": 0,
+        "skipped_covered_queries": 1,
+    }
+    assert payload["queries"][0]["query_id"] == "q-covered"
+
+
+def test_query_performance_scorer_recommends_low_yield_actions():
+    from stratum.sourcing.discovery.query_planner import QueryPerformanceScorer
+
+    scorer = QueryPerformanceScorer(min_attempts=3, low_yield_rate=0.5)
+    diagnostics = scorer.diagnostics([
+        {"query_id": "q-good", "status": "success", "results_count": 3},
+        {"query_id": "q-good", "status": "fallback", "results_count": 2},
+        {"query_id": "q-good", "status": "success", "results_count": 1},
+        {"query_id": "q-empty", "status": "no_results", "results_count": 0},
+        {"query_id": "q-empty", "status": "no_results", "results_count": 0},
+        {"query_id": "q-empty", "status": "no_results", "results_count": 0},
+        {"query_id": "q-failed", "status": "failed", "results_count": 0},
+        {"query_id": "q-failed", "status": "rate_limited", "results_count": 0},
+        {"query_id": "q-failed", "status": "failed", "results_count": 0},
+        {"query_id": "q-thin", "status": "success", "results_count": 0},
+        {"query_id": "q-thin", "status": "success", "results_count": 0},
+        {"query_id": "q-thin", "status": "success", "results_count": 1},
+    ])
+
+    records = {record["query_id"]: record for record in diagnostics["records"]}
+
+    assert records["q-good"]["recommendation"] == "keep"
+    assert records["q-empty"]["recommendation"] == "expand_or_replace"
+    assert records["q-failed"]["recommendation"] == "expand_or_replace"
+    assert records["q-thin"]["recommendation"] == "retire_or_rewrite"
+    assert records["q-empty"]["rewrite_hint"] == "broaden_terms_or_add_alternate_source_domains"
+    assert records["q-failed"]["rewrite_hint"] == "check_engine_route_or_replace_source_filters"
+    assert records["q-thin"]["rewrite_hint"] == "rewrite_query_or_retire_after_review"
+    assert [record["query_id"] for record in diagnostics["gap_expansion_candidates"]] == [
+        "q-empty",
+        "q-failed",
+    ]
+    assert [record["query_id"] for record in diagnostics["low_yield_retirement_candidates"]] == ["q-thin"]
+
+
+def test_query_planner_orders_and_optionally_retires_by_performance():
+    from stratum.sourcing.discovery.query_planner import QueryPlanner
+
+    queries = [
+        {"id": "q-thin", "text": "thin", "locale": "en"},
+        {"id": "q-good", "text": "good", "locale": "en"},
+        {"id": "q-gap", "text": "gap", "locale": "en"},
+    ]
+    performance = [
+        {"query_id": "q-thin", "recommendation": "retire_or_rewrite", "yield_rate": 0.1, "reason": "low_historical_yield"},
+        {"query_id": "q-good", "recommendation": "keep", "yield_rate": 2.0, "reason": "healthy_yield"},
+        {"query_id": "q-gap", "recommendation": "expand_or_replace", "yield_rate": 0.0, "reason": "all_attempts_no_results"},
+    ]
+
+    active, retired, decisions = QueryPlanner().apply_performance(queries, performance)
+
+    assert [query["id"] for query in active] == ["q-good", "q-gap", "q-thin"]
+    assert retired == []
+    assert {decision.query_id: decision.action for decision in decisions} == {
+        "q-thin": "defer",
+        "q-good": "run",
+        "q-gap": "defer",
+    }
+
+    active, retired, decisions = QueryPlanner().apply_performance(
+        queries,
+        performance,
+        retire_low_yield=True,
+    )
+
+    assert [query["id"] for query in active] == ["q-good", "q-gap"]
+    assert [query["id"] for query in retired] == ["q-thin"]
+    assert next(decision for decision in decisions if decision.query_id == "q-thin").action == "retire"
+
+
 def test_merge_raw_results_keeps_primary_on_canonical_conflict():
-    from stratum.stages.search.search import merge_raw_results
+    from stratum.stages.acquisition import merge_raw_results
 
     primary = [{"url": "https://www.example.com/a?utm_source=x", "title": "primary"}]
     secondary = [
@@ -280,7 +458,7 @@ def test_merge_raw_results_keeps_primary_on_canonical_conflict():
 # ============================================================
 
 def test_freshness_score():
-    from stratum.subsystems.search.curator import _freshness_score
+    from stratum.sourcing.discovery.curator import _freshness_score
 
     assert _freshness_score("2026-05-29T10:00:00", "2026-05-29") == 1.0
     assert _freshness_score("2026-05-28", "2026-05-29") == 0.7
@@ -291,7 +469,7 @@ def test_freshness_score():
 
 
 def test_entity_score():
-    from stratum.subsystems.search.curator import _entity_score
+    from stratum.sourcing.discovery.curator import _entity_score
 
     entities = [
         {"id": "samsung", "name_en": "Samsung", "name_zh": "三星"},
@@ -312,7 +490,7 @@ def test_entity_score():
 
 
 def test_entity_score_uses_multilingual_aliases():
-    from stratum.subsystems.search.curator import _entity_score
+    from stratum.sourcing.discovery.curator import _entity_score
 
     entities = [
         {
@@ -336,8 +514,9 @@ def test_entity_score_uses_multilingual_aliases():
 
 
 def test_score_and_sort():
-    from stratum.subsystems.search.models import SearchResult
-    from stratum.subsystems.search.curator import score
+    from stratum.sourcing.discovery import SearchResult
+    from stratum.sourcing.discovery.curator import score
+    from stratum.sourcing.discovery.curation_policy import SearchResultScorer
 
     entities = [{"id": "samsung", "name_en": "Samsung", "name_zh": ""}]
     terms = [{"name_en": "HBM4"}]
@@ -351,15 +530,97 @@ def test_score_and_sort():
                       locale="en", published_at="2026-05-20", source_type_hint="blog", engine="tavily", query_id="q2")
 
     results = score([r2, r1], "2026-05-29", source_weights, entities, terms)
+    direct_results = SearchResultScorer().score_results(
+        [r2, r1],
+        "2026-05-29",
+        source_weights,
+        entities,
+        terms,
+    )
     # Higher score should be first
     assert results[0].score > results[1].score
     assert results[0].title == "Samsung HBM4 launch"
+    assert direct_results[0].title == results[0].title
     print("  ✓ score + sort")
 
 
+def test_search_result_scorer_penalizes_duplicate_title_novelty():
+    from stratum.sourcing.discovery.curation_policy import (
+        SearchResultScorer,
+        batch_source_counts,
+        batch_title_counts,
+    )
+    from stratum.sourcing.discovery import SearchResult
+
+    scorer = SearchResultScorer()
+    results = [
+        SearchResult(
+            url=f"https://wire-{index}.example.com/story",
+            title="Samsung HBM4 qualification update",
+            snippet="Samsung HBM4",
+            locale="en",
+            published_at="2026-05-29",
+            source_domain=f"wire-{index}.example.com",
+            source_type_hint="media",
+        )
+        for index in range(3)
+    ]
+    results.append(SearchResult(
+        url="https://official.example.com/unique",
+        title="Samsung details HBM4 customer qualification milestone",
+        snippet="Samsung HBM4",
+        locale="en",
+        published_at="2026-05-29",
+        source_domain="official.example.com",
+        source_type_hint="media",
+    ))
+
+    ranked = scorer.score_results(
+        results,
+        "2026-05-29",
+        {"media": 0.6},
+        [{"id": "samsung", "name_en": "Samsung"}],
+        [{"id": "hbm4", "name_en": "HBM4"}],
+    )
+
+    title_counts = batch_title_counts(results)
+    source_counts = batch_source_counts(results)
+    duplicate = next(result for result in ranked if result.title == "Samsung HBM4 qualification update")
+    unique = next(result for result in ranked if result.title.startswith("Samsung details"))
+    assert scorer.novelty_score(duplicate, title_counts, source_counts) == 0.2
+    assert scorer.novelty_score(unique, title_counts, source_counts) == 1.0
+    assert ranked[0].title == "Samsung details HBM4 customer qualification milestone"
+    assert ranked[0].score > ranked[-1].score
+
+
+def test_search_result_scorer_uses_source_quality_score():
+    from stratum.sourcing.discovery.curation_policy import SearchResultScorer
+    from stratum.sourcing.discovery import SearchResult
+
+    scorer = SearchResultScorer()
+    official = SearchResult(
+        url="https://official.example.com/story",
+        title="HBM4 update",
+        snippet="",
+        locale="en",
+        source_type_hint="official",
+    )
+    blog = SearchResult(
+        url="https://blog.example.com/story",
+        title="HBM4 update",
+        snippet="",
+        locale="en",
+        source_type_hint="blog",
+    )
+
+    assert scorer.source_quality_score(official, {"official": 1.0, "blog": 0.2}) == 1.0
+    assert scorer.source_quality_score(blog, {"official": 1.0, "blog": 0.2}) == 0.2
+
+
 def test_prune_limits():
-    from stratum.subsystems.search.models import SearchResult
-    from stratum.subsystems.search.curator import prune
+    from stratum.sourcing.discovery import SearchResult
+    from stratum.sourcing.discovery.curator import prune
+    from stratum.sourcing.discovery.curation_policy import SearchDiversityRanker
 
     results = [
         SearchResult(url=f"https://source-a.com/{i}", title=f"A{i}", snippet="",
@@ -372,8 +633,10 @@ def test_prune_limits():
     ]
 
     pruned = prune(results, max_per_locale=5, max_per_source=3, total_cap=8)
+    direct_pruned = SearchDiversityRanker().rank(results, max_per_locale=5, max_per_source=3, total_cap=8)
     # 3 from source-a (per-source=3 hits before per-locale=5) + 3 from source-b = 6
     assert len(pruned) == 6
+    assert [r.url for r in direct_pruned] == [r.url for r in pruned]
     # source-a: max 3
     a_count = sum(1 for r in pruned if r.source_domain == "source-a.com")
     assert a_count == 3
@@ -384,8 +647,8 @@ def test_prune_limits():
 
 
 def test_prune_dedupes_by_canonical_url():
-    from stratum.subsystems.search.models import SearchResult
-    from stratum.subsystems.search.curator import curate
+    from stratum.sourcing.discovery import SearchResult
+    from stratum.sourcing.discovery.curator import curate
 
     results = [
         SearchResult(
@@ -423,8 +686,8 @@ def test_prune_dedupes_by_canonical_url():
 
 
 def test_prune_reserves_configured_source_type_mix():
-    from stratum.subsystems.search.models import SearchResult
-    from stratum.subsystems.search.curator import prune
+    from stratum.sourcing.discovery import SearchResult
+    from stratum.sourcing.discovery.curator import prune
 
     media_results = [
         SearchResult(
@@ -466,8 +729,8 @@ def test_prune_reserves_configured_source_type_mix():
 
 
 def test_prune_limits_single_entity_dominance():
-    from stratum.subsystems.search.models import SearchResult
-    from stratum.subsystems.search.curator import prune
+    from stratum.sourcing.discovery import SearchResult
+    from stratum.sourcing.discovery.curator import prune
 
     samsung_results = [
         SearchResult(
@@ -521,9 +784,9 @@ def test_prune_limits_single_entity_dominance():
 
 def test_load_search_config():
     """search: section in domain.yaml loads with all keys."""
-    from stratum.subsystems.search.config import load_search_config
+    from stratum.sourcing.discovery.config import load_search_config
 
-    config = load_search_config("storage", WORKSPACE)
+    config = load_search_config("storage", str(PROJECT_ROOT))
     assert "routing" in config
     assert "engines" in config
     assert "source_weights" in config
@@ -562,10 +825,10 @@ def test_load_search_config():
 
 def test_load_search_config_keeps_company_aliases_out_of_source_types():
     """Company aliases must not shadow source-type classification."""
-    from stratum.subsystems.search.config import load_search_config
-    from stratum.subsystems.search.models import SearchResult
+    from stratum.sourcing.discovery.config import load_search_config
+    from stratum.sourcing.discovery import SearchResult
 
-    config = load_search_config("storage", WORKSPACE)
+    config = load_search_config("storage", str(PROJECT_ROOT))
 
     result = SearchResult(
         url="https://news.samsung.com/global/samsung-memory-update",
@@ -580,9 +843,21 @@ def test_load_search_config_keeps_company_aliases_out_of_source_types():
     assert result.source_type_hint == "official"
 
 
+def test_search_wrapper_exposes_narrow_acquisition_surface():
+    from stratum.stages.search import search
+    from stratum.stages.acquisition import acquisition
+
+    assert search.load_queries_flat is acquisition.load_queries_flat
+    assert search.load_queries_from_db is acquisition.load_queries_from_db
+    assert search.resolve_queries is acquisition.resolve_queries
+    assert search.merge_raw_results is acquisition.merge_raw_results
+    assert search.discovery_candidate_rows is acquisition.discovery_candidate_rows
+    assert search.split_queries_by_coverage is acquisition.split_queries_by_coverage
+
+
 def test_load_search_config_honors_explicit_config_path(tmp_path):
     """Stage 1 must use the CLI --config file, not only workspace/config.yaml."""
-    from stratum.subsystems.search.config import load_search_config
+    from stratum.sourcing.discovery.config import load_search_config
 
     domain_dir = tmp_path / "domains" / "demo"
     domain_dir.mkdir(parents=True)
@@ -625,8 +900,8 @@ curation:
 
 
 def test_load_queries_from_db_uses_explicit_path(tmp_path):
-    """The Search stage must honor --db instead of resolving config.yaml DB."""
-    from stratum.stages.search.search import load_queries_from_db
+    """The acquisition stage must honor --db instead of resolving config.yaml DB."""
+    from stratum.stages.acquisition import load_queries_from_db
 
     db_path = tmp_path / "custom.db"
     conn = sqlite3.connect(db_path)
@@ -668,7 +943,7 @@ def test_load_queries_from_db_uses_explicit_path(tmp_path):
 
 def test_load_queries_from_db_preserves_dimension(tmp_path):
     """DB-backed Search should keep coverage dimensions seeded from queries.yaml."""
-    from stratum.stages.search.search import load_queries_from_db
+    from stratum.stages.acquisition import load_queries_from_db
 
     db_path = tmp_path / "custom.db"
     conn = sqlite3.connect(db_path)
@@ -718,7 +993,7 @@ def test_load_queries_from_db_preserves_dimension(tmp_path):
 
 
 def test_load_queries_from_db_normalizes_include_domains(tmp_path):
-    from stratum.stages.search.search import load_queries_from_db
+    from stratum.stages.acquisition import load_queries_from_db
 
     db_path = tmp_path / "custom.db"
     conn = sqlite3.connect(db_path)
@@ -757,7 +1032,7 @@ def test_load_queries_from_db_normalizes_include_domains(tmp_path):
 
 def test_load_queries_flat_supports_intent_grouped_yaml(tmp_path):
     """Search YAML can evolve to queries: intent -> dimension -> locale -> list."""
-    from stratum.stages.search.search import load_queries_flat
+    from stratum.stages.acquisition import load_queries_flat
 
     queries_path = tmp_path / "queries.yaml"
     queries_path.write_text("""
@@ -816,7 +1091,7 @@ queries:
 
 
 def test_load_queries_flat_normalizes_include_domains(tmp_path):
-    from stratum.stages.search.search import load_queries_flat
+    from stratum.stages.acquisition import load_queries_flat
 
     queries_path = tmp_path / "queries.yaml"
     queries_path.write_text("""
@@ -837,7 +1112,7 @@ queries:
 
 
 def test_load_queries_flat_rejects_malformed_include_domains(tmp_path):
-    from stratum.stages.search.search import load_queries_flat
+    from stratum.stages.acquisition import load_queries_flat
     import pytest
 
     queries_path = tmp_path / "queries.yaml"
@@ -857,7 +1132,7 @@ queries:
 
 def test_load_queries_flat_still_supports_intent_locale_yaml(tmp_path):
     """The simpler queries: intent -> locale -> list form stays supported."""
-    from stratum.stages.search.search import load_queries_flat
+    from stratum.stages.acquisition import load_queries_flat
 
     queries_path = tmp_path / "queries.yaml"
     queries_path.write_text("""
@@ -882,7 +1157,7 @@ queries:
 
 def test_load_queries_flat_recognizes_bcp47_locale_keys(tmp_path):
     """Simple intent->locale query YAML should not drop script/region variants."""
-    from stratum.stages.search.search import load_queries_flat
+    from stratum.stages.acquisition import load_queries_flat
 
     queries_path = tmp_path / "queries.yaml"
     queries_path.write_text("""
@@ -924,8 +1199,8 @@ queries:
 
 
 def test_load_queries_flat_rejects_legacy_seed_and_gap_yaml(tmp_path):
-    """Stage Search should not silently accept the removed query schema."""
-    from stratum.stages.search.search import load_queries_flat
+    """Stage acquisition should not silently accept the removed query schema."""
+    from stratum.stages.acquisition import load_queries_flat
     import pytest
 
     queries_path = tmp_path / "queries.yaml"
@@ -943,8 +1218,8 @@ gap_searches:
 
 
 def test_resolve_queries_falls_back_to_yaml_when_db_has_no_active_queries(tmp_path, capsys):
-    """An existing but empty DB must not create a zero-query Search run."""
-    from stratum.stages.search.search import resolve_queries
+    """An existing but empty DB must not create a zero-query acquisition run."""
+    from stratum.stages.acquisition import resolve_queries
 
     queries_path = tmp_path / "queries.yaml"
     queries_path.write_text("""
@@ -987,9 +1262,74 @@ queries:
     assert "falling back to YAML" in capsys.readouterr().err
 
 
+def test_discovery_candidate_rows_mark_curator_selection():
+    from stratum.stages.acquisition import discovery_candidate_rows
+    from stratum.sourcing.discovery import ResultSet, SearchResult
+
+    selected = SearchResult(
+        url="https://example.com/selected",
+        title="Selected HBM story",
+        snippet="",
+        locale="en",
+        engine="tavily",
+        query_id="q1",
+    ).with_domain()
+    rejected = SearchResult(
+        url="https://example.com/rejected",
+        title="Rejected HBM story",
+        snippet="",
+        locale="en",
+        engine="tavily",
+        query_id="q1",
+    ).with_domain()
+    result_set = ResultSet(results=[selected], raw_results=[selected, rejected])
+
+    rows = discovery_candidate_rows(result_set)
+
+    assert [row["status"] for row in rows] == ["selected", "rejected"]
+    assert rows[0]["selected"] is True
+    assert rows[1]["reason"] == "curation pruned"
+
+
+def test_discovery_observations_are_pre_curation_records():
+    from stratum.sourcing.discovery import Query, SearchResult
+    from stratum.sourcing.discovery.observations import observations_from_results
+
+    query = Query(
+        id="q1",
+        text="HBM4 qualification",
+        locale="en",
+        intent="detection",
+        dimension="technology",
+    )
+    result = SearchResult(
+        url="https://www.example.com/story",
+        title="HBM4 qualification advances",
+        snippet="NVIDIA platform qualification update",
+        locale="en",
+        published_at="2026-05-31",
+        engine="tavily",
+        query_id="q1",
+        query_dimension="technology",
+        score=0.91,
+    )
+
+    rows = observations_from_results([result], [query])
+
+    assert rows[0]["source"] == "tavily"
+    assert rows[0]["access"] == "discovery"
+    assert rows[0]["source_domain"] == "example.com"
+    assert rows[0]["query_used"] == "HBM4 qualification"
+    assert rows[0]["query_dimension"] == "technology"
+    assert "score" not in rows[0]
+    assert "status" not in rows[0]
+    assert "selected" not in rows[0]
+    assert "reason" not in rows[0]
+
+
 def test_resolve_queries_prefers_db_when_active_queries_exist(tmp_path):
     """DB-backed discovery remains preferred when it has active daily queries."""
-    from stratum.stages.search.search import resolve_queries
+    from stratum.stages.acquisition import resolve_queries
 
     queries_path = tmp_path / "queries.yaml"
     queries_path.write_text("""
@@ -1030,8 +1370,8 @@ queries:
 
 def test_executor_logs_summary_without_sys_name_error(capsys):
     """execute() should complete its stderr summary path."""
-    from stratum.subsystems.search.executor import execute
-    from stratum.subsystems.search.models import Query, SearchResult
+    from stratum.sourcing.discovery.executor import execute
+    from stratum.sourcing.discovery import Query, SearchResult
 
     class FakeEngine:
         def search(self, text, locale, query_id, date, **kwargs):
@@ -1063,8 +1403,8 @@ def test_executor_logs_summary_without_sys_name_error(capsys):
 
 
 def test_executor_passes_query_include_domains_to_engine():
-    from stratum.subsystems.search.executor import execute
-    from stratum.subsystems.search.models import Query, SearchResult
+    from stratum.sourcing.discovery.executor import execute
+    from stratum.sourcing.discovery import Query, SearchResult
 
     captured = {}
 
@@ -1107,8 +1447,8 @@ def test_executor_passes_query_include_domains_to_engine():
 
 def test_executor_skips_engines_that_cannot_honor_include_domains():
     """A source-scoped query must not silently widen on an unsupported engine."""
-    from stratum.subsystems.search.executor import execute
-    from stratum.subsystems.search.models import Query, SearchResult
+    from stratum.sourcing.discovery.executor import execute
+    from stratum.sourcing.discovery import Query, SearchResult
 
     calls = []
 
@@ -1170,14 +1510,14 @@ def test_executor_skips_engines_that_cannot_honor_include_domains():
 
 def test_run_search_low_yield_query_stats_expose_include_domains(monkeypatch):
     """Domain-scoped low-yield queries need visible filters for debugging recall."""
-    from stratum.subsystems.search import run_search
+    from stratum.sourcing.discovery import run_search
 
     class EmptyEngine:
         def search(self, text, locale, query_id, date, **kwargs):
             return []
 
     monkeypatch.setattr(
-        "stratum.subsystems.search.engine.create_engines",
+        "stratum.sourcing.discovery.engine.create_engines",
         lambda engine_configs, api_keys: {"fake": EmptyEngine()},
     )
 
@@ -1211,11 +1551,14 @@ def test_run_search_low_yield_query_stats_expose_include_domains(monkeypatch):
     low_yield = result_set.to_stats_json()["diagnostics"]["low_yield_queries"]
     assert low_yield[0]["status"] == "no_results"
     assert low_yield[0]["include_domains"] == ["semiconductor.samsung.com"]
+    performance = result_set.to_stats_json()["diagnostics"]["query_performance"]
+    assert performance["records"][0]["query_id"] == "q-official"
+    assert performance["records"][0]["recommendation"] == "keep_collecting"
 
 
 def test_executor_dedupes_by_canonical_url():
-    from stratum.subsystems.search.executor import execute
-    from stratum.subsystems.search.models import Query, SearchResult
+    from stratum.sourcing.discovery.executor import execute
+    from stratum.sourcing.discovery import Query, SearchResult
 
     class FakeEngine:
         def search(self, text, locale, query_id, date, **kwargs):
@@ -1256,8 +1599,8 @@ def test_executor_dedupes_by_canonical_url():
 
 def test_executor_preserves_failure_error():
     """execute() should expose engine errors for search diagnostics."""
-    from stratum.subsystems.search.executor import execute
-    from stratum.subsystems.search.models import Query
+    from stratum.sourcing.discovery.executor import execute
+    from stratum.sourcing.discovery import Query
 
     class BrokenEngine:
         def search(self, text, locale, query_id, date, **kwargs):
@@ -1281,10 +1624,56 @@ def test_executor_preserves_failure_error():
     assert "RuntimeError: bad payload" in stats[0].error
 
 
+def test_executor_preserves_fallback_attempt_errors():
+    """All-engine failures should keep the full fallback attempt chain."""
+    from stratum.sourcing.discovery.executor import execute
+    from stratum.sourcing.discovery import Query
+
+    class BrokenBocha:
+        def search(self, text, locale, query_id, date, **kwargs):
+            raise RuntimeError("bocha down")
+
+    class BrokenTavily:
+        def search(self, text, locale, query_id, date, **kwargs):
+            raise RuntimeError("tavily quota")
+
+    results, stats = execute(
+        queries=[Query(id="q-cn", text="HBM4", locale="zh-CN", intent="detection")],
+        engines={"bocha": BrokenBocha(), "tavily": BrokenTavily()},
+        routing={"zh-CN": ["bocha", "tavily"]},
+        max_rps={"bocha": 100, "tavily": 100},
+        max_retries={"bocha": 0, "tavily": 0},
+        backoff_base={"bocha": 0, "tavily": 0},
+        date="2026-05-30",
+        workers=1,
+    )
+
+    assert results == []
+    assert stats[0].status == "failed"
+    assert "bocha: RuntimeError: bocha down" in stats[0].error
+    assert "tavily: RuntimeError: tavily quota" in stats[0].error
+
+    serialized = stats[0].to_dict()
+    assert serialized["engine_attempts"] == [
+        {
+            "engine": "bocha",
+            "attempt": 0,
+            "status": "failed",
+            "error": "bocha: RuntimeError: bocha down",
+        },
+        {
+            "engine": "tavily",
+            "attempt": 0,
+            "status": "failed",
+            "error": "tavily: RuntimeError: tavily quota",
+        },
+    ]
+
+
 def test_executor_falls_back_when_primary_engine_is_unavailable():
     """Missing primary engine should not prevent locale fallback from running."""
-    from stratum.subsystems.search.executor import execute
-    from stratum.subsystems.search.models import Query, SearchResult
+    from stratum.sourcing.discovery.executor import execute
+    from stratum.sourcing.discovery import Query, SearchResult
 
     class FallbackEngine:
         def search(self, text, locale, query_id, date, **kwargs):
@@ -1315,10 +1704,145 @@ def test_executor_falls_back_when_primary_engine_is_unavailable():
     assert stats[0].status == "fallback"
 
 
+def test_executor_uses_engine_health_to_deprioritize_weak_primary():
+    """Health recommendations can reorder fallback without dropping engines."""
+    from stratum.sourcing.discovery.executor import execute
+    from stratum.sourcing.discovery import Query, SearchResult
+
+    calls = []
+
+    class BochaEngine:
+        def search(self, text, locale, query_id, date, **kwargs):
+            calls.append("bocha")
+            return [
+                SearchResult(
+                    url="https://bocha.example.com/story",
+                    title=text,
+                    snippet="",
+                    locale=locale,
+                    engine="bocha",
+                    query_id=query_id,
+                )
+            ]
+
+    class TavilyEngine:
+        def search(self, text, locale, query_id, date, **kwargs):
+            calls.append("tavily")
+            return [
+                SearchResult(
+                    url="https://tavily.example.com/story",
+                    title=text,
+                    snippet="",
+                    locale=locale,
+                    engine="tavily",
+                    query_id=query_id,
+                )
+            ]
+
+    results, stats = execute(
+        queries=[Query(id="q1", text="HBM4", locale="zh-CN", intent="detection")],
+        engines={"bocha": BochaEngine(), "tavily": TavilyEngine()},
+        routing={"zh-CN": ["bocha", "tavily"]},
+        max_rps={"bocha": 100, "tavily": 100},
+        max_retries={"bocha": 0, "tavily": 0},
+        backoff_base={"bocha": 0, "tavily": 0},
+        date="2026-05-30",
+        workers=1,
+        engine_health={
+            "bocha": {"recommendation": "avoid"},
+            "tavily": {"recommendation": "healthy"},
+        },
+    )
+
+    assert calls == ["tavily"]
+    assert results[0].engine == "tavily"
+    assert stats[0].engine_used == "tavily"
+    assert stats[0].status == "success"
+
+
+def test_executor_marks_provider_exhausted_without_retrying_quota_errors():
+    """Quota/auth failures are provider exhaustion, not transient retry signals."""
+    from stratum.subsystems.monitoring.engine_health import score_search_engine_health
+    from stratum.sourcing.discovery.executor import execute
+    from stratum.sourcing.discovery import Query
+
+    calls = []
+
+    class QuotaEngine:
+        def search(self, text, locale, query_id, date, **kwargs):
+            calls.append(query_id)
+            raise RuntimeError("HTTP 433: pay-as-you-go limit exceeded")
+
+    results, stats = execute(
+        queries=[Query(id="q1", text="HBM4", locale="en", intent="detection")],
+        engines={"tavily": QuotaEngine()},
+        routing={"en": ["tavily"]},
+        max_rps={"tavily": 100},
+        max_retries={"tavily": 2},
+        backoff_base={"tavily": 0},
+        date="2026-05-30",
+        workers=1,
+    )
+
+    assert results == []
+    assert calls == ["q1"]
+    assert stats[0].engine_attempts[0]["status"] == "provider_exhausted"
+    health = score_search_engine_health([stats[0].to_dict()])
+    assert health["tavily"]["recommendation"] == "avoid"
+    assert health["tavily"]["provider_exhausted"] == 1
+
+
+def test_executor_marks_http_403_provider_exhausted():
+    from stratum.sourcing.discovery.executor import execute
+    from stratum.sourcing.discovery import Query
+
+    calls = []
+
+    class ForbiddenEngine:
+        def search(self, text, locale, query_id, date, **kwargs):
+            calls.append(query_id)
+            raise RuntimeError("403 Client Error: Forbidden for url")
+
+    _results, stats = execute(
+        queries=[Query(id="q1", text="HBM4", locale="zh-CN", intent="detection")],
+        engines={"bocha": ForbiddenEngine()},
+        routing={"zh-CN": ["bocha"]},
+        max_rps={"bocha": 100},
+        max_retries={"bocha": 2},
+        backoff_base={"bocha": 0},
+        date="2026-05-30",
+        workers=1,
+    )
+
+    assert calls == ["q1"]
+    assert stats[0].engine_attempts[0]["status"] == "provider_exhausted"
+
+
+def test_routing_policy_preserves_configured_chain_while_applying_health():
+    """RoutingPolicy owns route decisions; executor only consumes the chain."""
+    from stratum.sourcing.discovery.routing import RoutingPolicy
+
+    policy = RoutingPolicy(
+        routing={"zh-CN": ["bocha", "tavily", "fallback"]},
+        engine_health={
+            "bocha": {"recommendation": "avoid"},
+            "tavily": {"recommendation": "healthy"},
+            "fallback": {"recommendation": "watch"},
+        },
+    )
+
+    decision = policy.decide("zh-Hans-CN")
+
+    assert decision.matched_locale == "zh-CN"
+    assert decision.configured_order == ["bocha", "tavily", "fallback"]
+    assert decision.selected_order == ["tavily", "fallback", "bocha"]
+    assert decision.health_applied is True
+
+
 def test_executor_routes_locale_variants_to_configured_parent_locale():
     """BCP47 script/region variants should keep the intended engine chain."""
-    from stratum.subsystems.search.executor import execute
-    from stratum.subsystems.search.models import Query, SearchResult
+    from stratum.sourcing.discovery.executor import execute
+    from stratum.sourcing.discovery import Query, SearchResult
 
     class FakeEngine:
         def search(self, text, locale, query_id, date, **kwargs):
@@ -1351,8 +1875,8 @@ def test_executor_routes_locale_variants_to_configured_parent_locale():
 
 def test_executor_passes_query_metadata_to_engine():
     """Engine payload selection needs intent and dimension, not only text/locale."""
-    from stratum.subsystems.search.executor import execute
-    from stratum.subsystems.search.models import Query, SearchResult
+    from stratum.sourcing.discovery.executor import execute
+    from stratum.sourcing.discovery import Query, SearchResult
 
     seen = {}
 
@@ -1397,7 +1921,7 @@ def test_executor_passes_query_metadata_to_engine():
 
 def test_run_search_records_query_failures_when_no_engine_keys(capsys):
     """No usable engines should still produce per-query diagnostics."""
-    from stratum.subsystems.search import run_search
+    from stratum.sourcing.discovery import run_search
 
     config = {
         "routing": {"en": ["tavily"]},
@@ -1425,13 +1949,20 @@ def test_run_search_records_query_failures_when_no_engine_keys(capsys):
     assert result_set.stats[0].query_text == "HBM4"
     assert result_set.stats[0].dimension == "general"
     assert result_set.diagnostics["low_yield_queries"][0]["query_id"] == "q1"
+    assert result_set.diagnostics["engine_health"]["tavily"]["recommendation"] == "avoid"
+    assert result_set.diagnostics["engine_configuration"] == {
+        "configured_engines": ["tavily"],
+        "usable_engines": [],
+        "missing_api_keys": ["tavily"],
+        "unreachable_locales": [{"locale": "en", "configured_order": ["tavily"]}],
+    }
     assert "No usable search engines configured" in capsys.readouterr().err
 
 
 def test_run_search_stats_include_curation_diagnostics(monkeypatch):
     """raw.stats.json should explain source/locale coverage and floor gaps."""
-    from stratum.subsystems.search import run_search
-    from stratum.subsystems.search.models import SearchResult
+    from stratum.sourcing.discovery import run_search
+    from stratum.sourcing.discovery import SearchResult
 
     class FakeEngine:
         def search(self, text, locale, query_id, date, **kwargs):
@@ -1455,7 +1986,7 @@ def test_run_search_stats_include_curation_diagnostics(monkeypatch):
             ]
 
     monkeypatch.setattr(
-        "stratum.subsystems.search.engine.create_engines",
+        "stratum.sourcing.discovery.engine.create_engines",
         lambda engine_configs, api_keys: {"fake": FakeEngine()},
     )
 
@@ -1514,8 +2045,8 @@ def test_run_search_stats_include_curation_diagnostics(monkeypatch):
 
 
 def test_search_diagnostics_normalize_bad_external_grouping_keys():
-    from stratum.subsystems.search import build_diagnostics
-    from stratum.subsystems.search.models import Query, QueryStats, SearchResult
+    from stratum.sourcing.discovery import build_diagnostics
+    from stratum.sourcing.discovery import Query, QueryStats, SearchResult
 
     diagnostics = build_diagnostics(
         queries=[Query(id="q1", text="HBM4", locale="en")],
@@ -1548,10 +2079,42 @@ def test_search_diagnostics_normalize_bad_external_grouping_keys():
     assert {"locale": "unknown", "queries": 0, "raw": 1, "curated": 0} in diagnostics["locale_coverage"]
 
 
+def test_run_search_engine_configuration_normalizes_non_string_route_keys(monkeypatch):
+    from stratum.sourcing.discovery import run_search
+
+    monkeypatch.setattr(
+        "stratum.sourcing.discovery.engine.create_engines",
+        lambda engine_configs, api_keys: {},
+    )
+
+    result_set = run_search(
+        queries=[{"id": "q1", "text": "HBM4", "locale": "en", "intent": "detection"}],
+        config={
+            "routing": {False: ["tavily"], "en": ["tavily"]},
+            "engines": {"tavily": {"max_rps": 100, "max_retries": 0, "backoff_base": 0}},
+            "source_weights": {"media": 0.6},
+            "classifications": {},
+            "entities": [],
+            "terms": [],
+            "max_per_locale": 10,
+            "max_per_source": 3,
+            "total_cap": 10,
+        },
+        api_keys={},
+        date="2026-05-30",
+        workers=1,
+    )
+
+    assert result_set.diagnostics["engine_configuration"]["unreachable_locales"] == [
+        {"locale": "unknown", "configured_order": ["tavily"]},
+        {"locale": "en", "configured_order": ["tavily"]},
+    ]
+
+
 def test_run_search_diagnostics_track_include_domain_coverage(monkeypatch):
     """Scoped queries should expose which configured domains produced evidence."""
-    from stratum.subsystems.search import run_search
-    from stratum.subsystems.search.models import SearchResult
+    from stratum.sourcing.discovery import run_search
+    from stratum.sourcing.discovery import SearchResult
 
     class FakeEngine:
         def search(self, text, locale, query_id, date, **kwargs):
@@ -1575,7 +2138,7 @@ def test_run_search_diagnostics_track_include_domain_coverage(monkeypatch):
             ]
 
     monkeypatch.setattr(
-        "stratum.subsystems.search.engine.create_engines",
+        "stratum.sourcing.discovery.engine.create_engines",
         lambda engine_configs, api_keys: {"fake": FakeEngine()},
     )
 
@@ -1630,7 +2193,7 @@ def test_run_search_diagnostics_track_include_domain_coverage(monkeypatch):
 
 def test_create_engines():
     """Engine factory creates correct instances."""
-    from stratum.subsystems.search.engine import create_engines, BochaEngine, TavilyEngine
+    from stratum.sourcing.discovery.engine import create_engines, BochaEngine, TavilyEngine
 
     engine_configs = {
         "bocha": {"freshness": "oneDay", "count": 10},
@@ -1663,7 +2226,7 @@ def test_create_engines():
 
 def test_create_engines_skips_engines_without_api_keys():
     """Missing API keys should not create engines that will only auth-fail."""
-    from stratum.subsystems.search.engine import create_engines
+    from stratum.sourcing.discovery.engine import create_engines
 
     engine_configs = {
         "bocha": {"freshness": "oneDay", "count": 10},
@@ -1677,7 +2240,7 @@ def test_create_engines_skips_engines_without_api_keys():
 
 def test_tavily_date_window_and_site_filter_helpers():
     """Tavily uses non-empty date ranges and converts site: syntax."""
-    from stratum.subsystems.search.engine import TavilyEngine
+    from stratum.sourcing.discovery.engine import TavilyEngine
 
     assert TavilyEngine._date_window("2026-05-30") == ("2026-05-30", "2026-05-31")
 
@@ -1691,7 +2254,7 @@ def test_tavily_date_window_and_site_filter_helpers():
 
 def test_tavily_include_domains_follow_locale_parent_fallback():
     """Domain-scoped Tavily routing should survive BCP47 locale variants."""
-    from stratum.subsystems.search.engine import TavilyEngine
+    from stratum.sourcing.discovery.engine import TavilyEngine
 
     engine = TavilyEngine(
         api_key="fake",
@@ -1715,7 +2278,7 @@ def test_tavily_include_domains_follow_locale_parent_fallback():
 
 def test_tavily_topic_strategy_uses_site_intent_and_dimension(monkeypatch):
     """Tavily topic should be configurable by query shape and coverage purpose."""
-    from stratum.subsystems.search.engine import TavilyEngine
+    from stratum.sourcing.discovery.engine import TavilyEngine
 
     payloads = []
 
@@ -1730,7 +2293,7 @@ def test_tavily_topic_strategy_uses_site_intent_and_dimension(monkeypatch):
         payloads.append(json)
         return FakeResponse()
 
-    monkeypatch.setattr("stratum.subsystems.search.engine.requests.post", fake_post)
+    monkeypatch.setattr("stratum.sourcing.discovery.engine.requests.post", fake_post)
 
     engine = TavilyEngine(
         api_key="fake",
@@ -1808,7 +2371,7 @@ if __name__ == "__main__":
     print(f"\n{'=' * 50}")
     print(f"Results: {passed}/{len(tests)} passed")
     if passed == len(tests):
-        print("✅ All search subsystem tests passed")
+        print("✅ All discovery subsystem tests passed")
     else:
         print(f"❌ {len(tests) - passed} test(s) failed")
         sys.exit(1)
