@@ -79,11 +79,29 @@ CREATE TABLE IF NOT EXISTS query_run_stats (
     PRIMARY KEY (query_id, run_date)
 );
 
+CREATE TABLE IF NOT EXISTS search_engine_health (
+    engine TEXT NOT NULL,
+    run_date TEXT NOT NULL,
+    attempts INTEGER DEFAULT 0,
+    successes INTEGER DEFAULT 0,
+    no_results INTEGER DEFAULT 0,
+    failures INTEGER DEFAULT 0,
+    rate_limited INTEGER DEFAULT 0,
+    not_configured INTEGER DEFAULT 0,
+    unsupported INTEGER DEFAULT 0,
+    health_score REAL DEFAULT 0,
+    failure_rate REAL DEFAULT 0,
+    recommendation TEXT,
+    errors TEXT,
+    updated_at TEXT,
+    PRIMARY KEY (engine, run_date)
+);
+
 -- ============================================================
 -- Keywords (atomic search units)
 -- ============================================================
 CREATE TABLE IF NOT EXISTS keywords (
-    id TEXT PRIMARY KEY,               -- kw-samsung, kw-hbm4, kw-大容量
+    id TEXT PRIMARY KEY,               -- kw-samsung, kw-hbm4, kw-high-capacity
     text TEXT NOT NULL,
     locale TEXT NOT NULL,
     type TEXT NOT NULL,                -- COMPANY/TECHNOLOGY/PRODUCT/ATTRIBUTE
@@ -94,7 +112,7 @@ CREATE TABLE IF NOT EXISTS keywords (
     frequency_30d INTEGER DEFAULT 0,
     first_seen TEXT,
     last_seen TEXT,
-    source TEXT DEFAULT 'domain.yaml'  -- domain.yaml/normalize提取/agent
+    source TEXT DEFAULT 'domain.yaml'  -- domain.yaml/normalize/agent
 );
 
 -- ============================================================

@@ -1,10 +1,13 @@
-# domains/storage - Storage 领域配置
+# domains/storage - Storage domain configuration
 
 ## Purpose
 
-`domains/storage` 是 Stratum 的 storage industry domain 实例。这里集中放公司、技术词、信源、搜索 query、模板、验证规则和渲染标签。
+`domains/storage` is Stratum's storage-industry domain instance. It centralizes
+companies, technical terms, sources, Search queries, templates, validation
+rules, and render labels.
 
-框架代码必须从这里读取 storage 领域知识，不能在 `stratum/` 中硬编码 storage 公司名、技术名或来源规则。
+Framework code must read storage domain knowledge from this directory. It must
+not hardcode storage companies, technical terms, or source rules in `stratum/`.
 
 ## Files
 
@@ -18,10 +21,10 @@
 
 ## Boundaries
 
-### 包含
+### Owns
 
 - Storage companies, aliases, source domains, keywords, terms, validation blocklists.
-- Collector source registry (`source_registry.sources`).
+- Watchlist source registry (`source_registry.sources`).
 - Query templates for Search stage. Source-scoped query templates must use
   structured `include_domains`; query text should stay engine-neutral and must
   not embed `site:` operators. Values should be bare hostnames such as
@@ -34,7 +37,7 @@
   text passed into Edit and the final artifact quality gate.
 - Render template assets that are specific to storage.
 
-### 不包含
+### Does Not Own
 
 - Runtime output. Pipeline output belongs under configured `reports_dir`/`output_dir`.
 - Python implementation logic.
@@ -45,13 +48,13 @@
 ## Main Consumers
 
 - `stratum/orchestrator/pipeline.py`
-- `stratum/stages/search/search.py`
+- `stratum/stages/acquisition/search.py`
 - `stratum/stages/verify/verify.py`
 - `stratum/stages/normalize/normalize.py`
 - `stratum/stages/edit/edit.py` via `domain.yaml` policy injection
 - `stratum/stages/render/render.py`
-- `stratum/collectors/registry.py`
-- `stratum/collectors/keywords.py`
+- `stratum/sourcing/watchlist/registry.py`
+- `stratum/sourcing/watchlist/keywords.py`
 - `stratum/db/seed.py`
 
 ## Extension Rule

@@ -1,0 +1,53 @@
+project:
+  version: "0.1.0"
+  rule: >
+    1.0 is reserved for the Storage domain after daily, weekly, monthly,
+    quarterly, and yearly reports have run through and been validated with one
+    full year of real data. 2.0 is reserved for the second fully validated
+    domain, 3.0 for the third, and so on.
+  current_focus: storage domain 0.1 line moving toward 0.2
+  release_policy:
+    current_line: "0.1"
+    next_deployment_release: "0.1.1"
+    deployment_rule: deployments are key releases and increment the patch version
+    development_iteration_examples:
+      - "0.1.01"
+      - "0.1.02"
+    note: >
+      Development iterations may use two-digit local planning labels, but package
+      metadata keeps standard x.y.z versions such as 0.1.0 and 0.1.1.
+
+modules:
+  contracts:
+    version: "0.1.0"
+    reason: report window contract and shared cross-module data contracts
+  orchestrator:
+    version: "0.1.0"
+    reason: daily pipeline dispatch, deployment identity, custom report windows
+  temporal:
+    version: "0.1.0"
+    reason: cross-temporal report profiles, fresh exploration, and higher-scale execution
+  db:
+    version: "0.1.0"
+    reason: explicit foundation migration, cascade inputs, synthesis, service APIs
+  evaluation:
+    version: "0.1.0"
+    reason: deterministic report-quality benchmark harness
+  sourcing:
+    version: "0.1.0"
+    reason: external information sourcing capabilities and acquisition policy
+  watchlist:
+    version: "0.1.0"
+    reason: RSS and fixed URL source registry acquisition diagnostics
+  discovery:
+    version: "0.1.0"
+    reason: Bocha/Tavily query routing, curation diagnostics, and provider health
+  edit:
+    version: "0.1.0"
+    reason: daily dynamic block editing and report templates
+  render:
+    version: "0.1.0"
+    reason: template-backed HTML/PDF rendering
+  deployment:
+    version: "0.1.0"
+    reason: locked release/deployment workflow and runtime identity

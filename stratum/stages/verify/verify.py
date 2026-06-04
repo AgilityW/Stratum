@@ -17,68 +17,35 @@ from __future__ import annotations
 import argparse
 import json
 import os
-import re
 import sys
 import yaml
 from datetime import datetime, timezone, timedelta
-from urllib.parse import urlparse
 
-PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
-if PROJECT_ROOT not in sys.path:
-    sys.path.insert(0, PROJECT_ROOT)
-
-from stratum.subsystems.search.models import canonicalize_url, source_pattern_matches
+from stratum.sourcing.discovery import canonicalize_url
+from stratum.stages.verify.evidence_acceptance import (
+    EvidenceAcceptancePolicy,
+    check_duplicate,
+    check_magnitude,
+    check_platform_admission,
+    extract_domain,
+    is_blocklisted,
+    is_low_priority_domain,
+)
+from stratum.stages.verify.freshness_policy import (
+    FreshnessPolicy,
+    background_flags_for_date_failure,
+    date_confidence_for_source,
+    date_confidence_meets_minimum,
+    validate_date,
+)
 
 CST = timezone(timedelta(hours=8))
-
-DATE_SOURCE_CONFIDENCE = {
-    "search_api": "high",
-    "web_extract": "high",
-    "url_path": "high",
-    "freshness_window": "medium",
-    "snippet_regex": "low",
-    "none": "none",
-    "": "none",
-}
-CONFIDENCE_RANK = {"none": 0, "low": 1, "medium": 2, "high": 3}
-
 
 def load_domain_config(domain_path: str) -> dict:
     """Load pipeline section from domain.yaml."""
     with open(domain_path) as f:
         config = yaml.safe_load(f)
     return config.get("pipeline", {})
-
-
-def extract_domain(url: str) -> str:
-    """Extract domain from URL, stripping common presentation prefixes."""
-    if not url:
-        return ""
-    try:
-        parsed = urlparse(url)
-        domain = parsed.netloc.lower()
-        if domain.startswith("www."):
-            domain = domain[4:]
-        if domain.startswith("m."):
-            domain = domain[2:]
-        return domain
-    except Exception:
-        return ""
-
-
-def is_blocklisted(url: str, blocklist: dict) -> tuple[bool, str]:
-    """Check if URL domain matches any blocklist category."""
-    for category, patterns in blocklist.items():
-        for blocked in patterns:
-            if source_pattern_matches(url, blocked):
-                return True, f"BLOCKED: {blocked}"
-    return False, ""
-
-
-def is_low_priority_domain(url: str, low_priority_domains: set[str]) -> bool:
-    """Check whether URL belongs to a low-priority exact domain or subdomain."""
-    return any(source_pattern_matches(url, pattern) for pattern in low_priority_domains)
-
 
 def extract_date_from_metadata(article: dict) -> str | None:
     """Extract publication date from search API metadata."""
@@ -88,7 +55,7 @@ def extract_date_from_metadata(article: dict) -> str | None:
         return article["date_published"]
     if "published_date" in article:
         return article["published_date"]
-    for key in ["publishedAt", "pubDate", "date", "timestamp"]:
+    for key in ["published_at", "publishedAt", "pubDate", "date", "timestamp"]:
         if key in article:
             return article[key]
     return None
@@ -110,56 +77,6 @@ def parse_date(date_str: str) -> datetime | None:
             continue
     return None
 
-
-def date_confidence_for_source(date_source: str) -> str:
-    """Map date lineage to a deterministic confidence bucket."""
-    return DATE_SOURCE_CONFIDENCE.get(date_source or "", "low")
-
-
-def date_confidence_meets_minimum(confidence: str, minimum: str) -> bool:
-    """Return whether a confidence bucket satisfies a configured minimum."""
-    return CONFIDENCE_RANK.get(confidence, 0) >= CONFIDENCE_RANK.get(minimum, 0)
-
-
-def validate_date(article: dict, run_date_str: str, date_window: dict) -> tuple[bool, str, str | None, str]:
-    """Validate article date against run_date window."""
-    stale_days = date_window.get("stale_days", 2)
-    max_future_days = date_window.get("max_future_days", 1)
-
-    date_str = extract_date_from_metadata(article)
-    date_source = article.get("date_source", "")
-
-    if not date_str:
-        snippet = article.get("snippet", "") or article.get("description", "")
-        title = article.get("title", "")
-        text = f"{title} {snippet}"
-        date_match = re.search(r'(\d{4}[-/]\d{1,2}[-/]\d{1,2})', text)
-        if date_match:
-            date_str = date_match.group(1)
-            date_source = date_source or "snippet_regex"
-        else:
-            return False, "NO_DATE", None, date_source or "none"
-    elif not date_source:
-        date_source = "search_api"
-
-    dt = parse_date(date_str)
-    if dt is None:
-        return False, "NO_DATE", None, date_source
-
-    if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=CST)
-
-    run_date = datetime.fromisoformat(run_date_str).replace(tzinfo=CST)
-    diff_days = (run_date - dt).days
-
-    if diff_days < -max_future_days:
-        return False, "FUTURE", dt.isoformat(), date_source
-    if diff_days > stale_days:
-        return False, "STALE", dt.isoformat(), date_source
-
-    return True, "verified", dt.isoformat(), date_source
-
-
 def _source_type_hint(article: dict) -> str:
     raw = article.get("raw_metadata", {}) if isinstance(article.get("raw_metadata"), dict) else {}
     return str(
@@ -170,16 +87,6 @@ def _source_type_hint(article: dict) -> str:
         or ""
     ).strip().lower()
 
-
-def _engine_name(article: dict) -> str:
-    raw = article.get("raw_metadata", {}) if isinstance(article.get("raw_metadata"), dict) else {}
-    return str(article.get("engine") or raw.get("engine") or "").strip().lower()
-
-
-def _engine_allowed(engine: str, prefixes: list[str]) -> bool:
-    return any(engine == prefix or engine.startswith(f"{prefix}:") for prefix in prefixes)
-
-
 def _background_flags_for_date_failure(
     article: dict,
     status: str,
@@ -187,101 +94,8 @@ def _background_flags_for_date_failure(
     run_date: str,
     date_window: dict,
 ) -> tuple[bool, str | None, str | None, list[str]]:
-    """Admit selected stale/no-date records as background evidence only."""
-    source_type = _source_type_hint(article)
-    engine = _engine_name(article)
-
-    if status == "STALE" and parsed_date:
-        allowed_types = {
-            str(item).lower()
-            for item in date_window.get("background_source_types", [])
-        }
-        if source_type not in allowed_types:
-            return False, None, None, []
-        background_stale_days = int(date_window.get("background_stale_days", 0) or 0)
-        if background_stale_days <= int(date_window.get("stale_days", 2)):
-            return False, None, None, []
-        parsed_dt = parse_date(parsed_date)
-        if not parsed_dt:
-            return False, None, None, []
-        if parsed_dt.tzinfo is None:
-            parsed_dt = parsed_dt.replace(tzinfo=CST)
-        run_dt = datetime.fromisoformat(run_date).replace(tzinfo=CST)
-        if (run_dt - parsed_dt).days <= background_stale_days:
-            return True, parsed_dt.isoformat(), "search_api", ["BACKGROUND_STALE"]
-
-    if status == "NO_DATE":
-        allowed_types = {
-            str(item).lower()
-            for item in date_window.get("background_no_date_source_types", [])
-        }
-        allowed_engines = [
-            str(item).lower()
-            for item in date_window.get("background_no_date_engines", [])
-        ]
-        if source_type in allowed_types and _engine_allowed(engine, allowed_engines):
-            run_dt = datetime.fromisoformat(run_date).replace(tzinfo=CST)
-            return True, run_dt.isoformat(), "freshness_window", ["BACKGROUND_NO_DATE"]
-
-    return False, None, None, []
-
-
-def check_magnitude(article: dict, magnitude_rules: dict) -> list[str]:
-    """Check for implausible magnitude claims in snippet/title."""
-    flags = []
-    text = f"{article.get('title', '')} {article.get('snippet', '')}"
-
-    share_max = magnitude_rules.get("share_max_pct", 100)
-    share_match = re.search(r'(\d+(?:\.\d+)?)\s*%\s*(?:market\s*)?share', text, re.IGNORECASE)
-    if share_match:
-        share = float(share_match.group(1))
-        if share > share_max:
-            flags.append(f"IMPOSSIBLE: market share {share}% > {share_max}%")
-
-    rev_max = magnitude_rules.get("revenue_max_usd", 1_000_000_000_000)
-    rev_match = re.search(r'\$?\s*(\d+(?:\.\d+)?)\s*(?:trillion|T)\b', text, re.IGNORECASE)
-    if rev_match:
-        rev = float(rev_match.group(1))
-        if rev >= 1.0:
-            flags.append(f"FLAG: revenue ${rev}T exceeds sanity threshold")
-
-    return flags
-
-
-def check_duplicate(url: str, title: str, seen_urls: set, seen_titles: dict) -> tuple[bool, str]:
-    """Deduplication: canonical URL match or title similarity > 0.85."""
-    canonical_url = canonicalize_url(url)
-    if canonical_url and canonical_url in seen_urls:
-        return True, "DUPLICATE_URL"
-    # Title similarity
-    if title:
-        title_lower = title.lower().strip()
-        for seen_title, seen_url in seen_titles.items():
-            if _title_similarity(title_lower, seen_title) > 0.85:
-                return True, f"DUPLICATE_TITLE: similar to '{seen_title[:60]}'"
-    return False, ""
-
-def _title_similarity(a: str, b: str) -> float:
-    """Jaccard-like similarity on character bigrams for CJK-friendly comparison."""
-    def _bigrams(s: str) -> set:
-        return {s[i:i+2] for i in range(len(s)-1)}
-    ba, bb = _bigrams(a), _bigrams(b)
-    if not ba or not bb:
-        return 0.0
-    return len(ba & bb) / len(ba | bb)
-
-def check_platform_admission(domain: str, platform_companies: list[str]) -> tuple[bool, str]:
-    """Check if non-domain source is in platform admission list.
-    Returns (is_platform, reason). is_platform=True means it's admitted
-    (a platform company that affects our industry)."""
-    if not platform_companies or not domain:
-        return False, ""
-    domain_lower = domain.lower()
-    for name in platform_companies:
-        if name.lower() in domain_lower:
-            return True, f"PLATFORM_ADMIT: {name}"
-    # Not a platform company — no special treatment
-    return False, ""
+    """Compatibility wrapper for freshness policy callers/tests."""
+    return background_flags_for_date_failure(article, status, parsed_date, run_date, date_window)
 
 
 def build_verification_stats(verified_records: list[dict], run_date: str) -> dict:
@@ -294,6 +108,7 @@ def build_verification_stats(verified_records: list[dict], run_date: str) -> dic
         "reasons": {},
         "date_confidence": {},
         "quality_flags": {},
+        "corroboration": {},
         "blocklisted": 0,
         "duplicates": 0,
         "platform_admitted": 0,
@@ -304,6 +119,8 @@ def build_verification_stats(verified_records: list[dict], run_date: str) -> dic
             stats["verified"] += 1
             date_confidence = record.get("date_confidence", "none")
             stats["date_confidence"][date_confidence] = stats["date_confidence"].get(date_confidence, 0) + 1
+            corroboration = record.get("corroboration_level", "none")
+            stats["corroboration"][corroboration] = stats["corroboration"].get(corroboration, 0) + 1
             for flag in record.get("quality_flags", []) or []:
                 stats["quality_flags"][flag] = stats["quality_flags"].get(flag, 0) + 1
             if record.get("platform_admitted"):
@@ -331,7 +148,8 @@ def verify_article(article: dict, run_date: str, index: int,
                    pipeline_config: dict,
                    seen_urls: set = None,
                    seen_titles: dict = None,
-                   platform_companies: list[str] = None) -> dict:
+                   platform_companies: list[str] = None,
+                   accepted_articles: list[dict] | None = None) -> dict:
     """Verify a single article. Returns article with verification fields set."""
     blocklist = pipeline_config.get("blocklist", {})
     low_priority = set(pipeline_config.get("low_priority_domains", []))
@@ -340,6 +158,7 @@ def verify_article(article: dict, run_date: str, index: int,
     seen_urls = set() if seen_urls is None else seen_urls
     seen_titles = {} if seen_titles is None else seen_titles
     platform_companies = platform_companies or []
+    accepted_articles = [] if accepted_articles is None else accepted_articles
 
     url = article.get("url", "")
     canonical_url = article.get("canonical_url") or canonicalize_url(url)
@@ -359,74 +178,44 @@ def verify_article(article: dict, run_date: str, index: int,
                         if k not in ("id", "url", "canonical_url", "title", "snippet", "description")},
     }
 
-    # Check 1: Blocklist
-    is_blocked, block_reason = is_blocklisted(url, blocklist)
-    if is_blocked:
+    acceptance = EvidenceAcceptancePolicy(
+        blocklist=blocklist,
+        low_priority_domains=low_priority,
+        magnitude_rules=magnitude_rules,
+        platform_companies=platform_companies,
+    ).evaluate(
+        article,
+        seen_urls=seen_urls,
+        seen_titles=seen_titles,
+        accepted_articles=accepted_articles,
+    )
+    if not acceptance.accepted:
         verified["verification_status"] = "rejected"
-        verified["rejection_reason"] = block_reason
-        verified["published_at"] = None
+        verified["rejection_reason"] = acceptance.rejection_reason
+        if acceptance.magnitude_flags:
+            verified["magnitude_flags"] = acceptance.magnitude_flags
         return verified
 
-    # Check 2: Low priority domains
-    domain = extract_domain(url)
-    if is_low_priority_domain(url, low_priority):
+    freshness = FreshnessPolicy(date_window).evaluate(article, run_date)
+    verified["published_at"] = freshness.published_at
+    verified["date_source"] = freshness.date_source
+    verified["date_confidence"] = freshness.date_confidence
+    if freshness.quality_flags:
+        verified["quality_flags"] = freshness.quality_flags
+    if not freshness.passed:
         verified["verification_status"] = "rejected"
-        verified["rejection_reason"] = "LOW_SIGNAL"
-        verified["published_at"] = None
+        verified["rejection_reason"] = freshness.status
         return verified
 
-    # Check 3: Date validation
-    passed, status, parsed_date, date_source = validate_date(article, run_date, date_window)
-    verified["published_at"] = parsed_date
-    verified["date_source"] = date_source
-    date_confidence = date_confidence_for_source(date_source)
-    verified["date_confidence"] = date_confidence
-
-    if not passed:
-        admitted, background_date, background_source, flags = _background_flags_for_date_failure(
-            article, status, parsed_date, run_date, date_window
-        )
-        if not admitted:
-            verified["verification_status"] = "rejected"
-            verified["rejection_reason"] = status
-            return verified
-        verified["published_at"] = background_date
-        verified["date_source"] = background_source or date_source
-        date_confidence = date_confidence_for_source(verified["date_source"])
-        verified["date_confidence"] = date_confidence
-        verified["quality_flags"] = flags
-
-    if date_confidence == "low":
-        verified["quality_flags"] = list(dict.fromkeys(
-            (verified.get("quality_flags") or []) + ["LOW_CONFIDENCE_DATE"]
-        ))
-
-    min_date_confidence = date_window.get("min_date_confidence", "low")
-    if not date_confidence_meets_minimum(date_confidence, min_date_confidence):
-        verified["verification_status"] = "rejected"
-        verified["rejection_reason"] = "LOW_CONFIDENCE_DATE"
-        return verified
-
-    # Check 4: Magnitude sanity
-    magnitude_flags = check_magnitude(article, magnitude_rules)
-    if any("IMPOSSIBLE" in f for f in magnitude_flags):
-        verified["verification_status"] = "rejected"
-        verified["rejection_reason"] = magnitude_flags[0]
-        verified["magnitude_flags"] = magnitude_flags
-        return verified
-
-    # Check 5: Deduplication
-    is_dup, dup_reason = check_duplicate(url, title, seen_urls, seen_titles)
-    if is_dup:
-        verified["verification_status"] = "rejected"
-        verified["rejection_reason"] = dup_reason
-        return verified
-
-    # Check 6: Platform admission (not a rejection — marks special source)
-    is_platform, platform_reason = check_platform_admission(domain, platform_companies)
-    if is_platform:
+    if acceptance.platform_admitted:
         verified["platform_admitted"] = True
-        verified["platform_reason"] = platform_reason
+        verified["platform_reason"] = acceptance.platform_reason
+    if acceptance.magnitude_flags:
+        verified["magnitude_flags"] = acceptance.magnitude_flags
+    verified["corroboration_score"] = acceptance.corroboration_score
+    verified["corroboration_level"] = acceptance.corroboration_level
+    if acceptance.corroborating_sources:
+        verified["corroborating_sources"] = acceptance.corroborating_sources
 
     # Track for dedup
     if canonical_url:
@@ -436,8 +225,7 @@ def verify_article(article: dict, run_date: str, index: int,
 
     verified["verification_status"] = "verified"
     verified["rejection_reason"] = None
-    if magnitude_flags:
-        verified["magnitude_flags"] = magnitude_flags
+    accepted_articles.append(verified)
 
     return verified
 
@@ -449,9 +237,14 @@ def main():
     parser.add_argument("--stats", help="Output JSON stats sidecar; defaults next to --output")
     parser.add_argument("--date", "-d", required=True, help="Run date (YYYY-MM-DD)")
     parser.add_argument("--domain", required=True, help="Path to domain.yaml")
+    parser.add_argument("--stale-days", type=int, help="Override freshness stale_days for this run")
     args = parser.parse_args()
 
     pipeline_config = load_domain_config(args.domain)
+    if args.stale_days is not None:
+        date_window = dict(pipeline_config.get("date_window", {}) or {})
+        date_window["stale_days"] = int(args.stale_days)
+        pipeline_config["date_window"] = date_window
 
     # Load platform admission from domain.yaml editorial section
     domain_cfg_full = {}
@@ -477,12 +270,14 @@ def main():
     verified = []
     seen_urls = set()
     seen_titles = {}
+    accepted_articles: list[dict] = []
 
     for i, article in enumerate(raw_articles):
         result = verify_article(
             article, args.date, i, pipeline_config,
             seen_urls=seen_urls, seen_titles=seen_titles,
             platform_companies=platform_companies,
+            accepted_articles=accepted_articles,
         )
         verified.append(result)
 

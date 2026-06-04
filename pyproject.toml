@@ -1,6 +1,6 @@
 [project]
 name = "stratum"
-version = "5.0.0"
+version = "0.1.0"
 description = "Domain-agnostic industry intelligence briefing pipeline"
 requires-python = ">=3.11"
 dependencies = [
@@ -27,7 +27,13 @@ test = [
 ]
 
 [tool.pytest.ini_options]
-testpaths = ["tests", "stratum/stages", "stratum/subsystems"]
+testpaths = [
+    "tests",
+    "stratum/stages",
+    "stratum/subsystems",
+    "stratum/source_trace",
+    "stratum/signal_bursts",
+]
 pythonpath = ["."]
 markers = [
     "unit: Python unit tests",

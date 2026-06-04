@@ -11,10 +11,9 @@ import argparse
 import json
 import os
 import re
-import sys
 import yaml
 
-from stratum.subsystems.search.models import normalize_include_domains
+from stratum.sourcing.discovery import normalize_include_domains
 from datetime import datetime, timezone, timedelta
 
 CST = timezone(timedelta(hours=8))
@@ -22,11 +21,6 @@ CST = timezone(timedelta(hours=8))
 
 def _project_root() -> str:
     return os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
-# Ensure project root is on sys.path for 'from stratum.db.connection import ...'
-_project_root_path = _project_root()
-if _project_root_path not in sys.path:
-    sys.path.insert(0, _project_root_path)
 
 
 def _now() -> str:
@@ -319,7 +313,7 @@ def _resolve_workspace() -> str:
         db_dir = cfg.get('db_dir', '')
         if db_dir:
             return os.path.expandvars(os.path.expanduser(db_dir))
-    return os.path.expanduser('~/WorkSpace/Stratum/DataBase')
+    return os.path.expanduser('~/stratum/db')
 
 
 def _print_stats(conn):

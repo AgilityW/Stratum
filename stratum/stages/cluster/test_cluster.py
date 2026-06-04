@@ -1,10 +1,9 @@
 """Tests for cluster stage — Jaccard similarity clustering."""
 import pytest
-import sys
-import os
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../../.."))
-from stratum.stages.cluster.cluster import (
+from stratum.stages.cluster import (
+    ClusterConfidenceScorer,
+    StoryClusterer,
     jaccard_similarity, weighted_overlap_similarity, cluster_articles,
     build_cluster_object, extract_domain_id
 )
@@ -51,6 +50,25 @@ class TestWeightedOverlapSimilarity:
 
 
 class TestClusterArticles:
+    def test_package_exports_stable_cluster_surface(self):
+        from stratum.stages import cluster as cluster_pkg
+
+        assert cluster_pkg.cluster_articles is cluster_articles
+        assert cluster_pkg.StoryClusterer is StoryClusterer
+        assert cluster_pkg.ClusterConfidenceScorer is ClusterConfidenceScorer
+
+    def test_story_clusterer_entrypoint_matches_stage_wrapper(self):
+        articles = [
+            {"entities": ["Samsung", "NVIDIA"], "terms": ["HBM"]},
+            {"entities": ["Samsung"], "terms": ["HBM", "DDR5"]},
+            {"entities": ["Apple"], "terms": ["iPhone"]},
+        ]
+
+        assert StoryClusterer(threshold=0.2).cluster(articles) == cluster_articles(
+            articles,
+            threshold=0.2,
+        )
+
     def test_two_similar_articles_clustered(self):
         articles = [
             {"entities": ["Samsung", "NVIDIA"], "terms": ["HBM", "DRAM"]},
@@ -342,6 +360,30 @@ class TestBuildClusterObject:
             "https://reuters.com/technology/story",
             "https://samsung.com/news/story",
         ]
+
+
+class TestClusterConfidenceScorer:
+    def test_scores_high_confidence_for_broad_corrobation(self):
+        confidence = ClusterConfidenceScorer().score(
+            article_count=5,
+            source_type_count=3,
+            locale_count=2,
+            entity_count=4,
+        )
+
+        assert confidence.label == "high"
+        assert confidence.score > 0.5
+
+    def test_scores_low_confidence_for_thin_cluster(self):
+        confidence = ClusterConfidenceScorer().score(
+            article_count=2,
+            source_type_count=1,
+            locale_count=1,
+            entity_count=1,
+        )
+
+        assert confidence.label == "low"
+        assert 0 < confidence.score < 0.5
 
 
 class TestDomainId:

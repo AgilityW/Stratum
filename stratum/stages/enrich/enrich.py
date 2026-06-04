@@ -31,16 +31,16 @@ CST = timezone(timedelta(hours=8))
 DATE_PATTERNS = [
     # ISO dates: 2026-05-28, 2026/05/28
     (r'\b(20\d{2})[-/](0[1-9]|1[0-2])[-/](0[1-9]|[12]\d|3[01])\b', "iso"),
-    # Chinese: 2026年5月28日
+    # CJK numeric date format.
     (r'(20\d{2})年(\d{1,2})月(\d{1,2})日', "zh"),
     # English: May 28, 2026 or 28 May 2026
     (r'(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\.?\s+(\d{1,2}),?\s+(20\d{2})', "en_long"),
     (r'(\d{1,2})\s+(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\.?\s+(20\d{2})', "en_short"),
-    # Relative: today / yesterday / 今天/今日 / 昨天/昨日
+    # Relative day words in English and Chinese.
     (r'(today|yesterday|今天|今日|昨天|昨日)', "relative"),
     # English relative: "X hours ago", "X days ago"
     (r'(\d+)\s*(hours?|days?)\s*ago', "relative_en"),
-    # Chinese relative: X小时前, X天前, X日前, X分钟前
+    # Chinese relative age expressions.
     (r'(\d+)\s*(小时前|天前|日前|分钟前)', "relative_zh"),
 ]
 
@@ -175,7 +175,7 @@ def extract_date_from_web(url: str, run_date: str | None = None) -> str | None:
     try:
         result = subprocess.run(
             ["curl", "-sL", "--max-time", "8",
-             "-H", "User-Agent: Mozilla/5.0 (compatible; Stratum/5.0)",
+             "-H", "User-Agent: Mozilla/5.0 (compatible; Stratum/0.1)",
              url],
             capture_output=True, text=True, timeout=10,
         )

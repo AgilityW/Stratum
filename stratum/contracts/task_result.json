@@ -1,0 +1,51 @@
+{
+  "type": "object",
+  "required": ["version", "task", "status", "steps", "result", "error"],
+  "properties": {
+    "version": {
+      "type": "string"
+    },
+    "task": {
+      "type": "string",
+      "minLength": 1
+    },
+    "status": {
+      "type": "string",
+      "enum": ["ok", "error"]
+    },
+    "steps": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["capability", "status"],
+        "properties": {
+          "capability": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "enum": ["ok", "error"]
+          }
+        },
+        "additionalProperties": true
+      }
+    },
+    "result": {
+      "type": ["object", "array", "string", "number", "boolean", "null"]
+    },
+    "error": {
+      "type": ["object", "null"],
+      "required": ["type", "message"],
+      "properties": {
+        "type": {
+          "type": "string"
+        },
+        "message": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

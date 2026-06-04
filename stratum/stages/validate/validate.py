@@ -25,17 +25,18 @@ import sys
 import yaml
 from datetime import datetime, timezone, timedelta
 from jsonschema import validate as json_validate, ValidationError
-from urllib.parse import urlparse
 
-PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
-if PROJECT_ROOT not in sys.path:
-    sys.path.insert(0, PROJECT_ROOT)
-
-from stratum.stages.edit.boilerplate import artifact_boilerplate_violations, build_boilerplate_rules
-from stratum.subsystems.search.models import source_pattern_matches
+from stratum.stages.boilerplate import artifact_boilerplate_violations, build_boilerplate_rules
+try:
+    from .claim_validator import validate_overclaims
+    from .source_support import SourceDatePolicy, SourceSupportMatcher
+except ImportError:  # pragma: no cover - direct script/test fallback
+    from stratum.stages.validate.claim_validator import validate_overclaims
+    from stratum.stages.validate.source_support import SourceDatePolicy, SourceSupportMatcher
 
 CST = timezone(timedelta(hours=8))
-BACKGROUND_QUALITY_FLAGS = {"BACKGROUND_STALE", "BACKGROUND_NO_DATE"}
+_SOURCE_SUPPORT = SourceSupportMatcher()
+_SOURCE_DATES = SourceDatePolicy()
 
 
 def load_domain_config(domain_path: str) -> dict:
@@ -62,232 +63,16 @@ def validate_boilerplate(markdown_text: str, pipeline_config: dict) -> list[str]
     ]
 
 
-def _domain_from_url(url: str) -> str:
-    if not url:
-        return ""
-    host = urlparse(url).netloc.lower()
-    if host.startswith("www."):
-        host = host[4:]
-    if host.startswith("m."):
-        host = host[2:]
-    return host
-
-
-def _article_source_values(article: dict) -> list[str]:
-    """Return all source-like values a pipeline article may carry."""
-    values = [
-        article.get("source", ""),
-        article.get("source_domain", ""),
-        _domain_from_url(article.get("url", "")),
-    ]
-    return [v.strip().lower() for v in values if v and v.strip()]
-
-
-_TOKEN_STOPWORDS = {
-    "the", "and", "for", "with", "from", "that", "this", "will", "said",
-    "update", "market", "prices", "price", "news", "report", "reports",
-    "announced", "announces", "company", "industry", "memory",
-}
-
-_TOKEN_ALIASES = {
-    "contract": {"合约"},
-    "supply": {"供应"},
-    "chain": {"链"},
-    "seasonality": {"季节", "季节性"},
-    "seasonal": {"季节", "季节性"},
-    "hike": {"上涨"},
-    "hikes": {"上涨"},
-    "increase": {"上涨"},
-    "increases": {"上涨"},
-    "increased": {"上涨"},
-    "quarter": {"季度"},
-    "q1": {"一季度", "第一季度"},
-    "1q26": {"一季度", "第一季度", "2026"},
-    "dram": {"dram"},
-    "nand": {"nand"},
-    "hbm": {"hbm"},
-}
-
-
-def _content_tokens(text: str) -> set[str]:
-    """Extract coarse multilingual content tokens for item/article alignment."""
-    tokens: set[str] = set()
-    for token in re.findall(r"[A-Za-z0-9][A-Za-z0-9+.-]*|[\u4e00-\u9fff]{2,}", text.lower()):
-        token = token.strip(".-")
-        aliases = _TOKEN_ALIASES.get(token, set())
-        if aliases:
-            tokens.update(aliases)
-        if len(token) < 2 or token in _TOKEN_STOPWORDS:
-            continue
-        tokens.add(token)
-        if re.fullmatch(r"[\u4e00-\u9fff]+", token) and len(token) > 2:
-            for size in (2, 3, 4):
-                for i in range(len(token) - size + 1):
-                    tokens.add(token[i:i + size])
-    return tokens
-
-
-def _article_matches_source(article: dict, src_lower: str, source_aliases: dict) -> bool:
-    """Return True if a cited source label maps to the article source."""
-    article_sources = _article_source_values(article)
-    alias_patterns = _source_alias_patterns(source_aliases.get(src_lower))
-    if alias_patterns:
-        if any(
-            _source_value_matches_pattern(asrc, pattern)
-            for pattern in alias_patterns
-            for asrc in article_sources
-        ):
-            return True
-    if _looks_like_domain_label(src_lower):
-        return any(_source_value_matches_pattern(asrc, src_lower) for asrc in article_sources)
-    return src_lower in article_sources
-
-
-def _source_alias_patterns(alias_value) -> list[str]:
-    """Normalize source alias config to a list of domain patterns."""
-    if not alias_value:
-        return []
-    if isinstance(alias_value, str):
-        values = [alias_value]
-    elif isinstance(alias_value, (list, tuple, set)):
-        values = alias_value
-    else:
-        return []
-    return [str(value).strip().lower() for value in values if str(value).strip()]
-
-
-def _source_value_matches_pattern(source_value: str, pattern: str) -> bool:
-    """Match source/domain values using URL host boundaries."""
-    source_value = (source_value or "").strip().lower()
-    pattern = (pattern or "").strip().lower()
-    if not source_value or not pattern:
-        return False
-    return source_pattern_matches(f"https://{source_value}", pattern)
-
-
-def _looks_like_domain_label(source_label: str) -> bool:
-    """Return True when the cited source is domain-like rather than a brand name."""
-    value = source_label.strip().lower()
-    return "." in value or value.startswith(("www.", "m."))
-
-
-def _item_article_alignment(item: dict, article: dict) -> tuple[bool, set[str]]:
-    """Check whether a cited source article plausibly supports the news item."""
-    item_text = f"{item.get('title', '')} {' '.join(item.get('body', []))}"
-    article_text = (
-        f"{article.get('title', '')} "
-        f"{article.get('snippet', '')} "
-        f"{article.get('extracted_summary', '')}"
+def resolve_date_window(pipeline_config: dict, stale_days_override: int | None = None) -> tuple[int, int]:
+    """Resolve future and stale date windows for briefing validation."""
+    date_window = pipeline_config.get("date_window", {}) if isinstance(pipeline_config, dict) else {}
+    max_future_days = int(date_window.get("max_future_days", 1))
+    stale_days = (
+        int(stale_days_override)
+        if stale_days_override is not None
+        else int(date_window.get("stale_days", 2))
     )
-    item_tokens = _content_tokens(item_text)
-    article_tokens = _content_tokens(article_text)
-    if not item_tokens:
-        return True, set()
-    if not article_tokens:
-        return False, set()
-
-    overlap = item_tokens & article_tokens
-    if any(_is_strong_alignment_token(token) for token in overlap):
-        return True, overlap
-    if len(overlap) >= 2:
-        return True, overlap
-    if overlap and len(overlap) / max(1, min(len(item_tokens), len(article_tokens))) >= 0.34:
-        return True, overlap
-    return False, overlap
-
-
-def _is_strong_alignment_token(token: str) -> bool:
-    """Return True for distinctive product/technology tokens such as HBM4E."""
-    token = token.strip().lower()
-    if len(token) < 4:
-        return False
-    if not re.search(r"[a-z]", token) or not re.search(r"\d", token):
-        return False
-    return token not in _TOKEN_STOPWORDS
-
-
-def _parse_cited_date_range(cited_date: str) -> tuple[datetime, datetime] | None:
-    """Parse Chinese or ISO-ish source dates, including same-month ranges."""
-    cn_range = re.search(
-        r'(\d{4})年(\d{1,2})月(\d{1,2})\s*(?:-|~|至|到)\s*(\d{1,2})日',
-        cited_date,
-    )
-    if cn_range:
-        y, m, start_d, end_d = map(int, cn_range.groups())
-        start = datetime(y, m, start_d).replace(tzinfo=CST)
-        end = datetime(y, m, end_d).replace(tzinfo=CST)
-        return (start, end) if start <= end else (end, start)
-
-    cn_full_range = re.search(
-        r'(\d{4})年(\d{1,2})月(\d{1,2})日\s*(?:-|~|至|到)\s*'
-        r'(\d{4})年(\d{1,2})月(\d{1,2})日',
-        cited_date,
-    )
-    if cn_full_range:
-        y1, m1, d1, y2, m2, d2 = map(int, cn_full_range.groups())
-        start = datetime(y1, m1, d1).replace(tzinfo=CST)
-        end = datetime(y2, m2, d2).replace(tzinfo=CST)
-        return (start, end) if start <= end else (end, start)
-
-    iso_range = re.search(
-        r'(\d{4}-\d{2}-\d{2})\s*(?:/|-|~|至|到)\s*(\d{4}-\d{2}-\d{2})',
-        cited_date,
-    )
-    if iso_range:
-        start = datetime.fromisoformat(iso_range.group(1)).replace(tzinfo=CST)
-        end = datetime.fromisoformat(iso_range.group(2)).replace(tzinfo=CST)
-        return (start, end) if start <= end else (end, start)
-
-    single = _parse_cited_date(cited_date)
-    if single:
-        return single, single
-    return None
-
-
-def _parse_cited_date(cited_date: str) -> datetime | None:
-    """Parse a single Chinese or ISO-ish date from briefing source lines."""
-    cn_match = re.search(r'(\d{4})年(\d{1,2})月(\d{1,2})日', cited_date)
-    if cn_match:
-        y, m, d = map(int, cn_match.groups())
-        return datetime(y, m, d).replace(tzinfo=CST)
-
-    iso_match = re.search(r'(\d{4}-\d{2}-\d{2})', cited_date)
-    if iso_match:
-        return datetime.fromisoformat(iso_match.group(1)).replace(tzinfo=CST)
-
-    return None
-
-
-def _parse_article_date(article: dict) -> datetime | None:
-    """Parse the best available publication date from an article record."""
-    raw_date = (
-        article.get("published_at")
-        or article.get("datePublished")
-        or article.get("date")
-        or ""
-    )
-    if not raw_date:
-        return None
-
-    text = str(raw_date).strip()
-    cn_match = re.search(r'(\d{4})年(\d{1,2})月(\d{1,2})日', text)
-    if cn_match:
-        y, m, d = map(int, cn_match.groups())
-        return datetime(y, m, d).replace(tzinfo=CST)
-
-    iso_text = text.replace("Z", "+00:00")
-    try:
-        return datetime.fromisoformat(iso_text).astimezone(CST)
-    except ValueError:
-        iso_match = re.search(r'(\d{4}-\d{2}-\d{2})', text)
-        if iso_match:
-            return datetime.fromisoformat(iso_match.group(1)).replace(tzinfo=CST)
-    return None
-
-
-def _is_background_article(article: dict) -> bool:
-    flags = set(article.get("quality_flags") or [])
-    return bool(flags & BACKGROUND_QUALITY_FLAGS)
+    return max_future_days, stale_days
 
 
 def _parse_source_line(line: str) -> tuple[list[str], str | None] | None:
@@ -336,6 +121,10 @@ def parse_markdown(path):
                 'sources': [],
                 'date': None,
             }
+        elif line.startswith('## '):
+            if current_item:
+                items.append(current_item)
+                current_item = None
         elif current_item and line.startswith('*') and '·' in line:
             parsed = _parse_source_line(line)
             if parsed:
@@ -364,22 +153,23 @@ def validate_item(
 
     cited_sources = item['sources']
     cited_date = item['date']
-    cited_range = _parse_cited_date_range(cited_date) if cited_date else None
+    cited_range = _SOURCE_DATES.parse_cited_date_range(cited_date) if cited_date else None
     cited_dt = cited_range[1] if cited_range else None
 
     # Check 1: Cited sources exist in verified articles and support this item
     article_sources = set()
     for article in articles:
-        article_sources.update(_article_source_values(article))
+        article_sources.update(_SOURCE_SUPPORT.article_source_values(article))
 
     has_fresh_aligned_support = False
+    aligned_supporting_articles = []
     for src in cited_sources:
         src_lower = src.lower().strip()
         if any(x in src_lower for x in ['ai agent', '由 ', 'cst', '每日']):
             continue
         candidates = [
             article for article in articles
-            if _article_matches_source(article, src_lower, source_aliases)
+            if _SOURCE_SUPPORT.article_matches_source(article, src_lower, source_aliases)
         ]
         found = bool(candidates)
         if not found:
@@ -392,7 +182,7 @@ def validate_item(
         if candidates:
             aligned_candidates = []
             for article in candidates:
-                article_aligned, _overlap = _item_article_alignment(item, article)
+                article_aligned, _overlap = _SOURCE_SUPPORT.item_article_alignment(item, article)
                 if article_aligned:
                     aligned_candidates.append(article)
             if not aligned_candidates:
@@ -401,14 +191,15 @@ def validate_item(
                     f"article from that source supports item '{item.get('title', '')[:60]}'."
                 )
                 continue
-            if any(not _is_background_article(article) for article in aligned_candidates):
+            aligned_supporting_articles.extend(aligned_candidates)
+            if any(not _SOURCE_DATES.is_background_article(article) for article in aligned_candidates):
                 has_fresh_aligned_support = True
 
             article_dates = [
                 parsed
                 for article in aligned_candidates
-                if not _is_background_article(article)
-                if (parsed := _parse_article_date(article)) is not None
+                if not _SOURCE_DATES.is_background_article(article)
+                if (parsed := _SOURCE_DATES.parse_article_date(article)) is not None
             ]
             if cited_range and article_dates and all(
                 not (cited_range[0].date() <= article_dt.date() <= cited_range[1].date())
@@ -460,7 +251,104 @@ def validate_item(
     if not cited_date:
         violations.append("DATE: No date cited for this item")
 
+    violations.extend(validate_overclaims(item, aligned_supporting_articles))
+
     return violations
+
+
+def validate_briefing(
+    markdown_text: str,
+    items: list[dict],
+    articles: list[dict],
+    run_date: str,
+    source_aliases: dict,
+    *,
+    pipeline_config: dict | None = None,
+    max_future_days: int = 1,
+    stale_days: int = 2,
+    event_threads_path: str | None = None,
+    schemas_dir: str | None = None,
+) -> dict:
+    """Validate a parsed briefing and return a structured report payload."""
+    all_violations: list[tuple[int, str, list[str], dict]] = []
+    boilerplate_violations = validate_boilerplate(markdown_text, pipeline_config or {})
+    if boilerplate_violations:
+        all_violations.append((
+            0,
+            "boilerplate",
+            boilerplate_violations,
+            {
+                "kind": "boilerplate",
+                "title": "boilerplate",
+                "sources": [],
+                "date": None,
+            },
+        ))
+
+    for i, item in enumerate(items, 1):
+        violations = validate_item(
+            item,
+            articles,
+            run_date,
+            source_aliases,
+            max_future_days=max_future_days,
+            stale_days=stale_days,
+        )
+        if violations:
+            all_violations.append((
+                i,
+                item["title"][:60],
+                violations,
+                {
+                    "kind": "item",
+                    "title": item.get("title", ""),
+                    "sources": list(item.get("sources") or []),
+                    "date": item.get("date"),
+                },
+            ))
+
+    if event_threads_path and schemas_dir:
+        schema_violations = validate_structured_output(event_threads_path, schemas_dir)
+        if schema_violations:
+            all_violations.append((
+                0,
+                "structured_output",
+                schema_violations,
+                {
+                    "kind": "structured_output",
+                    "title": "structured_output",
+                    "sources": [],
+                    "date": None,
+                },
+            ))
+
+    total_violations = sum(len(v) for _, _, v, _ in all_violations)
+    item_entries = [entry for entry in all_violations if entry[3]["kind"] == "item"]
+    payload = {
+        "status": "ok" if total_violations == 0 else "violations",
+        "items": len(items),
+        "violations": total_violations,
+        "summary": {
+            "item_violations": sum(len(v) for _, _, v, meta in all_violations if meta["kind"] == "item"),
+            "boilerplate_violations": len(boilerplate_violations),
+            "structured_output_violations": sum(
+                len(v) for _, _, v, meta in all_violations if meta["kind"] == "structured_output"
+            ),
+            "invalid_items": len(item_entries),
+        },
+        "details": [
+            {
+                "item": idx,
+                "kind": meta["kind"],
+                "title": meta["title"],
+                "sources": meta["sources"],
+                "date": meta["date"],
+                "violations": v,
+            }
+            for idx, _label, v, meta in all_violations
+        ],
+    }
+    return payload
 
 
 def validate_schema_items(data: list, schema_path: str, item_type: str) -> list[str]:
@@ -529,15 +417,16 @@ def main():
     parser.add_argument("--articles", "-a", required=True, help="Articles JSONL file")
     parser.add_argument("--date", "-d", required=True, help="Run date YYYY-MM-DD")
     parser.add_argument("--domain", required=True, help="Path to domain.yaml")
+    parser.add_argument("--stale-days", type=int,
+                        help="Override domain stale date window, usually from the search window")
     parser.add_argument("--event-threads", help="Path to event-threads.json (structured output)")
     parser.add_argument("--schemas-dir", help="Path to _schemas/ directory for JSON Schema validation")
+    parser.add_argument("--output-report", help="Optional path to write structured validate_report.json")
     args = parser.parse_args()
 
     pipeline_config = load_domain_config(args.domain)
     source_aliases = pipeline_config.get("source_aliases", {})
-    date_window = pipeline_config.get("date_window", {})
-    max_future_days = int(date_window.get("max_future_days", 1))
-    stale_days = int(date_window.get("stale_days", 2))
+    max_future_days, stale_days = resolve_date_window(pipeline_config, args.stale_days)
 
     articles = load_articles(args.articles)
     items = parse_markdown(args.md)
@@ -547,60 +436,59 @@ def main():
     print(f"\n📋 Validating briefing: {len(items)} news items against {len(articles)} articles",
           file=sys.stderr)
 
-    all_violations = []
-    boilerplate_violations = validate_boilerplate(markdown_text, pipeline_config)
-    if boilerplate_violations:
-        all_violations.append((0, "boilerplate", boilerplate_violations))
-        print(f"\n  ❌ Boilerplate leaks: {len(boilerplate_violations)}", file=sys.stderr)
-        for violation in boilerplate_violations[:10]:
+    payload = validate_briefing(
+        markdown_text,
+        items,
+        articles,
+        args.date,
+        source_aliases,
+        pipeline_config=pipeline_config,
+        max_future_days=max_future_days,
+        stale_days=stale_days,
+        event_threads_path=args.event_threads,
+        schemas_dir=args.schemas_dir,
+    )
+
+    detail_map = {
+        (detail["item"], detail["kind"], detail["title"]): detail["violations"]
+        for detail in payload["details"]
+    }
+    if payload["summary"]["boilerplate_violations"]:
+        print(f"\n  ❌ Boilerplate leaks: {payload['summary']['boilerplate_violations']}", file=sys.stderr)
+        for violation in detail_map.get((0, "boilerplate", "boilerplate"), [])[:10]:
             print(f"     {violation}", file=sys.stderr)
 
     for i, item in enumerate(items, 1):
-        violations = validate_item(
-            item,
-            articles,
-            args.date,
-            source_aliases,
-            max_future_days=max_future_days,
-            stale_days=stale_days,
-        )
+        violations = detail_map.get((i, "item", item.get("title", "")), [])
         if violations:
-            all_violations.append((i, item['title'][:60], violations))
             print(f"\n  ❌ Item {i}: {item['title'][:60]}", file=sys.stderr)
             for v in violations:
                 print(f"     {v}", file=sys.stderr)
         else:
             print(f"  ✅ Item {i}: {item['title'][:60]}", file=sys.stderr)
 
-    # ── Schema validation (structured output) ──
-    if args.event_threads and args.schemas_dir:
-        schema_violations = validate_structured_output(
-            args.event_threads, args.schemas_dir
-        )
-        if schema_violations:
-            all_violations.append((0, "structured_output", schema_violations))
-            print(f"\n  🔍 Schema validation:", file=sys.stderr)
-            for v in schema_violations:
-                print(f"     {v}", file=sys.stderr)
+    if payload["summary"]["structured_output_violations"]:
+        print(f"\n  🔍 Schema validation:", file=sys.stderr)
+        for violation in detail_map.get((0, "structured_output", "structured_output"), []):
+            print(f"     {violation}", file=sys.stderr)
 
-    total_violations = sum(len(v) for _, _, v in all_violations)
+    total_violations = payload["violations"]
 
     print(f"\n{'='*60}", file=sys.stderr)
     if total_violations == 0:
         print(f"  ✅ ALL {len(items)} ITEMS VALID — no violations", file=sys.stderr)
     else:
-        print(f"  ❌ {total_violations} VIOLATIONS in {len(all_violations)} items", file=sys.stderr)
+        print(
+            f"  ❌ {total_violations} VIOLATIONS in {payload['summary']['invalid_items'] + bool(payload['summary']['boilerplate_violations']) + bool(payload['summary']['structured_output_violations'])} items",
+            file=sys.stderr,
+        )
     print(f"{'='*60}\n", file=sys.stderr)
 
-    print(json.dumps({
-        "status": "ok" if total_violations == 0 else "violations",
-        "items": len(items),
-        "violations": total_violations,
-        "details": [
-            {"item": idx, "violations": v}
-            for idx, _, v in all_violations
-        ],
-    }))
+    if args.output_report:
+        with open(args.output_report, "w") as f:
+            json.dump(payload, f, ensure_ascii=False, indent=2)
+
+    print(json.dumps(payload))
 
     sys.exit(0 if total_violations == 0 else 1)
 

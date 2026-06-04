@@ -1,0 +1,127 @@
+{
+  "cases": [
+    {
+      "id": "weekly-storage-executive-baseline",
+      "scale": "weekly",
+      "domain": "storage",
+      "report_markdown": "# Weekly Storage Brief\n\n## Executive Read\nHBM certification and capacity signals indicate that supply qualification is moving from isolated vendor announcements toward a platform allocation question.\n\nEvidence: semiconductor.samsung.com, reuters.com.\n\n## Watch Items\nThis remains a watch item until customer qualification and shipment cadence are visible.",
+      "expectations": {
+        "required_phrases": [
+          "HBM certification",
+          "capacity signals",
+          "platform allocation"
+        ],
+        "required_sources": [
+          "semiconductor.samsung.com",
+          "reuters.com"
+        ],
+        "traceability_terms": [
+          "Evidence:",
+          "customer qualification"
+        ],
+        "citation_markers": [
+          "semiconductor.samsung.com",
+          "reuters.com"
+        ],
+        "judgment_signals": [
+          "indicate",
+          "watch item",
+          "until"
+        ],
+        "executive_implications": [
+          "platform allocation question"
+        ],
+        "confidence_terms": [
+          "remains",
+          "until"
+        ],
+        "prohibited_phrases": [
+          "confirmed mass production",
+          "guaranteed winner"
+        ],
+        "min_score": 1.0
+      }
+    },
+    {
+      "id": "daily-storage-evidence-judgment",
+      "scale": "daily",
+      "domain": "storage",
+      "report_markdown": "# Storage Daily\n\n## 今日判断\nSamsung HBM4 qualification evidence indicates customer validation progress, but shipment cadence remains unconfirmed until additional source confirmation.\n\nSource: semiconductor.samsung.com\n\n## Watch\nWatch NVIDIA qualification and supply allocation.",
+      "expectations": {
+        "required_phrases": [
+          "qualification evidence",
+          "customer validation progress"
+        ],
+        "required_sources": [
+          "semiconductor.samsung.com"
+        ],
+        "traceability_terms": [
+          "Source:",
+          "NVIDIA qualification"
+        ],
+        "citation_markers": [
+          "semiconductor.samsung.com"
+        ],
+        "judgment_signals": [
+          "indicates",
+          "remains unconfirmed",
+          "until"
+        ],
+        "executive_implications": [
+          "supply allocation"
+        ],
+        "confidence_terms": [
+          "remains unconfirmed",
+          "until"
+        ],
+        "prohibited_phrases": [
+          "confirmed mass production",
+          "guaranteed winner"
+        ],
+        "min_score": 1.0
+      }
+    },
+    {
+      "id": "monthly-storage-conflict-calibration",
+      "scale": "monthly",
+      "domain": "storage",
+      "report_markdown": "# Monthly Storage Brief\n\n## Executive Summary\nHBM supply expansion remains the base case, but fresh counter-evidence from analyst.example means the report should split confidence rather than present a single confirmed outcome.\n\nEvidence: analyst.example, micron.com.\n\n## Implication\nThe executive implication is allocation risk: procurement and platform teams should watch customer qualification delays before assuming capacity relief.",
+      "expectations": {
+        "required_phrases": [
+          "base case",
+          "fresh counter-evidence",
+          "split confidence"
+        ],
+        "required_sources": [
+          "analyst.example",
+          "micron.com"
+        ],
+        "traceability_terms": [
+          "Evidence:",
+          "customer qualification delays"
+        ],
+        "citation_markers": [
+          "analyst.example",
+          "micron.com"
+        ],
+        "judgment_signals": [
+          "rather than",
+          "should watch",
+          "before assuming"
+        ],
+        "executive_implications": [
+          "allocation risk"
+        ],
+        "confidence_terms": [
+          "base case",
+          "split confidence"
+        ],
+        "prohibited_phrases": [
+          "guaranteed winner",
+          "confirmed mass production"
+        ],
+        "min_score": 1.0
+      }
+    }
+  ]
+}

@@ -1,0 +1,61 @@
+{
+  "type": "object",
+  "properties": {
+    "version": {"type": "string"},
+    "domain": {"type": "string"},
+    "run_date": {"type": ["string", "null"]},
+    "snapshot": {
+      "type": "object",
+      "properties": {
+        "date": {"type": ["string", "null"]},
+        "total_records": {"type": "integer"},
+        "topic_counts": {"type": "object"},
+        "anchor_counts": {"type": "object"}
+      },
+      "required": ["date", "total_records", "topic_counts", "anchor_counts"]
+    },
+    "topic_signals": {
+      "type": "array",
+      "items": {"type": "object"}
+    },
+    "anchor_signals": {
+      "type": "array",
+      "items": {"type": "object"}
+    },
+    "unanchored_clusters": {
+      "type": "array",
+      "items": {"type": "object"}
+    },
+    "diagnostics": {
+      "type": "object",
+      "properties": {
+        "record_count": {"type": "integer"},
+        "topic_rule_count": {"type": "integer"},
+        "anchor_count": {"type": "integer"},
+        "active_signal_count": {"type": "integer"},
+        "anomalous_topics": {"type": "integer"},
+        "detected_anchors": {"type": "integer"},
+        "cluster_count": {"type": "integer"}
+      },
+      "required": [
+        "record_count",
+        "topic_rule_count",
+        "anchor_count",
+        "active_signal_count",
+        "anomalous_topics",
+        "detected_anchors",
+        "cluster_count"
+      ]
+    }
+  },
+  "required": [
+    "version",
+    "domain",
+    "run_date",
+    "snapshot",
+    "topic_signals",
+    "anchor_signals",
+    "unanchored_clusters",
+    "diagnostics"
+  ]
+}

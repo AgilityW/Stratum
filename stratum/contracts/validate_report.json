@@ -1,0 +1,37 @@
+{
+  "type": "object",
+  "required": ["status", "items", "violations", "summary", "details"],
+  "properties": {
+    "status": {"type": "string", "enum": ["ok", "violations"]},
+    "items": {"type": "integer", "minimum": 0},
+    "violations": {"type": "integer", "minimum": 0},
+    "summary": {
+      "type": "object",
+      "required": ["item_violations", "boilerplate_violations", "structured_output_violations", "invalid_items"],
+      "properties": {
+        "item_violations": {"type": "integer", "minimum": 0},
+        "boilerplate_violations": {"type": "integer", "minimum": 0},
+        "structured_output_violations": {"type": "integer", "minimum": 0},
+        "invalid_items": {"type": "integer", "minimum": 0}
+      },
+      "additionalProperties": true
+    },
+    "details": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["item", "kind", "title", "sources", "violations"],
+        "properties": {
+          "item": {"type": "integer", "minimum": 0},
+          "kind": {"type": "string", "enum": ["item", "boilerplate", "structured_output"]},
+          "title": {"type": "string"},
+          "sources": {"type": "array", "items": {"type": "string"}},
+          "date": {"type": ["string", "null"]},
+          "violations": {"type": "array", "items": {"type": "string"}}
+        },
+        "additionalProperties": true
+      }
+    }
+  },
+  "additionalProperties": true
+}

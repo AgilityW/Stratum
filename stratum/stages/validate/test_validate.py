@@ -1,15 +1,16 @@
 """Tests for validate stage — briefing factuality gate."""
 import pytest
-import sys
-import os
 import json
+import os
 import tempfile
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../../.."))
-from stratum.stages.validate.validate import (
+from stratum.stages.validate import (
+    ClaimValidator,
+    SourceDatePolicy,
+    SourceSupportMatcher,
     parse_markdown, validate_item, load_domain_config, _parse_source_line,
-    _domain_from_url, validate_structured_output, _parse_cited_date_range,
-    validate_boilerplate,
+    validate_structured_output,
+    validate_boilerplate, validate_briefing, validate_overclaims, resolve_date_window,
 )
 
 
@@ -24,9 +25,52 @@ MOCK_SOURCE_ALIASES = {
 
 
 def test_domain_from_url_strips_only_known_presentation_prefixes():
-    assert _domain_from_url("https://www.reuters.com/technology") == "reuters.com"
-    assert _domain_from_url("https://m.reuters.com/technology") == "reuters.com"
-    assert _domain_from_url("https://ww2.example.com/news") == "ww2.example.com"
+    matcher = SourceSupportMatcher()
+    assert matcher.domain_from_url("https://www.reuters.com/technology") == "reuters.com"
+    assert matcher.domain_from_url("https://m.reuters.com/technology") == "reuters.com"
+    assert matcher.domain_from_url("https://ww2.example.com/news") == "ww2.example.com"
+
+
+def test_package_exports_stable_validate_surface():
+    from stratum.stages import validate as validate_pkg
+
+    assert validate_pkg.parse_markdown is parse_markdown
+    assert validate_pkg.validate_item is validate_item
+    assert validate_pkg.validate_briefing is validate_briefing
+    assert validate_pkg.ClaimValidator is ClaimValidator
+    assert validate_pkg.SourceSupportMatcher is SourceSupportMatcher
+
+
+def test_validate_briefing_returns_structured_report():
+    items = [{
+        "title": "Samsung HBM4 confirmed by Reuters",
+        "body": ["消息称三星已经确认大规模供货。"],
+        "sources": ["Reuters"],
+        "date": "2026年5月30日",
+    }]
+    articles = [{
+        "id": "a1",
+        "title": "Reuters says Samsung reportedly samples HBM4",
+        "source": "reuters.com",
+        "source_domain": "reuters.com",
+        "published_at": "2026-05-30",
+        "snippet": "Reuters reported Samsung reportedly sampled HBM4 to customers.",
+        "quality_flags": [],
+        "source_type": "media",
+    }]
+
+    report = validate_briefing(
+        "dummy markdown",
+        items,
+        articles,
+        "2026-05-30",
+        MOCK_SOURCE_ALIASES,
+    )
+
+    assert report["status"] == "violations"
+    assert report["summary"]["invalid_items"] == 1
+    assert report["details"][0]["kind"] == "item"
+    assert report["details"][0]["title"] == "Samsung HBM4 confirmed by Reuters"
 
 
 SAMPLE_BRIEFING = """# 存储早报
@@ -88,6 +132,12 @@ class TestParseMarkdown:
 
         assert any("BOILERPLATE" in violation for violation in violations)
 
+    def test_date_window_accepts_search_window_override(self):
+        pipeline_config = {"date_window": {"stale_days": 2, "max_future_days": 1}}
+
+        assert resolve_date_window(pipeline_config) == (1, 2)
+        assert resolve_date_window(pipeline_config, stale_days_override=3) == (1, 3)
+
     def test_keeps_news_titles_that_contain_section_words(self):
         content = """# 存储早报
 
@@ -105,6 +155,7 @@ HBM supply is a valid news item.
         items = parse_markdown_from_str(content)
         assert len(items) == 1
         assert items[0]["title"] == "HBM 供应受关注"
+        assert "Watch demand risk" not in items[0]["body"]
 
     def test_source_alignment_accepts_core_storage_term_translation(self):
         item = {
@@ -484,7 +535,7 @@ class TestValidateItem:
         assert violations == []
 
     def test_parse_cited_date_range_returns_bounds(self):
-        parsed = _parse_cited_date_range("2026年5月28-30日")
+        parsed = SourceDatePolicy().parse_cited_date_range("2026年5月28-30日")
         assert parsed[0].date().isoformat() == "2026-05-28"
         assert parsed[1].date().isoformat() == "2026-05-30"
 
@@ -547,6 +598,207 @@ class TestValidateItem:
         item = {"title": "Test", "sources": [], "date": "2026年5月28日", "body": []}
         violations = validate_item(item, articles, "2026-05-28", MOCK_SOURCE_ALIASES)
         assert any("SOURCE" in v for v in violations)
+
+    def test_overclaim_flags_sample_as_mass_production(self):
+        articles = [{
+            "id": "a1",
+            "source": "semiconductor.samsung.com",
+            "title": "Samsung begins HBM4E sample shipments for customer qualification",
+            "snippet": "The company is shipping samples for customer validation.",
+            "published_at": "2026-05-30",
+        }]
+        item = {
+            "title": "Samsung confirmed mass production of HBM4E",
+            "sources": ["semiconductor.samsung.com"],
+            "date": "2026年5月30日",
+            "body": ["The report treats sample shipments as confirmed mass production."],
+        }
+
+        violations = validate_item(item, articles, "2026-05-30", MOCK_SOURCE_ALIASES)
+
+        assert any("OVERCLAIM" in violation for violation in violations)
+
+    def test_overclaim_allows_mass_production_when_article_supports_it(self):
+        articles = [{
+            "id": "a1",
+            "source": "example.com",
+            "title": "Supplier starts mass production of HBM4E",
+            "snippet": "The supplier said mass production has started.",
+        }]
+        item = {
+            "title": "Supplier starts mass production of HBM4E",
+            "body": ["The source says mass production has started."],
+        }
+
+        assert validate_overclaims(item, articles) == []
+
+    def test_claim_validator_accepts_custom_rule_set(self):
+        validator = ClaimValidator(overclaim_rules=[{
+            "name": "custom_rule",
+            "claim_patterns": [r"certain"],
+            "weak_evidence_patterns": [r"maybe"],
+            "support_patterns": [r"certain"],
+        }])
+
+        violations = validator.validate_overclaims(
+            {"title": "Outcome is certain", "body": []},
+            [{"id": "a1", "title": "Outcome maybe changes"}],
+        )
+
+        assert any("custom_rule" in violation for violation in violations)
+
+    def test_overclaim_flags_forecast_as_certain_outcome(self):
+        articles = [{
+            "id": "a1",
+            "source": "analyst.example",
+            "title": "Analyst expects DRAM prices may rise in Q3",
+            "snippet": "The forecast says prices could rise if AI server demand remains strong.",
+            "published_at": "2026-05-30",
+        }]
+        item = {
+            "title": "DRAM prices will definitely rise in Q3",
+            "sources": ["analyst.example"],
+            "date": "2026年5月30日",
+            "body": ["The report turns an analyst forecast into a guaranteed outcome."],
+        }
+
+        violations = validate_item(item, articles, "2026-05-30", MOCK_SOURCE_ALIASES)
+
+        assert any("forecast_overstated_as_certain_outcome" in violation for violation in violations)
+
+    def test_overclaim_flags_customer_win_from_qualification_evidence(self):
+        articles = [{
+            "id": "a1",
+            "source": "market.example",
+            "source_type": "media",
+            "title": "Samsung HBM4 qualification continues at NVIDIA",
+            "snippet": "Sources said samples remain in customer validation.",
+            "published_at": "2026-05-30",
+        }]
+        item = {
+            "title": "Samsung secured NVIDIA design win for HBM4",
+            "sources": ["market.example"],
+            "date": "2026年5月30日",
+            "body": ["The item turns validation into a confirmed customer order."],
+        }
+
+        violations = validate_item(item, articles, "2026-05-30", MOCK_SOURCE_ALIASES)
+
+        assert any(
+            "customer_commitment_requires_confirmed_customer_evidence" in violation
+            for violation in violations
+        )
+
+    def test_overclaim_allows_customer_claim_when_customer_confirms(self):
+        articles = [{
+            "id": "a1",
+            "source": "nvidia.com",
+            "source_type": "official",
+            "title": "NVIDIA said it selected Samsung HBM4 for next systems",
+            "snippet": "The customer announced a supply agreement.",
+        }]
+        item = {
+            "title": "Samsung selected by NVIDIA for HBM4 supply",
+            "body": ["The source says NVIDIA selected Samsung and announced a supply agreement."],
+        }
+
+        assert validate_overclaims(item, articles) == []
+
+    def test_overclaim_flags_entity_mismatch_between_claim_and_support(self):
+        articles = [{
+            "id": "a1",
+            "source": "samsung.com",
+            "source_type": "official",
+            "title": "Samsung said HBM4 qualification is progressing",
+            "snippet": "The company described validation work with customers.",
+        }]
+        item = {
+            "title": "Samsung selected by NVIDIA for HBM4 supply",
+            "body": ["The article does not contain an NVIDIA customer confirmation."],
+        }
+
+        violations = validate_overclaims(item, articles)
+
+        assert any(
+            "customer_commitment_requires_confirmed_customer_evidence" in violation
+            for violation in violations
+        )
+
+    def test_overclaim_flags_financial_outcome_from_analyst_estimate(self):
+        articles = [{
+            "id": "a1",
+            "source": "analyst.example",
+            "source_type": "analyst",
+            "title": "Analysts expect Micron revenue may rise next quarter",
+            "snippet": "The forecast is based on channel checks.",
+            "published_at": "2026-05-30",
+        }]
+        item = {
+            "title": "Micron revenue will increase next quarter",
+            "sources": ["analyst.example"],
+            "date": "2026年5月30日",
+            "body": ["The item states a financial outcome as fact."],
+        }
+
+        violations = validate_item(item, articles, "2026-05-30", MOCK_SOURCE_ALIASES)
+
+        assert any(
+            "financial_outcome_requires_financial_or_company_evidence" in violation
+            for violation in violations
+        )
+
+    def test_overclaim_allows_financial_outcome_from_company_filing(self):
+        articles = [{
+            "id": "a1",
+            "source": "investors.micron.com",
+            "source_type": "financial",
+            "title": "Micron earnings release reports revenue increased",
+            "snippet": "The company reported revenue increased in its financial statement.",
+        }]
+        item = {
+            "title": "Micron revenue increased",
+            "body": ["The earnings release says revenue increased."],
+        }
+
+        assert validate_overclaims(item, articles) == []
+
+    def test_overclaim_flags_correlation_as_causal_language(self):
+        articles = [{
+            "id": "a1",
+            "source": "market.example",
+            "source_type": "media",
+            "title": "HBM orders linked to DRAM spot price movement",
+            "snippet": "Analysts suggest the two signals may be correlated.",
+            "published_at": "2026-05-30",
+        }]
+        item = {
+            "title": "HBM demand caused DRAM spot prices to rise",
+            "sources": ["market.example"],
+            "date": "2026年5月30日",
+            "body": ["The item upgrades a correlation into a mechanism."],
+        }
+
+        violations = validate_item(item, articles, "2026-05-30", MOCK_SOURCE_ALIASES)
+
+        assert any(
+            "causal_language_requires_explicit_mechanism_evidence" in violation
+            for violation in violations
+        )
+
+    def test_overclaim_allows_causal_language_with_explicit_mechanism(self):
+        articles = [{
+            "id": "a1",
+            "source": "micron.com",
+            "source_type": "official",
+            "title": "Micron says HBM demand was driven by AI server ramps",
+            "snippet": "Management said growth was driven by AI server ramps.",
+        }]
+        item = {
+            "title": "Micron HBM growth was driven by AI server ramps",
+            "body": ["Management attributed the growth to AI server ramps."],
+        }
+
+        assert validate_overclaims(item, articles) == []
 
 
 class TestStructuredOutputValidation:

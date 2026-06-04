@@ -19,7 +19,7 @@ Deployment uses this layout:
   config/config.yaml
   logs/
   releases/
-    v0.7.0/
+    v0.1.1/
       stratum/
       domains/
       scripts/
@@ -30,12 +30,24 @@ Deployment uses this layout:
 `config.yaml` remains instance-owned and is copied into the deployment
 environment. Secrets and local paths are not committed to Git.
 
+Runtime roots must stay separate:
+
+- `reports_dir`: artifact store for Markdown, HTML, PDF, raw/stage sidecars,
+  and run manifests under `{reports_dir}/{domain}/data/...`
+- `db_dir`: state store for SQLite under `{db_dir}/{domain}/{domain}.db`
+- `output_dir`: shared workspace root used only to derive defaults when
+  `reports_dir` or `db_dir` are omitted
+
+Production and testing should use different `db_dir` roots. Both can still
+share the same domain namespace, for example `storage/storage.db`, but they
+must not point at the same physical database.
+
 ## Release
 
 Create a release from a clean development tree:
 
 ```bash
-make release VERSION=v0.7.0
+make release VERSION=v0.1.1
 git push origin main --tags
 ```
 
@@ -48,12 +60,12 @@ Deploy a locked tag:
 
 ```bash
 make deploy \
-  VERSION=v0.7.0 \
+  VERSION=v0.1.1 \
   ENV=production \
   DOMAIN=storage \
-  DEPLOY_ROOT="$HOME/WorkSpace/Stratum/deployments" \
+  DEPLOY_ROOT="$HOME/stratum/deployments" \
   DEPLOY_CONFIG=/secure/stratum/config.yaml \
-  OUTPUT_DIR="$HOME/WorkSpace/Stratum/Reports"
+  OUTPUT_DIR="$HOME/stratum/reports"
 ```
 
 `scripts/deploy.sh` rejects branches and bare commits. It verifies that the
@@ -70,7 +82,7 @@ make run-deployed-daily \
   ENV=production \
   DOMAIN=storage \
   DATE=2026-05-30 \
-  DEPLOY_ROOT="$HOME/WorkSpace/Stratum/deployments"
+  DEPLOY_ROOT="$HOME/stratum/deployments"
 ```
 
 The wrapper exports:
@@ -93,8 +105,8 @@ successful deployed daily run:
 - send the generated PDF from `paths.briefing_pdf` to the configured delivery
   channel
 - copy the generated Markdown from `paths.briefing_md` into the Obsidian daily
-  briefing folder:
-  `/Users/ronnie/ObsidianSpace/RonnieVault/Wiki/DailyBrief/Storage`
+  briefing folder configured by the local delivery environment, for example
+  `$OBSIDIAN_VAULT/Wiki/DailyBrief/Storage`
 
 The Markdown archive step is part of the production cron wrapper, not the core
 pipeline. This keeps development and tests on local outputs while production
@@ -103,7 +115,7 @@ adds the delivery-specific copy after the deployed run succeeds.
 ## Health Check
 
 ```bash
-make deploy-health ENV=production DEPLOY_ROOT="$HOME/WorkSpace/Stratum/deployments"
+make deploy-health ENV=production DEPLOY_ROOT="$HOME/stratum/deployments"
 ```
 
 The health check verifies the active manifest, `current` symlink, config file,
@@ -116,9 +128,9 @@ environment's `releases/` directory:
 
 ```bash
 make rollback \
-  VERSION=v0.6.3 \
+  VERSION=v0.1.0 \
   ENV=production \
-  DEPLOY_ROOT="$HOME/WorkSpace/Stratum/deployments"
+  DEPLOY_ROOT="$HOME/stratum/deployments"
 ```
 
 Rollback does not rebuild code. It only reactivates a previously deployed,
@@ -127,7 +139,7 @@ tag-locked release and updates the environment manifest.
 ## Invariants
 
 - Development runs may use the working tree and are marked `mode=development`.
-- Deployment runs must use `scripts/run_deployed_daily.sh` and are marked
+- Deployment runs must use `scripts/run_daily.sh` and are marked
   `mode=deployment`.
 - Deployment requires a Git tag, not a branch name and not a bare commit.
 - Each deployed report manifest records version, commit, deployment id, config

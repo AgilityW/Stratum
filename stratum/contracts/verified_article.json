@@ -29,6 +29,9 @@
     "published_at": {"type": ["string", "null"]},
     "magnitude_flags": {"type": "array", "items": {"type": "string"}},
     "quality_flags": {"type": "array", "items": {"type": "string"}},
+    "corroboration_score": {"type": "number"},
+    "corroboration_level": {"type": "string", "enum": ["none", "low", "medium", "high"]},
+    "corroborating_sources": {"type": "array", "items": {"type": "string"}},
     "raw_metadata": {"type": "object"}
   }
 }

@@ -14,18 +14,19 @@
 
 ## Boundaries
 
-### 做什么
+### Owns
 
 - Write and load daily source-health records.
 - Rebuild source stats from records.
 - Detect dry sources and top contributors.
 - Emit threshold-based source-health alerts.
+- Aggregate search engine health from per-query attempt chains.
 - Detect missing source-type/locale coverage in story clusters.
 - Generate follow-up queries from detected gaps.
 
-### 不做什么
+### Does Not Own
 
-- Does not fetch sources. Collectors own fetching.
+- Does not fetch sources. Watchlist owns fetching.
 - Does not maintain source lifecycle state.
 - Does not call search APIs directly.
 - Does not decide editorial inclusion.
@@ -38,16 +39,16 @@
 date, record counts, signal metrics, optional HTTP error fields, duration,
 error text, and metadata.
 
-Collector runs feed this contract through the orchestrator:
+Watchlist runs feed this contract through the orchestrator:
 
-- sidecar: `{reports_dir}/{domain}/data/{date}/collector_stats.json`
+- sidecar: `{reports_dir}/{domain}/data/{date}/watchlist_stats.json`
 - health append: `{health_data_dir}/{domain}/source-daily.ndjson`
 
-Collector sidecars accept source statuses `ok`, `empty`, `error`, and
-`unsupported`. Unsupported collector access methods use `access: unknown` in
+Watchlist sidecars accept source statuses `ok`, `empty`, `error`, and
+`unsupported`. Unsupported watchlist access methods use `access: unknown` in
 the stable sidecar/health contract while the error message preserves the
 configured access string.
-For collector records, `hits` is acquisition output and `selected` is the
+For watchlist records, `hits` is acquisition output and `selected` is the
 post-merge contribution that survived canonical URL dedupe into `raw.json`.
 `unsupported` is an infrastructure/configuration capability signal, not a
 source-quality scan. The orchestrator writes those records with `scanned: false`
@@ -70,9 +71,9 @@ or HTTP error counters. A deliberately skipped source should not look like a
 failed source.
 `dry_streak` tracks acquisition droughts (`hits == 0`), while
 `selected_dry_streak` tracks contribution droughts (`selected == 0`). The
-second signal matters for collectors because a source can keep producing
+second signal matters for watchlist because a source can keep producing
 duplicate candidates that never survive canonical URL merge into `raw.json`.
-When collector records include `metadata.dated`, `rebuild_stats()` also
+When watchlist records include `metadata.dated`, `rebuild_stats()` also
 computes `total_dated`, `dated_hits_observed`, and `dated_rate` as dated hits
 divided by hits from records that actually reported dated metadata. Historical
 records without dated metadata do not receive a synthetic zero dated rate, so
@@ -87,6 +88,16 @@ HTTP error alerts use `http_error_streak`, the current consecutive scanned-day
 error run, rather than the lifetime `http_errors` counter. The lifetime counter
 remains available for historical source reliability review, while alerting
 stays focused on sources that are broken now.
+
+`engine_health.py` owns `EngineHealthScorer`, the algorithm that turns
+`raw.stats.json` query-level `engine_attempts` into per-engine attempt counts,
+failure rates, health scores, and routing recommendations (`healthy`, `watch`,
+`deprioritize`, `avoid`). `coverage.py` re-exports
+`score_search_engine_health()` for compatibility and Search diagnostics, but
+monitoring orchestration should not grow engine-health policy logic directly.
+`provider_exhausted` attempts are scored as hard failures with an `avoid`
+recommendation because quota, billing, and authorization errors are not useful
+retry targets within the same run.
 
 ### Coverage
 
@@ -106,7 +117,7 @@ source records do not hide real locale gaps.
 
 Severity uses current StoryCluster confidence labels (`high`, `medium`, `low`)
 and still accepts historical `A/B/C/D` fixture labels. Low-confidence clusters
-with two or fewer known source domains are high severity when they miss ideal
+with two or fewer watchlist domains are high severity when they miss ideal
 source type or core locale coverage.
 
 ## Dependencies

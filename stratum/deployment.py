@@ -1,7 +1,7 @@
 """Deployment/runtime identity helpers.
 
 Development runs are allowed to use the working tree. Deployment runs are
-identified by environment variables set by scripts/run_deployed_daily.sh and
+identified by environment variables set by scripts/run_daily.sh and
 must point at a locked Git tag + commit.
 """
 

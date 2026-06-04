@@ -1,0 +1,31 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "RawSearchResult",
+  "description": "Canonical search result format. All engines normalize to this.",
+  "type": "object",
+  "required": ["url", "title"],
+  "properties": {
+    "url": {"type": "string", "format": "uri"},
+    "canonical_url": {"type": "string", "format": "uri"},
+    "title": {"type": "string"},
+    "snippet": {"type": "string"},
+    "description": {"type": "string"},
+    "datePublished": {"type": "string"},
+    "locale": {"type": "string"},
+    "published_at": {"type": ["string", "null"]},
+    "source_domain": {"type": "string"},
+    "source_type_hint": {"type": "string"},
+    "engine": {
+      "type": "string",
+      "description": "Search engine or watchlist strategy id, e.g. bocha, tavily, rss:feed, direct_fetch:source."
+    },
+    "query_id": {"type": "string"},
+    "query_used": {"type": "string"},
+    "query_dimension": {"type": "string"},
+    "score": {"type": "number"},
+    "date_source": {
+      "type": "string",
+      "enum": ["search_api", "web_extract", "snippet_regex", "url_path", "freshness_window", "none", ""]
+    }
+  }
+}

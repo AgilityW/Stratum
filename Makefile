@@ -9,12 +9,14 @@ OUTPUT_DIR ?=
 PIPELINE_ARGS ?=
 ENV ?= production
 VERSION ?=
-DEPLOY_ROOT ?= $(HOME)/WorkSpace/Stratum/deployments
+DEPLOY_ROOT ?= $(HOME)/stratum/deployments
 DEPLOY_CONFIG ?= config.yaml
 
 PIPELINE_CMD = $(PYTHON) stratum/orchestrator/pipeline.py --domain $(DOMAIN) --date $(DATE)
+TIMESCALE_CMD = $(PYTHON) stratum/orchestrator/pipeline.py --domain $(DOMAIN) --date $(DATE) --timescale
 ifneq ($(strip $(OUTPUT_DIR)),)
 PIPELINE_CMD += --output-dir $(OUTPUT_DIR)
+TIMESCALE_CMD += --output-dir $(OUTPUT_DIR)
 endif
 
 # ── Pipeline ──────────────────────────────────────────────
@@ -42,38 +44,34 @@ rollback:
 	scripts/rollback.sh --root $(DEPLOY_ROOT) --env $(ENV) --version $(VERSION)
 
 run-deployed-daily:
-	scripts/run_deployed_daily.sh --root $(DEPLOY_ROOT) --env $(ENV) --domain $(DOMAIN) --date $(DATE) $(PIPELINE_ARGS)
+	scripts/run_daily.sh --root $(DEPLOY_ROOT) --env $(ENV) --domain $(DOMAIN) --date $(DATE) $(PIPELINE_ARGS)
 
 # Higher-scale runners are not first-class in the current orchestrator.
 weekly:
-	@echo "weekly is not available in the current daily-only orchestrator. Use: make daily DOMAIN=$(DOMAIN) DATE=$(DATE)"
-	@exit 2
+	$(TIMESCALE_CMD) weekly $(PIPELINE_ARGS)
 
 monthly:
-	@echo "monthly is not available in the current daily-only orchestrator. Use: make daily DOMAIN=$(DOMAIN) DATE=$(DATE)"
-	@exit 2
+	$(TIMESCALE_CMD) monthly $(PIPELINE_ARGS)
 
 quarterly:
-	@echo "quarterly is not available in the current daily-only orchestrator. Use: make daily DOMAIN=$(DOMAIN) DATE=$(DATE)"
-	@exit 2
+	$(TIMESCALE_CMD) quarterly $(PIPELINE_ARGS)
 
 yearly:
-	@echo "yearly is not available in the current daily-only orchestrator. Use: make daily DOMAIN=$(DOMAIN) DATE=$(DATE)"
-	@exit 2
+	$(TIMESCALE_CMD) yearly $(PIPELINE_ARGS)
 
 # ── Testing ───────────────────────────────────────────────
 
 # Default: run all tests
 test:
-	$(PYTHON) -m pytest tests/ stratum/stages/ stratum/subsystems/ -v
+	$(PYTHON) -m pytest tests/ stratum/stages/ stratum/subsystems/ stratum/source_trace/ stratum/signal_bursts/ -v
 
 # Only focused unit tests
 test-unit:
-	$(PYTHON) -m pytest tests/test_search.py stratum/stages/ stratum/subsystems/ -v
+	$(PYTHON) -m pytest tests/test_search.py stratum/stages/ stratum/subsystems/ stratum/source_trace/ stratum/signal_bursts/ -v
 
 # Only schema/contract validation tests
 test-schema:
-	$(PYTHON) -m pytest tests/test_contract_schemas.py tests/modules/test_story_event_schemas.py -v
+	$(PYTHON) -m pytest tests/test_contracts.py tests/modules/test_schemas.py -v
 
 # Data integrity + infra + module tests
 test-data:
@@ -85,11 +83,11 @@ test-modules:
 
 # Coverage report (terminal)
 test-cov:
-	$(PYTHON) -m pytest tests/ stratum/stages/ stratum/subsystems/ --cov --cov-report=term-missing
+	$(PYTHON) -m pytest tests/ stratum/stages/ stratum/subsystems/ stratum/source_trace/ stratum/signal_bursts/ --cov --cov-report=term-missing
 
 # Coverage report (HTML)
 test-cov-html:
-	$(PYTHON) -m pytest tests/ stratum/stages/ stratum/subsystems/ --cov --cov-report=html
+	$(PYTHON) -m pytest tests/ stratum/stages/ stratum/subsystems/ stratum/source_trace/ stratum/signal_bursts/ --cov --cov-report=html
 	@echo "Open htmlcov/index.html"
 
 # Run specific test file

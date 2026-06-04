@@ -1,0 +1,17 @@
+{
+  "type": "object",
+  "required": ["version", "task", "arguments"],
+  "properties": {
+    "version": {
+      "type": "string"
+    },
+    "task": {
+      "type": "string",
+      "minLength": 1
+    },
+    "arguments": {
+      "type": "object"
+    }
+  },
+  "additionalProperties": false
+}

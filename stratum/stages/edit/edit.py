@@ -31,15 +31,46 @@ from urllib.parse import urlparse
 
 # ── Internal imports ──
 _EDIT_DIR = os.path.dirname(os.path.abspath(__file__))
-sys.path.insert(0, _EDIT_DIR)
-from llm_client import call_llm
-from boilerplate import (
-    artifact_boilerplate_violations,
-    build_boilerplate_rules,
-    clean_article_evidence,
-    clean_evidence_text,
-)
-from planner import build_block_plan
+try:
+    from .llm_client import call_llm
+    from .boilerplate import (
+        artifact_boilerplate_violations,
+        build_boilerplate_rules,
+        clean_article_evidence,
+        clean_evidence_text,
+    )
+    from .planner import build_block_plan
+    from .output_policy import EditOutputPolicy
+    from .source_repair import (
+        _article_date_label,
+        _best_article_for_item,
+        repair_missing_source_lines,
+        repair_source_line_dates,
+        stabilize_generated_items,
+        soften_overclaim_language,
+    )
+    from .block_policy import BlockOutputPolicy
+    from .profile_policy import ProfilePolishPolicy
+except ImportError:  # pragma: no cover - direct script/test fallback
+    from llm_client import call_llm
+    from boilerplate import (
+        artifact_boilerplate_violations,
+        build_boilerplate_rules,
+        clean_article_evidence,
+        clean_evidence_text,
+    )
+    from planner import build_block_plan
+    from output_policy import EditOutputPolicy
+    from source_repair import (
+        _article_date_label,
+        _best_article_for_item,
+        repair_missing_source_lines,
+        repair_source_line_dates,
+        stabilize_generated_items,
+        soften_overclaim_language,
+    )
+    from block_policy import BlockOutputPolicy
+    from profile_policy import ProfilePolishPolicy
 
 CST_WEEKDAYS = ["周一", "周二", "周三", "周四", "周五", "周六", "周日"]
 THREAD_ID_RE = re.compile(r"^et-[A-Za-z0-9][A-Za-z0-9_-]*$")
@@ -56,6 +87,9 @@ EDGE_SIGNAL_KEYWORDS = (
     "任命",
     "光盘",
 )
+_OUTPUT_POLICY = EditOutputPolicy()
+_BLOCK_POLICY = BlockOutputPolicy()
+_PROFILE_POLICY = ProfilePolishPolicy()
 
 
 def _format_cn_date(date_str: str) -> str:
@@ -245,64 +279,48 @@ def should_write_event_threads(data: dict | None) -> bool:
 
 def markdown_news_titles(markdown: str) -> list[str]:
     """Return markdown item titles, excluding structural sections."""
-    titles = []
-    for line in markdown.splitlines():
-        stripped = line.strip()
-        if not stripped.startswith("### "):
-            continue
-        title = stripped.replace("### ", "", 1).strip()
-        if title not in NON_NEWS_SECTIONS:
-            titles.append(title)
-    return titles
+    return _OUTPUT_POLICY.markdown_news_titles(markdown)
 
 
 def normalize_edge_signal_headings(markdown: str) -> str:
     """Prefix weak-signal item headings so they stay visually separated."""
-    lines = []
-    for line in markdown.splitlines():
-        stripped = line.strip()
-        if not stripped.startswith("### "):
-            lines.append(line)
-            continue
-        title = stripped.replace("### ", "", 1).strip()
-        if title in NON_NEWS_SECTIONS or title.startswith("【边缘信号】"):
-            lines.append(line)
-            continue
-        title_lower = title.lower()
-        if any(keyword.lower() in title_lower for keyword in EDGE_SIGNAL_KEYWORDS):
-            prefix = line[:len(line) - len(line.lstrip())]
-            lines.append(f"{prefix}### 【边缘信号】{title}")
-        else:
-            lines.append(line)
-    return "\n".join(lines) + ("\n" if markdown.endswith("\n") else "")
+    return _OUTPUT_POLICY.normalize_edge_signal_headings(markdown)
 
 
-def item_count_within_budget(markdown: str, output_cfg: dict) -> tuple[bool, str]:
-    """Check generated news item count against prompt budget."""
-    budget = output_cfg.get("_budget", {}) if isinstance(output_cfg, dict) else {}
-    min_items = int(budget.get("min_items", 0) or 0)
-    max_items = int(budget.get("max_items", 0) or 0)
-    main_min_items = int(budget.get("main_min_items", 0) or 0)
-    main_max_items = int(budget.get("main_max_items", 0) or 0)
-    edge_min_items = int(budget.get("edge_min_items", 0) or 0)
-    edge_max_items = int(budget.get("edge_max_items", 0) or 0)
-    titles = markdown_news_titles(markdown)
-    count = len(titles)
-    edge_count = sum(1 for title in titles if title.startswith("【边缘信号】"))
-    main_count = count - edge_count
-    if min_items and count < min_items:
-        return False, f"generated {count} news items; total minimum is {min_items}"
-    if max_items and count > max_items:
-        return False, f"generated {count} news items; total maximum is {max_items}"
-    if main_min_items and main_count < main_min_items:
-        return False, f"generated {main_count} main news items; main minimum is {main_min_items}"
-    if main_max_items and main_count > main_max_items:
-        return False, f"generated {main_count} main news items; main maximum is {main_max_items}"
-    if edge_min_items and edge_count < edge_min_items:
-        return False, f"generated {edge_count} edge-signal items; edge minimum is {edge_min_items}"
-    if edge_max_items and edge_count > edge_max_items:
-        return False, f"generated {edge_count} edge-signal items; edge maximum is {edge_max_items}"
-    return True, f"generated {count} news items ({main_count} main, {edge_count} edge-signal)"
+def apply_evidence_window_budget(budget: dict, timescale: str, window_days: int) -> dict:
+    """Scale daily item targets for multi-day evidence windows without tightening floors."""
+    if timescale != "daily" or window_days <= 1:
+        return dict(budget)
+
+    scaled = dict(budget)
+    scaled["min_items"] = 0
+    scaled["main_min_items"] = 0
+    scaled["edge_min_items"] = 0
+
+    scaled["max_items"] = min(36, max(int(scaled.get("max_items", 0) or 0), window_days * 12))
+    scaled["main_max_items"] = scaled["max_items"]
+    scaled["edge_max_items"] = scaled["max_items"]
+    if "target_main_items" in scaled:
+        scaled["target_main_items"] = min(28, int(scaled["target_main_items"]) + (window_days - 1) * 5)
+    if "target_edge_items" in scaled:
+        scaled["target_edge_items"] = min(8, int(scaled["target_edge_items"]) + (window_days - 1))
+    return scaled
+
+
+def item_count_within_budget(markdown: str, output_cfg: dict, article_count: int = 0) -> tuple[bool, str]:
+    """Check generated news item count against prompt budget.
+
+    article_count caps minimum thresholds so low-volume days (weekends,
+    holidays) don't fail hard. When articles are scarce, the floor is
+    lowered to at most the available article count.
+    """
+    policy_cfg = dict(output_cfg) if isinstance(output_cfg, dict) else {}
+    budget = dict(policy_cfg.get("_budget", {}))
+    if article_count:
+        for key in ("min_items", "main_min_items", "edge_min_items"):
+            budget[key] = min(int(budget.get(key, 0) or 0), article_count)
+    policy_cfg["_budget"] = budget
+    return _OUTPUT_POLICY.item_count_within_budget(markdown, policy_cfg)
 
 
 def _article_source_label(article: dict) -> str:
@@ -319,197 +337,6 @@ def _article_source_label(article: dict) -> str:
     if host.startswith("m."):
         host = host[2:]
     return host
-
-
-def _article_date_label(article: dict, fallback_date: str) -> str:
-    """Return Chinese date label for source lines."""
-    raw_date = article.get("published_at") or article.get("date") or fallback_date
-    date_text = str(raw_date)[:10]
-    try:
-        dt = datetime.fromisoformat(date_text)
-        return f"{dt.year}年{dt.month}月{dt.day}日"
-    except ValueError:
-        return _format_cn_date(fallback_date).split(" · ")[0]
-
-
-def _source_matches_label(article: dict, label: str) -> bool:
-    article_source = _article_source_label(article).lower()
-    source_label = label.lower().strip()
-    if article_source == source_label:
-        return True
-    url = str(article.get("url") or "").lower()
-    return bool(source_label and source_label in url)
-
-
-def _match_tokens(text: str) -> set[str]:
-    """Extract rough multilingual tokens for deterministic item/article matching."""
-    tokens = set()
-    for token in re.findall(r"[A-Za-z0-9][A-Za-z0-9+.-]*|[\u4e00-\u9fff]{2,}", text.lower()):
-        if len(token) >= 2:
-            tokens.add(token)
-    return tokens
-
-
-def _best_article_for_item(title: str, body_lines: list[str], articles: list[dict]) -> dict | None:
-    """Find the best article backing a markdown item by token overlap."""
-    item_tokens = _match_tokens(f"{title} {' '.join(body_lines)}")
-    if not item_tokens:
-        return None
-
-    best_article = None
-    best_score = 0.0
-    for article in articles:
-        article_tokens = _match_tokens(
-            f"{article.get('title', '')} {article.get('snippet', '')}"
-        )
-        if not article_tokens:
-            continue
-        overlap = len(item_tokens & article_tokens)
-        score = overlap / max(1, min(len(item_tokens), len(article_tokens)))
-        if score > best_score:
-            best_score = score
-            best_article = article
-
-    return best_article if best_score >= 0.35 else None
-
-
-def _best_article_for_source_item(
-    source: str,
-    title: str,
-    body_lines: list[str],
-    articles: list[dict],
-) -> dict | None:
-    """Find the best article from a cited source backing a markdown item."""
-    source_articles = [article for article in articles if _source_matches_label(article, source)]
-    return _best_article_for_item(title, body_lines, source_articles)
-
-
-def repair_source_line_dates(markdown: str, articles: list[dict], run_date: str) -> str:
-    """Rewrite source-line dates from matched article dates instead of LLM guesses."""
-    lines = markdown.splitlines()
-    repaired: list[str] = []
-    current: dict | None = None
-
-    def flush_current():
-        if not current:
-            return
-        source_line_idx = current.get("source_line_idx")
-        if source_line_idx is not None and current["title"] not in NON_NEWS_SECTIONS:
-            line = current["lines"][source_line_idx].strip()
-            parsed = re.match(r"^\*(.+?)·(.+?)\*$", line)
-            if parsed:
-                sources = [src.strip() for src in parsed.group(1).split(",") if src.strip()]
-                supported_pairs = [
-                    (source, article)
-                    for source in sources
-                    if (article := _best_article_for_source_item(
-                        source, current["title"], current["body"], articles
-                    ))
-                ]
-                supporting_articles = [article for _source, article in supported_pairs]
-                if supporting_articles:
-                    sources = [source for source, _article in supported_pairs]
-                if not supporting_articles:
-                    supporting_articles = [
-                        article
-                        for source in sources
-                        for article in articles
-                        if _source_matches_label(article, source)
-                    ]
-                dated_articles = [
-                    article for article in supporting_articles
-                    if article.get("published_at") or article.get("date")
-                ]
-                if dated_articles:
-                    latest = max(
-                        dated_articles,
-                        key=lambda article: str(article.get("published_at") or article.get("date") or ""),
-                    )
-                    prefix = current["lines"][source_line_idx][
-                        :len(current["lines"][source_line_idx]) - len(current["lines"][source_line_idx].lstrip())
-                    ]
-                    current["lines"][source_line_idx] = (
-                        f"{prefix}*{', '.join(sources)} · {_article_date_label(latest, run_date)}*"
-                    )
-        repaired.extend(current["lines"])
-
-    for line in lines:
-        if line.strip().startswith("## "):
-            flush_current()
-            current = None
-            repaired.append(line)
-            continue
-        if line.strip().startswith("### "):
-            flush_current()
-            current = {
-                "title": line.strip().replace("### ", "", 1).strip(),
-                "body": [],
-                "lines": [line],
-                "source_line_idx": None,
-            }
-            continue
-        if current is None:
-            repaired.append(line)
-            continue
-        current["lines"].append(line)
-        stripped = line.strip()
-        if stripped.startswith("*") and "·" in stripped:
-            current["source_line_idx"] = len(current["lines"]) - 1
-        elif stripped and not stripped.startswith("#") and not stripped.startswith("---"):
-            current["body"].append(stripped)
-
-    flush_current()
-    return "\n".join(repaired) + ("\n" if markdown.endswith("\n") else "")
-
-
-def repair_missing_source_lines(markdown: str, articles: list[dict], run_date: str) -> str:
-    """Add a source/date line to items that lack one when article match is clear."""
-    lines = markdown.splitlines()
-    repaired: list[str] = []
-    current: dict | None = None
-
-    def flush_current():
-        if not current:
-            return
-        repaired.extend(current["lines"])
-        if current["title"] not in NON_NEWS_SECTIONS and not current["has_source"]:
-            article = _best_article_for_item(current["title"], current["body"], articles)
-            if article:
-                source = _article_source_label(article)
-                if source:
-                    if repaired and repaired[-1].strip():
-                        repaired.append("")
-                    repaired.append(f"*{source} · {_article_date_label(article, run_date)}*")
-
-    for line in lines:
-        if line.startswith("## "):
-            flush_current()
-            current = None
-            repaired.append(line)
-            continue
-        if line.startswith("### "):
-            flush_current()
-            current = {
-                "title": line.replace("### ", "", 1).strip(),
-                "body": [],
-                "lines": [line],
-                "has_source": False,
-            }
-            continue
-
-        if current is None:
-            repaired.append(line)
-            continue
-
-        current["lines"].append(line)
-        stripped = line.strip()
-        if stripped.startswith("*") and "·" in stripped:
-            current["has_source"] = True
-        elif stripped and not stripped.startswith("#") and not stripped.startswith("---"):
-            current["body"].append(stripped)
-
-    flush_current()
-    return "\n".join(repaired).rstrip() + ("\n" if markdown.endswith("\n") else "")
 
 
 def _extract_json_object(text: str) -> dict | None:
@@ -536,65 +363,15 @@ def _load_prompt(name: str) -> str:
 
 
 def fallback_paragraphs(item: dict) -> list[str]:
-    evidence = item.get("evidence") or []
-    first = evidence[0] if evidence else {}
-    snippet = clean_evidence_text(first.get("snippet") or first.get("title") or item.get("title_hint") or "")
-    title = str(item.get("title_hint") or first.get("title") or "").strip()
-    if not re.search(r"[\u4e00-\u9fff]", snippet):
-        snippet = f"该来源围绕“{title[:80]}”提供了当日增量信息。"
-    elif len(snippet) > 260:
-        snippet = snippet[:260] + "..."
-    if item.get("kind") == "edge":
-        return [
-            snippet or item.get("title_hint", ""),
-            "这个信号值得观察，因为它可能提示产业链边缘变量正在变化；但目前证据仍偏单点，尚不能替代主线供需、价格、产能或客户认证判断。",
-        ]
-    return [
-        snippet or item.get("title_hint", ""),
-        "这条信息的增量在于它与今日存储产业的供需、技术路线或资本开支判断相关，后续仍需用更多来源验证其持续性。",
-    ]
+    return _BLOCK_POLICY.fallback_paragraphs(item)
 
 
 def _category_payload(category: dict, selected_ids: set[str]) -> dict:
-    items = [
-        item for item in category.get("items", [])
-        if item.get("item_id") in selected_ids
-    ]
-    return {
-        "category_id": category["category_id"],
-        "label": category.get("label", ""),
-        "why_created": category.get("why_created", ""),
-        "items": [
-            {
-                "item_id": item["item_id"],
-                "kind": item["kind"],
-                "title_hint": item["title_hint"],
-                "reason": item.get("reason", ""),
-                "evidence": item.get("evidence", []),
-            }
-            for item in items
-        ],
-        "dropped": category.get("dropped", []),
-    }
+    return _BLOCK_POLICY.category_payload(category, selected_ids)
 
 
 def _fallback_block(category: dict, items: list[dict], detail: str) -> dict:
-    return {
-        "category_id": category["category_id"],
-        "label": category.get("label", ""),
-        "status": "fallback",
-        "detail": detail,
-        "items": [
-            {
-                "item_id": item["item_id"],
-                "title": item["title_hint"],
-                "paragraphs": fallback_paragraphs(item),
-                "_fallback": detail,
-            }
-            for item in items
-        ],
-        "dropped": category.get("dropped", []),
-    }
+    return _BLOCK_POLICY.fallback_block(category, items, detail)
 
 
 def write_category_block(
@@ -774,28 +551,11 @@ def render_template(template_name: str, values: dict) -> str:
 
 
 def polish_sections(plan: dict, item_markdown: str, llm_cfg: dict) -> dict:
-    prompt_text = _load_prompt("profile_polish.md")
-    titles = markdown_news_titles(item_markdown)
-    user_payload = {
-        "titles": titles,
-        "items": [
-            {
-                "title": title,
-                "kind": "edge" if title.startswith("【边缘信号】") else "main",
-            }
-            for title in titles
-        ],
-    }
-    try:
-        parsed = _extract_json_object(call_llm(prompt_text, json.dumps(user_payload, ensure_ascii=False), llm_cfg))
-    except Exception:
-        parsed = None
-    if not isinstance(parsed, dict):
-        parsed = {}
-    summary = _clean_list(parsed.get("summary"), 2, fallback_summary(titles))
-    focus = _clean_list(parsed.get("focus"), 3, fallback_focus(titles))
-    contrarian = _clean_list(parsed.get("contrarian"), 3, fallback_contrarian(titles))
-    return {"summary": summary[:3], "focus": focus[:3], "contrarian": contrarian[:3]}
+    del item_markdown, llm_cfg
+    return _PROFILE_POLICY.deterministic_sections(
+        list(plan.get("items") or []),
+        list(plan.get("omitted_candidates") or []),
+    )
 
 
 def _clean_list(value, target: int, fallback: list[str]) -> list[str]:
@@ -947,6 +707,8 @@ def run_block_edit(
         edge_markdown=edge_markdown,
     )
     briefing = repair_source_line_dates(strip_source_locale_tags(briefing), articles, args.date)
+    briefing = soften_overclaim_language(briefing)
+    briefing = stabilize_generated_items(briefing)
     briefing_violations = artifact_boilerplate_violations(briefing, boilerplate_rules)
     block_violations = artifact_boilerplate_violations(
         json.dumps(blocks, ensure_ascii=False),
@@ -1053,7 +815,7 @@ def main():
         output_cfg=output_cfg,
         timescale_cfg=timescale_cfg,
     )
-    in_budget, budget_detail = item_count_within_budget(briefing, output_cfg)
+    in_budget, budget_detail = item_count_within_budget(briefing, output_cfg, len(articles))
     if not in_budget:
         print(f"❌ Edit V3 output outside item budget: {budget_detail}", file=sys.stderr)
         sys.exit(1)
